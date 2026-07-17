@@ -402,7 +402,7 @@ export default function Landing() {
             <h2>Frequently asked questions</h2>
             <p style={{ color: "var(--muted)", marginTop: 16, fontSize: 15, lineHeight: 1.6 }}>
               Still curious? Reach us at <a href="mailto:hey@vellar.xyz">hey@vellar.xyz</a> or read the{" "}
-              <a href="https://docs.vellar.xyz">developer docs</a>.
+              <a href="https://vellar-sdk.vercel.app/docs/introduction">developer docs</a>.
             </p>
           </div>
           <div>
@@ -434,7 +434,7 @@ export default function Landing() {
             fee-sponsored, no seed phrases.
           </p>
           <div className="hero-cta">
-            <a href="https://docs.vellar.xyz" className="btn btn-glass btn-lg">
+            <a href="https://vellar-sdk.vercel.app/docs/introduction" className="btn btn-glass btn-lg">
               Read the docs
             </a>
             <a
@@ -469,9 +469,9 @@ export default function Landing() {
               </div>
               <div className="foot-col">
                 <h4>Developers</h4>
-                <a href="https://docs.vellar.xyz">Documentation</a>
-                <a href="https://docs.vellar.xyz/docs/quickstart">Quickstart</a>
-                <a href="https://docs.vellar.xyz/docs/api-reference">SDK reference</a>
+                <a href="https://vellar-sdk.vercel.app/docs/introduction">Documentation</a>
+                <a href="https://vellar-sdk.vercel.app/docs/quickstart">Quickstart</a>
+                <a href="https://vellar-sdk.vercel.app/docs/api-reference">SDK reference</a>
                 <a href="https://github.com/Vellar-Wallet/vellar-sdk">GitHub</a>
               </div>
               <div className="foot-col">
