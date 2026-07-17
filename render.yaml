@@ -1,0 +1,55 @@
+# Render Blueprint — combined VELA backend + Postgres (free tier).
+#
+# Deploys the single-process backend (@vela/all-in-one: gateway + wallet +
+# lifecycle + policy) as one free web service, plus a free Postgres.
+#
+# Free-tier caveats:
+#   - the web service SLEEPS after 15 min idle (~1 min cold start on next hit)
+#   - the free Postgres EXPIRES 30 days after creation (14-day grace)
+# Both are acceptable for a testnet demo. For a non-expiring DB, swap in an
+# external Postgres (e.g. Neon) and set DATABASE_URL as a secret instead.
+#
+# Secrets NOT in this file (set them in the Render dashboard, marked sync:false):
+#   RELAYER_API_KEY, SPONSOR_SECRET_KEY
+
+services:
+  - type: web
+    name: vellar-backend
+    runtime: node
+    plan: free
+    # Render runs from the repo root; install the workspace, build the SDK dist
+    # the app imports, then start the combined backend.
+    buildCommand: "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @vela/wallet-sdk build"
+    startCommand: "pnpm --filter @vela/all-in-one start"
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # NOTE: Render injects PORT automatically; the gateway reads it via
+      # portFromEnv("PORT", …) and binds 0.0.0.0. Do not hardcode PORT here.
+      # Testnet endpoints.
+      - key: RELAYER_BASE_URL
+        value: "https://channels.openzeppelin.com/testnet"
+      - key: STELLAR_RPC_URL
+        value: "https://soroban-testnet.stellar.org"
+      - key: STELLAR_NETWORK_PASSPHRASE
+        value: "Test SDF Network ; September 2015"
+      - key: HORIZON_URL
+        value: "https://horizon-testnet.stellar.org"
+      # Allow the deployed frontend origin (update to the real vellar.xyz once live).
+      - key: CORS_ORIGIN
+        value: "https://vellar.xyz"
+      # Wire the Postgres created below.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vellar-db
+          property: connectionString
+      # Secrets — set these in the dashboard (sync:false keeps them out of git).
+      - key: RELAYER_API_KEY
+        sync: false
+      - key: SPONSOR_SECRET_KEY
+        sync: false
+
+databases:
+  - name: vellar-db
+    plan: free
