@@ -27,6 +27,9 @@ export function LandingNav() {
           <a href="#faq" onClick={close}>
             FAQ
           </a>
+          <a href="https://docs.vellar.xyz" onClick={close}>
+            Docs
+          </a>
         </div>
         <Link href="/app" className="btn btn-signal">
           Launch app

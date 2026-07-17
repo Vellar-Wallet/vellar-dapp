@@ -401,8 +401,8 @@ export default function Landing() {
             </span>
             <h2>Frequently asked questions</h2>
             <p style={{ color: "var(--muted)", marginTop: 16, fontSize: 15, lineHeight: 1.6 }}>
-              Still curious? Reach us at <a href="mailto:hey@vellar.xyz">hey@vellar.xyz</a> or read the
-              developer docs.
+              Still curious? Reach us at <a href="mailto:hey@vellar.xyz">hey@vellar.xyz</a> or read the{" "}
+              <a href="https://docs.vellar.xyz">developer docs</a>.
             </p>
           </div>
           <div>
