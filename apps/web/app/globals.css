@@ -1257,7 +1257,7 @@ a {
   position: absolute;
   right: -20px;
   bottom: -10px;
-  width: 230px;
+  width: 260px;
   opacity: 0.95;
   filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.4));
 }
@@ -1267,10 +1267,13 @@ a {
   border-radius: 16px 16px 0 0;
   padding: 16px;
   font-size: 12px;
+  overflow: hidden;
 }
 .miniui .mr {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
@@ -1280,6 +1283,16 @@ a {
 }
 .miniui .mr b {
   color: var(--ink);
+  flex-shrink: 0;
+}
+/* Code-snippet rows (mono): keep them on one line and clip overflow rather than
+   wrapping/overflowing the fixed-width preview card. */
+.miniui .mr .mono {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .faq-grid {
