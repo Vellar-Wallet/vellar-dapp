@@ -19,7 +19,7 @@ const features = [
   },
   {
     title: "Contract verification",
-    body: "See exactly what a contract does before you sign. VELA flags what's verified and what's risky.",
+    body: "See exactly what a contract does before you sign. Vellar flags what's verified and what's risky.",
     icon: (
       <>
         <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z" />
@@ -83,8 +83,8 @@ const features = [
 
 const faqs = [
   {
-    q: "Is VELA custodial?",
-    a: "No. VELA is fully self-custodial — your account and keys live on Stellar and in your device's secure enclave. We never hold your funds or your passkeys.",
+    q: "Is Vellar custodial?",
+    a: "No. Vellar is fully self-custodial — your account and keys live on Stellar and in your device's secure enclave. We never hold your funds or your passkeys.",
   },
   {
     q: "What happens if I lose my device?",
@@ -92,7 +92,7 @@ const faqs = [
   },
   {
     q: "Do I need the browser extension?",
-    a: "Not to get started — VELA is web-first. The extension is there when you want one-click connections to Stellar dApps with the same passkey and policies you've already set.",
+    a: "Not to get started — Vellar is web-first. The extension is there when you want one-click connections to Stellar dApps with the same passkey and policies you've already set.",
   },
   {
     q: "What are programmable policies, exactly?",
@@ -126,7 +126,7 @@ export default function Landing() {
             Secured by <span className="g">passkeys</span>, not seed phrases.
           </h1>
           <p className="hero-sub">
-            VELA is the passkey-powered smart wallet for Stellar — programmable security, contract
+            Vellar is the passkey-powered smart wallet for Stellar — programmable security, contract
             verification, and trust signals on every transaction. Web-first, with a companion
             browser extension.
           </p>
@@ -323,7 +323,7 @@ export default function Landing() {
               <div className="pglow" style={{ background: "var(--signal)" }}></div>
               <h3>Browser extension</h3>
               <p>
-                Bring VELA to any Stellar dApp — same passkey, same on-chain policies, one click to
+                Bring Vellar to any Stellar dApp — same passkey, same on-chain policies, one click to
                 connect.
               </p>
               <div className="pfoot">
@@ -365,7 +365,7 @@ export default function Landing() {
               <h2>Security that runs on-chain.</h2>
             </div>
             <p>
-              Everything is self-custodial and yours. VELA layers modern auth and programmable
+              Everything is self-custodial and yours. Vellar layers modern auth and programmable
               guardrails over your Stellar account — no custody, no compromises.
             </p>
           </div>
@@ -401,7 +401,7 @@ export default function Landing() {
             </span>
             <h2>Frequently asked questions</h2>
             <p style={{ color: "var(--muted)", marginTop: 16, fontSize: 15, lineHeight: 1.6 }}>
-              Still curious? Reach us at <a href="mailto:hey@vela.xyz">hey@vela.xyz</a> or read the
+              Still curious? Reach us at <a href="mailto:hey@vellar.xyz">hey@vellar.xyz</a> or read the
               developer docs.
             </p>
           </div>
@@ -426,7 +426,7 @@ export default function Landing() {
           <h2 className="cta-try">
             <span>Try</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-light.png" alt="VELA" className="cta-try-logo" />
+            <img src="/logo-light.png" alt="Vellar" className="cta-try-logo" />
             <span>today</span>
           </h2>
           <p>Self-custodial and passkey-secured. Spin up a smart wallet in seconds.</p>
@@ -447,7 +447,7 @@ export default function Landing() {
           <div className="foot-top">
             <div className="foot-brand">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo-light.png" alt="VELA" />
+              <img src="/logo-light.png" alt="Vellar" />
               <p>
                 The passkey-powered smart wallet for Stellar. Programmable security and trust
                 signals for everyday users, developers and teams.
@@ -472,12 +472,12 @@ export default function Landing() {
                 <h4>Company</h4>
                 <a href="#">About</a>
                 <a href="#">Security</a>
-                <a href="mailto:hey@vela.xyz">Contact</a>
+                <a href="mailto:hey@vellar.xyz">Contact</a>
               </div>
             </div>
           </div>
           <div className="foot-bot">
-            <span>© 2026 VELA · Built on Stellar</span>
+            <span>© 2026 Vellar · Built on Stellar</span>
             <span className="mono">passkeys · policies · trust</span>
           </div>
         </div>

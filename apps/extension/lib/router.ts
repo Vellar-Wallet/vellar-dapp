@@ -50,7 +50,7 @@ export function routeProviderRequest(
   const wallet = state.pairedWallet;
   if (!wallet) {
     return respond(
-      errorPayload("disconnected", "No wallet is paired. Open the VELA web app to pair."),
+      errorPayload("disconnected", "No wallet is paired. Open the Vellar web app to pair."),
     );
   }
 

@@ -179,7 +179,7 @@ function ExtensionPairingCard({ session }: { session: WalletSession }) {
     <section className="neo" style={{ padding: 22 }}>
       <span className="eyebrow">Browser extension</span>
       <p style={{ marginTop: 8, fontSize: 12, color: "var(--muted2)", lineHeight: 1.6 }}>
-        Pair the VELA extension as a device signer: it can approve dApp transactions for 7 days,
+        Pair the Vellar extension as a device signer: it can approve dApp transactions for 7 days,
         then expires automatically. You approve the pairing in the extension, then confirm with your
         passkey.
       </p>

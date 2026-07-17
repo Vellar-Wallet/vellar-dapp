@@ -5,7 +5,7 @@ import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "VELA — the passkey smart wallet for Stellar",
+  title: "Vellar — the passkey smart wallet for Stellar",
   description:
     "Web-first Stellar smart wallet: passkey onboarding, programmable account policies, contract trust signals, and account lifecycle tooling.",
 };

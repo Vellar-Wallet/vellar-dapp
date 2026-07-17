@@ -12,7 +12,7 @@ export function LandingNav() {
       <nav className="nav">
         <a href="#top" className="brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-light.png" alt="VELA" />
+          <img src="/logo-light.png" alt="Vellar" />
         </a>
         <div className={`nav-links${open ? " open" : ""}`}>
           <a href="#features" onClick={close}>

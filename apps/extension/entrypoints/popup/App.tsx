@@ -171,7 +171,7 @@ function ApprovalCard({
           {summary.movesValue && (
             <p className="muted" style={{ margin: "8px 0 0", fontSize: 11, lineHeight: 1.45 }}>
               This moves value. Any spending-limit policy on your account applies to this device and
-              can reject or cap it on-chain — review your policies in the VELA app.
+              can reject or cap it on-chain — review your policies in the Vellar app.
             </p>
           )}
         </div>
@@ -234,7 +234,7 @@ export function App() {
   return (
     <main className="pop">
       <div className="topbar">
-        <img className="brand" src="/logo-light.png" alt="VELA" />
+        <img className="brand" src="/logo-light.png" alt="Vellar" />
         {wallet && (
           <span className="netpill">
             <span className="dot" /> {wallet.network}
@@ -291,7 +291,7 @@ export function App() {
         <section className="neo">
           <span className="eyebrow">Not paired</span>
           <p className="muted" style={{ fontSize: 13, margin: "8px 0 0", lineHeight: 1.55 }}>
-            Open the VELA web app, sign in, and choose Settings → Pair extension to get started.
+            Open the Vellar web app, sign in, and choose Settings → Pair extension to get started.
           </p>
         </section>
       )}

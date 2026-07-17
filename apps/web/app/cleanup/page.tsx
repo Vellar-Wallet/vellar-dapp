@@ -100,7 +100,7 @@ export default function Cleanup() {
             }}
           >
             Inspect a classic (G…) Stellar account, clear everything blocking its closure, and merge
-            its XLM into another account. VELA prepares each transaction — you sign in the wallet
+            its XLM into another account. Vellar prepares each transaction — you sign in the wallet
             that holds the old account&apos;s key.
           </p>
         </header>

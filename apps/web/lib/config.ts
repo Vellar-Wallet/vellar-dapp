@@ -30,6 +30,6 @@ export function walletConfig(): WebWalletConfig {
       process.env.NEXT_PUBLIC_STELLAR_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015",
     horizonUrl: process.env.NEXT_PUBLIC_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
     walletWasmHash: process.env.NEXT_PUBLIC_WALLET_WASM_HASH ?? DEFAULT_WALLET_WASM_HASH,
-    appName: "VELA Wallet",
+    appName: "Vellar Wallet",
   };
 }

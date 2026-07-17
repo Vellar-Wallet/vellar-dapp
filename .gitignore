@@ -47,3 +47,5 @@ CLAUDE.md
 docs/decisions.md
 docs/sdk-product-direction.md
 landing-page/
+.vercel
+.env*

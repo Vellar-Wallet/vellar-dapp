@@ -61,7 +61,7 @@ export async function checkPairingStatus(session: WalletSession): Promise<boolea
 
 export async function pairExtension(session: WalletSession): Promise<PairingResult> {
   const provider = getInjectedProvider();
-  if (!provider) throw new Error("The VELA extension is not installed in this browser");
+  if (!provider) throw new Error("The Vellar extension is not installed in this browser");
   if (!session.keyId) {
     throw new Error("This session has no passkey credential id — sign out and back in, then retry");
   }

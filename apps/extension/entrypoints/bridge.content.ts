@@ -32,9 +32,9 @@ export default defineContentScript({
           .then((payload: ProviderRequestReply) => {
             window.postMessage(responseEnvelope(envelope.id, payload), "*");
           })
-          .catch(() => fail("The VELA extension is unavailable"));
+          .catch(() => fail("The Vellar extension is unavailable"));
       } catch {
-        fail("The VELA extension was updated — reload this page and try again");
+        fail("The Vellar extension was updated — reload this page and try again");
       }
     });
   },

@@ -8,7 +8,7 @@ export default function AppEntry() {
   return (
     <main className="wrap" style={{ paddingTop: 120, paddingBottom: 96 }}>
       <Link href="/" className="mono" style={{ fontSize: 12, color: "var(--muted2)" }}>
-        ← vela.xyz
+        ← vellar.xyz
       </Link>
       <div style={{ maxWidth: 560, margin: "48px auto 0", textAlign: "center" }}>
         <span className="eyebrow">

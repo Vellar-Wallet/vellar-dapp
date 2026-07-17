@@ -17,7 +17,7 @@ export function Logo({ height = 30 }: { height?: number }) {
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
-      alt="VELA"
+      alt="Vellar"
       width={width}
       height={height}
       decoding="async"

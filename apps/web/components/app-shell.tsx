@@ -56,7 +56,7 @@ export function AppShell({ children, actions }: { children: ReactNode; actions?:
     <div className="shell">
       {/* Sidebar (→ bottom tab bar on mobile) */}
       <aside className="shell-side">
-        <Link href="/" aria-label="VELA home" className="shell-logo">
+        <Link href="/" aria-label="Vellar home" className="shell-logo">
           <Logo height={38} />
         </Link>
         {nav.map((item) => {
@@ -82,7 +82,7 @@ export function AppShell({ children, actions }: { children: ReactNode; actions?:
             {/* Logo shows here on mobile (sidebar logo is hidden) */}
             <Link
               href="/"
-              aria-label="VELA home"
+              aria-label="Vellar home"
               className="shell-mobile-logo"
               style={{ display: "none" }}
             >

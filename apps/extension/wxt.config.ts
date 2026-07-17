@@ -6,7 +6,7 @@ export default defineConfig({
   // into workspace packages that merely use "storage" as an identifier.
   imports: false,
   manifest: {
-    name: "VELA Wallet",
+    name: "Vellar Wallet",
     description: "Stellar smart wallet companion: dApp connections and fast transaction signing.",
     permissions: ["storage"],
   },
