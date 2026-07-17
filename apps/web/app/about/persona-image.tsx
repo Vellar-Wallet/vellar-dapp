@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 
-// Shows the persona photo (public/persona.jpg) once it's uploaded; until then,
-// falls back to a styled initials placeholder instead of a broken image.
+// Shows the persona photo (public/about.jpg); falls back to a styled initials
+// placeholder instead of a broken image if the file is missing.
 export function PersonaImage() {
   const [failed, setFailed] = useState(false);
 
@@ -17,6 +17,6 @@ export function PersonaImage() {
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src="/persona.jpg" alt="David Ejere" onError={() => setFailed(true)} />
+    <img src="/about.jpg" alt="David Ejere" onError={() => setFailed(true)} />
   );
 }
