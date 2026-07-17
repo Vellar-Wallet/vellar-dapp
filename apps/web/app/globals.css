@@ -1295,6 +1295,151 @@ a {
   min-width: 0;
 }
 
+/* About page */
+.about {
+  padding: 140px 0 100px;
+}
+.about-hero {
+  max-width: 720px;
+}
+.about-hero h1 {
+  font-family: "Clash Display", sans-serif;
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 14px 0 24px;
+}
+.about-hero p {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.7;
+  margin: 0 0 18px;
+}
+.about-persona {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 40px;
+  align-items: center;
+  margin: 72px 0;
+  padding: 36px;
+  background: var(--neo-surface);
+  border: 1px solid var(--line);
+  border-radius: 26px;
+}
+.persona-photo img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--neo-bg);
+  display: block;
+}
+.persona-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: linear-gradient(135deg, var(--green), var(--green-mid) 70%, #0f3d33);
+  display: grid;
+  place-items: center;
+}
+.persona-placeholder span {
+  font-family: "Clash Display", sans-serif;
+  font-size: 3.5rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+.persona-body h2 {
+  font-family: "Clash Display", sans-serif;
+  font-size: 1.9rem;
+  font-weight: 600;
+  margin: 12px 0 4px;
+}
+.persona-role {
+  color: var(--signal);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  margin: 0 0 16px;
+}
+.persona-body p {
+  color: var(--muted);
+  font-size: 15.5px;
+  line-height: 1.7;
+  margin: 0 0 18px;
+}
+.persona-links {
+  display: flex;
+  gap: 18px;
+}
+.persona-links a {
+  color: var(--signal);
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--signal) 40%, transparent);
+}
+.persona-links a:hover {
+  border-bottom-color: var(--signal);
+}
+.about-back {
+  margin-top: 24px;
+}
+@media (max-width: 720px) {
+  .about {
+    padding: 110px 0 80px;
+  }
+  .about-persona {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 24px;
+    text-align: center;
+  }
+  .persona-photo img {
+    max-width: 220px;
+    margin: 0 auto;
+  }
+  .persona-links {
+    justify-content: center;
+  }
+}
+
+/* How the extension works — 3-step row */
+.ext-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.ext-step {
+  background: var(--neo-surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 28px 24px;
+}
+.ext-num {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--signal);
+  letter-spacing: 0.1em;
+  margin-bottom: 14px;
+}
+.ext-step h4 {
+  font-size: 18px;
+  color: var(--ink);
+  margin: 0 0 10px;
+}
+.ext-step p {
+  font-size: 14.5px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+@media (max-width: 760px) {
+  .ext-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
 .faq-grid {
   display: grid;
   grid-template-columns: 0.85fr 1.15fr;

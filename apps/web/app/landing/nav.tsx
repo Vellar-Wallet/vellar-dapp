@@ -15,14 +15,14 @@ export function LandingNav() {
           <img src="/logo-light.png" alt="Vellar" />
         </a>
         <div className={`nav-links${open ? " open" : ""}`}>
+          <Link href="/app" onClick={close}>
+            Wallet
+          </Link>
+          <a href="#extension" onClick={close}>
+            Extension
+          </a>
           <a href="#features" onClick={close}>
             Features
-          </a>
-          <a href="#wallet" onClick={close}>
-            Wallet
-          </a>
-          <a href="#platforms" onClick={close}>
-            Extension
           </a>
           <a href="#faq" onClick={close}>
             FAQ

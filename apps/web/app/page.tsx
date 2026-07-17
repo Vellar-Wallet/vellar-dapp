@@ -356,6 +356,49 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* HOW THE EXTENSION WORKS */}
+      <section className="sec" id="extension">
+        <div className="wrap">
+          <div className="sec-head" style={{ marginBottom: 36 }}>
+            <div>
+              <span className="eyebrow">Browser extension</span>
+              <h2>Connect to any Stellar dApp.</h2>
+            </div>
+            <p>
+              The Vellar extension pairs with your wallet once, then approves dApp connections and
+              signing — with the same passkey and on-chain policies you already set. No seed phrase
+              ever enters the browser.
+            </p>
+          </div>
+          <div className="ext-steps">
+            <div className="ext-step">
+              <span className="ext-num mono">01</span>
+              <h4>Pair once</h4>
+              <p>
+                Approve the extension from your wallet with a single passkey tap. It gets a secure
+                device key — bound to your account, and it expires automatically.
+              </p>
+            </div>
+            <div className="ext-step">
+              <span className="ext-num mono">02</span>
+              <h4>Connect to dApps</h4>
+              <p>
+                When a Stellar app requests access, the extension shows exactly which site is asking.
+                You approve per-origin — nothing connects silently.
+              </p>
+            </div>
+            <div className="ext-step">
+              <span className="ext-num mono">03</span>
+              <h4>Review &amp; sign</h4>
+              <p>
+                Every transaction is decoded and shown before you approve. Your spending limits and
+                policies are enforced on-chain — the extension can&apos;t bypass them.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* FEATURE GRID */}
       <section className="sec" id="features">
         <div className="wrap">
@@ -462,9 +505,8 @@ export default function Landing() {
             <div className="foot-cols">
               <div className="foot-col">
                 <h4>Product</h4>
-                <a href="#features">Features</a>
-                <a href="#wallet">Wallet</a>
-                <a href="#platforms">Extension</a>
+                <Link href="/app">Wallet</Link>
+                <a href="#extension">Extension</a>
                 <a href="#faq">FAQ</a>
               </div>
               <div className="foot-col">
@@ -476,8 +518,8 @@ export default function Landing() {
               </div>
               <div className="foot-col">
                 <h4>Company</h4>
-                <a href="#">About</a>
-                <a href="#">Security</a>
+                <Link href="/about">About</Link>
+                <a href="https://docs.vellar.xyz/docs/security">Security</a>
                 <a href="mailto:hey@vellar.xyz">Contact</a>
               </div>
             </div>
