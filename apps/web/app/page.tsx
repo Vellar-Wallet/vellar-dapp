@@ -85,7 +85,6 @@ const faqs = [
   {
     q: "Is VELA custodial?",
     a: "No. VELA is fully self-custodial — your account and keys live on Stellar and in your device's secure enclave. We never hold your funds or your passkeys.",
-    open: true,
   },
   {
     q: "What happens if I lose my device?",
@@ -408,7 +407,7 @@ export default function Landing() {
           </div>
           <div>
             {faqs.map((f) => (
-              <details className="fitem" key={f.q} open={f.open}>
+              <details className="fitem" key={f.q}>
                 <summary>
                   {f.q} <span className="pm">+</span>
                 </summary>
