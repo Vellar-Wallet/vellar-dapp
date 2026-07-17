@@ -464,10 +464,10 @@ export default function Landing() {
               </div>
               <div className="foot-col">
                 <h4>Developers</h4>
-                <a href="/docs">Documentation</a>
-                <a href="/docs/architecture">Architecture</a>
-                <a href="/docs/api-reference">API reference</a>
-                <a href="/docs/security-model">Security model</a>
+                <a href="https://sdk.vellar.xyz">Documentation</a>
+                <a href="https://sdk.vellar.xyz/docs/quickstart">Quickstart</a>
+                <a href="https://sdk.vellar.xyz/docs/api-reference">SDK reference</a>
+                <a href="https://github.com/Vellar-Wallet/vellar-sdk">GitHub</a>
               </div>
               <div className="foot-col">
                 <h4>Company</h4>
