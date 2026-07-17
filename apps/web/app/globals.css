@@ -1118,6 +1118,13 @@ a {
   color: var(--ink);
   cursor: pointer;
   font-size: 18px;
+  /* Center the chevron glyph in the circle. line-height:1 removes the glyph's
+     baseline gap so flex centering lands it dead-center. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
   transition:
     border-color 0.2s,
     color 0.2s;
