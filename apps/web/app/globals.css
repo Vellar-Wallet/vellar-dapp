@@ -822,7 +822,9 @@ a {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
-  margin-right: 4px;
+  /* Breathing room between the logo and the nav links — ~3em on desktop,
+     scaling down gracefully on tighter widths so nothing overflows. */
+  margin-right: clamp(1em, 3vw, 3em);
 }
 .brand img {
   height: 40px;
