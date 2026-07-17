@@ -27,7 +27,7 @@ export function LandingNav() {
           <a href="#faq" onClick={close}>
             FAQ
           </a>
-          <a href="https://vellar-sdk.vercel.app/docs/introduction" onClick={close}>
+          <a href="https://docs.vellar.xyz/" onClick={close}>
             Docs
           </a>
         </div>
