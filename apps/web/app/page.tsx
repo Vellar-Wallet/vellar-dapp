@@ -424,18 +424,24 @@ export default function Landing() {
           <div className="g1"></div>
           <div className="g2"></div>
           <h2 className="cta-try">
-            <span>Try</span>
+            <span>Try out the</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo-light.png" alt="Vellar" className="cta-try-logo" />
-            <span>today</span>
+            <span>SDK</span>
           </h2>
-          <p>Self-custodial and passkey-secured. Spin up a smart wallet in seconds.</p>
+          <p>
+            Add passkey login and a Stellar smart wallet to your app in minutes — self-custodial,
+            fee-sponsored, no seed phrases.
+          </p>
           <div className="hero-cta">
-            <Link href="/app" className="btn btn-glass btn-lg">
-              Launch web app
-            </Link>
-            <a href="#platforms" className="btn btn-glass btn-lg">
-              Get extension
+            <a href="https://sdk.vellar.xyz" className="btn btn-glass btn-lg">
+              Read the docs
+            </a>
+            <a
+              href="https://github.com/Vellar-Wallet/vellar-sdk"
+              className="btn btn-glass btn-lg"
+            >
+              View on GitHub
             </a>
           </div>
         </div>
