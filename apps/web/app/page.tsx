@@ -434,7 +434,7 @@ export default function Landing() {
             fee-sponsored, no seed phrases.
           </p>
           <div className="hero-cta">
-            <a href="https://sdk.vellar.xyz" className="btn btn-glass btn-lg">
+            <a href="https://docs.vellar.xyz" className="btn btn-glass btn-lg">
               Read the docs
             </a>
             <a
@@ -469,9 +469,9 @@ export default function Landing() {
               </div>
               <div className="foot-col">
                 <h4>Developers</h4>
-                <a href="https://sdk.vellar.xyz">Documentation</a>
-                <a href="https://sdk.vellar.xyz/docs/quickstart">Quickstart</a>
-                <a href="https://sdk.vellar.xyz/docs/api-reference">SDK reference</a>
+                <a href="https://docs.vellar.xyz">Documentation</a>
+                <a href="https://docs.vellar.xyz/docs/quickstart">Quickstart</a>
+                <a href="https://docs.vellar.xyz/docs/api-reference">SDK reference</a>
                 <a href="https://github.com/Vellar-Wallet/vellar-sdk">GitHub</a>
               </div>
               <div className="foot-col">
