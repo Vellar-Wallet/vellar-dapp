@@ -134,8 +134,8 @@ export default function Landing() {
             <Link href="/app" className="btn btn-signal btn-lg">
               Launch web app →
             </Link>
-            <a href="#platforms" className="btn btn-dark btn-lg">
-              Get the extension
+            <a href="https://docs.vellar.xyz/" className="btn btn-dark btn-lg">
+              Build with the SDK
             </a>
           </div>
         </div>
@@ -321,33 +321,33 @@ export default function Landing() {
               }}
             >
               <div className="pglow" style={{ background: "var(--signal)" }}></div>
-              <h3>Browser extension</h3>
+              <h3>Developer SDK</h3>
               <p>
-                Bring Vellar to any Stellar dApp — same passkey, same on-chain policies, one click to
-                connect.
+                Add passkey login and a Stellar smart wallet to your app in minutes — self-custodial,
+                fee-sponsored, no seed phrases.
               </p>
               <div className="pfoot">
-                <a href="#faq" className="btn btn-glass">
-                  Get the extension
+                <a href="https://docs.vellar.xyz/" className="btn btn-glass">
+                  Read the docs
                 </a>
               </div>
               <div className="mini">
                 <div className="miniui">
                   <div className="mr">
-                    <span>Stellar Lumens</span>
-                    <b>2500.00</b>
+                    <span className="mono">$ npm install vellar-sdk</span>
                   </div>
                   <div className="mr">
-                    <span>USD Coin</span>
-                    <b>100.00</b>
+                    <span className="mono" style={{ color: "var(--muted2)" }}>
+                      import {"{"} createVellarWallet {"}"}
+                    </span>
                   </div>
                   <div className="mr">
-                    <span>EUROC</span>
-                    <b>100.00</b>
+                    <span className="mono">await vellar.create()</span>
+                    <b style={{ color: "var(--signal)" }}>✓ passkey</b>
                   </div>
                   <div className="mr">
-                    <span>Connect</span>
-                    <b style={{ color: "var(--signal)" }}>✓ Verified</b>
+                    <span className="mono">await vellar.pay()</span>
+                    <b style={{ color: "var(--signal)" }}>✓ sent</b>
                   </div>
                 </div>
               </div>
