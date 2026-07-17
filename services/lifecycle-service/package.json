@@ -21,5 +21,8 @@
     "@vela/types": "workspace:*",
     "fastify": "^5.4.0",
     "zod": "^4.0.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

@@ -1,0 +1,22 @@
+{
+  "name": "@vela/all-in-one",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Combined single-process backend (gateway + wallet + lifecycle + policy) for demo/low-scale hosting",
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vela/api-gateway": "workspace:*",
+    "@vela/wallet-service": "workspace:*",
+    "@vela/lifecycle-service": "workspace:*",
+    "@vela/policy-service": "workspace:*",
+    "tsx": "^4.20.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

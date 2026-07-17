@@ -242,6 +242,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jiti@2.7.0)(jsdom@26.1.0)(lightningcss@1.32.0)(tsx@4.23.1)
 
+  services/all-in-one:
+    dependencies:
+      '@vela/api-gateway':
+        specifier: workspace:*
+        version: link:../api-gateway
+      '@vela/lifecycle-service':
+        specifier: workspace:*
+        version: link:../lifecycle-service
+      '@vela/policy-service':
+        specifier: workspace:*
+        version: link:../policy-service
+      '@vela/wallet-service':
+        specifier: workspace:*
+        version: link:../wallet-service
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.1
+    devDependencies:
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
   services/api-gateway:
     dependencies:
       '@fastify/cors':
