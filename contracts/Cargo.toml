@@ -1,0 +1,47 @@
+# VELA Soroban contract workspace.
+#
+# Dependency pins mirror the audited passkey-kit contract workspace
+# (kalepail/passkey-kit @ the v1 testnet manifest) so our policy contracts
+# compile against the SAME smart-wallet-interface the deployed wallet exposes.
+# smart-wallet-interface is NOT published to crates.io, so it comes in via git.
+#
+# Members are added as their owning phase lands (contracts/README.md):
+#   policy-templates/*  — Phase 5 (configurable policy contracts)
+#   smart-account/*     — reserved (we use passkey-kit's deployed wallet wasm)
+[workspace]
+resolver = "2"
+members = ["policy-templates/spending-limit"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["VELA"]
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+soroban-sdk = "27.0.0"
+# Pin ed25519-dalek to the 2.x line the audited workspace uses. soroban-env-host
+# 27 (pulled in via soroban-sdk's testutils) declares `ed25519-dalek >=2.0.0`,
+# so Cargo would otherwise resolve it to 3.x — whose CryptoRng bound the host's
+# test PRNG code doesn't satisfy, breaking the test build. Pinning `=2.2.0` here
+# and depending on it directly (see the crate's dev-deps) forces the shared node
+# to 2.2.0. Not otherwise used by our contract.
+ed25519-dalek = "=2.2.0"
+# The wallet interface the deployed passkey-kit smart wallet implements.
+# Pinned to an exact commit so the trait shape can't drift between builds
+# (the repo's git tags track the npm package version, not the contract crate,
+# so there is no matching semver tag to pin to).
+smart-wallet-interface = { git = "https://github.com/kalepail/passkey-kit", rev = "50981ccd5d2de654cf0e50633919cc9ba2df4e58" }
+
+# Match the audited workspace's release profile: overflow checks ON (policies
+# do checked arithmetic but defense-in-depth), panic=abort, size-optimized.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

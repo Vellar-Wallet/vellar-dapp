@@ -1,0 +1,16 @@
+{
+  "name": "@vela/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared UI primitives used by the web app and extension",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

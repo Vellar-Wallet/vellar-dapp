@@ -1,0 +1,25 @@
+{
+  "name": "@vela/lifecycle-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Account inspection, blocker detection, cleanup planning, merge validation",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.1",
+    "@vela/service-kit": "workspace:*",
+    "@vela/types": "workspace:*",
+    "fastify": "^5.4.0",
+    "zod": "^4.0.0"
+  }
+}

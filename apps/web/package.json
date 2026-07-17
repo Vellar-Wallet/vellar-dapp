@@ -1,0 +1,45 @@
+{
+  "name": "@vela/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "VELA primary web app: onboarding, dashboard, policy builder, verification console, cleanup wizard",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.1.0",
+    "@stellar/stellar-sdk": "^16.0.1",
+    "@tanstack/react-query": "^5.83.0",
+    "@vela/passkey": "workspace:*",
+    "@vela/provider-sdk": "workspace:*",
+    "@vela/types": "workspace:*",
+    "@vela/wallet-sdk": "workspace:*",
+    "next": "^16.0.0",
+    "passkey-kit": "^0.14.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-hook-form": "^7.60.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@tailwindcss/postcss": "^4.1.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "jsdom": "^26.1.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  }
+}

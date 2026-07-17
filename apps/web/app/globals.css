@@ -1,0 +1,1830 @@
+@import "tailwindcss";
+
+/* ============================================================
+   VELA design system (single source of truth: design.md).
+   Never hardcode hex in components — reference these tokens.
+   ============================================================ */
+:root {
+  /* Surfaces (darkest → lightest) */
+  --bg: #060a09;
+  --bg2: #0a100e;
+  --surface: #111a17;
+  --surface2: #0d1613;
+  --line: rgba(255, 255, 255, 0.09);
+
+  /* Brand greens */
+  --green: #13594d;
+  --green-mid: #1f8a72;
+  --signal: #3ee6ad;
+  --lime: #c8f048;
+
+  /* Text */
+  --ink: #eff5f2;
+  --muted: rgba(239, 245, 242, 0.74);
+  --muted2: rgba(239, 245, 242, 0.56);
+
+  /* Semantic */
+  --negative: #ff6b5e;
+  --chip: rgba(255, 255, 255, 0.06); /* subtle chip/icon fill; flips in light */
+
+  /* Neomorphic (dark) — raised surfaces get a light top-left highlight and a
+     dark bottom-right shadow; inset wells reverse it. App shell only. */
+  --neo-bg: #0a0f0d;
+  --neo-surface: #0e1512;
+  --neo-light: rgba(62, 230, 173, 0.06);
+  --neo-shadow: rgba(0, 0, 0, 0.66);
+  --neo-raised:
+    -6px -6px 16px var(--neo-light), 8px 8px 20px var(--neo-shadow);
+  --neo-raised-sm:
+    -3px -3px 8px var(--neo-light), 4px 4px 10px var(--neo-shadow);
+  --neo-inset:
+    inset 4px 4px 10px var(--neo-shadow), inset -4px -4px 10px var(--neo-light);
+}
+
+/* Light theme — flips surfaces/text; signal green stays the accent. The
+   neomorphic soft look comes into its own here (white raised cards).
+   Uses :where() so the base :root dark values (below) don't out-specify it. */
+:root[data-theme="light"],
+html[data-theme="light"] {
+  --bg: #eef2f0;
+  --bg2: #e6ece9;
+  --surface: #ffffff;
+  --surface2: #f2f6f4;
+  --line: rgba(6, 10, 9, 0.1);
+
+  --signal: #10b981; /* deeper green — legible on light */
+  --ink: #0d1a15;
+  --muted: rgba(13, 26, 21, 0.72);
+  --muted2: rgba(13, 26, 21, 0.52);
+  --chip: rgba(13, 26, 21, 0.06);
+
+  --neo-bg: #eef2f0;
+  --neo-surface: #f4f8f6;
+  --neo-light: rgba(255, 255, 255, 0.9);
+  --neo-shadow: rgba(6, 10, 9, 0.14);
+  --neo-raised:
+    -6px -6px 16px var(--neo-light), 8px 8px 20px var(--neo-shadow);
+  --neo-raised-sm:
+    -3px -3px 8px var(--neo-light), 4px 4px 10px var(--neo-shadow);
+  --neo-inset:
+    inset 4px 4px 10px var(--neo-shadow), inset -4px -4px 10px var(--neo-light);
+}
+
+/* ---- App shell layout (responsive) ----
+   Desktop: fixed left sidebar + content. Mobile (<=760px): sidebar becomes a
+   fixed bottom tab bar and content goes full-width. Inline styles can't hold
+   media queries, so the shell structure lives here. */
+.shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--neo-bg);
+}
+/* Shared header band height so the sidebar's logo divider and the topbar's
+   bottom border land at the SAME Y — reading as one line across the dashboard.
+   Must be tall enough to contain the topbar's address button + network line so
+   its content never pushes the border past this height. */
+:root {
+  --shell-header-h: 92px;
+}
+
+.shell-side {
+  width: 224px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* No top padding: the logo band owns the header height, then nav items start
+     below the divider (which aligns with the topbar border). */
+  padding: 0 16px 24px;
+  border-right: 1px solid var(--line);
+}
+.shell-logo {
+  display: flex;
+  align-items: center;
+  /* Left padding matches the nav items (14px) so the mark lines up with the
+     labels. Fixed height + border-box makes the bottom border sit exactly at
+     --shell-header-h, aligning it with the topbar border on the right. */
+  box-sizing: border-box;
+  height: var(--shell-header-h);
+  padding: 0 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.shell-navitem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.shell-navitem.active {
+  color: var(--signal);
+  box-shadow: var(--neo-inset);
+  background: var(--neo-bg);
+}
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.shell-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* FIXED height (not min-height) + border-box, identical to .shell-logo, so
+     the two bottom borders land at the same Y — one line across. A fixed height
+     means the content is centered inside it and can never push the border down.
+     No flex-wrap on desktop: wrapping would add a row and break the alignment. */
+  box-sizing: border-box;
+  height: var(--shell-header-h);
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+}
+.shell-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.shell-content {
+  padding: 24px;
+  flex: 1;
+  padding-bottom: 24px;
+}
+.shell-tablabel {
+  display: inline;
+}
+
+@media (max-width: 760px) {
+  .shell {
+    flex-direction: column;
+  }
+  /* Sidebar → fixed bottom tab bar */
+  .shell-side {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    width: auto;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    gap: 0;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+    border-right: none;
+    border-top: 1px solid var(--line);
+    background: var(--neo-surface);
+  }
+  .shell-logo {
+    display: none; /* logo moves to the topbar on mobile */
+  }
+  .shell-navitem {
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
+    font-size: 11px;
+    border-radius: 12px;
+  }
+  .shell-content {
+    padding: 16px;
+    padding-bottom: 90px; /* clear the fixed tab bar */
+  }
+  .shell-top {
+    /* Mobile: no sidebar to align with. Stack the identity row above a
+       full-width action row instead of cramming everything on one wrapping
+       line. */
+    height: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    padding: 14px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--neo-bg);
+  }
+  .shell-mobile-logo {
+    display: flex !important;
+    align-items: center;
+  }
+  /* Action buttons: natural width, left-aligned, wrapping when the row runs
+     out of space. NOT stretched — full-width stretched buttons looked bad. */
+  .shell-actions {
+    width: 100%;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  /* Only normalize HEIGHT/padding so Send (btn-signal/btn-sm) and Receive/
+     Disconnect (neo-btn) match — their base classes carry different sizes. */
+  .shell-actions > .btn,
+  .shell-actions > .neo-btn:not([aria-label="Toggle light/dark theme"]) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 40px;
+    padding: 0 18px !important;
+    font-size: 14px !important;
+  }
+  /* The theme toggle: fixed 40×40 square, matching the button row height. */
+  .shell-actions > .neo-btn[aria-label="Toggle light/dark theme"] {
+    width: 40px !important;
+    height: 40px !important;
+    flex-shrink: 0;
+  }
+  /* Content grids stack to a single column */
+  .panel-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ---- Neomorphic app shell ---- */
+.neo {
+  background: var(--neo-surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--neo-raised);
+}
+.neo-inset {
+  background: var(--neo-bg);
+  border-radius: 14px;
+  box-shadow: var(--neo-inset);
+}
+.neo-btn {
+  background: var(--neo-surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--neo-raised-sm);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    box-shadow 0.15s,
+    color 0.15s,
+    transform 0.12s;
+}
+.neo-btn:hover {
+  color: var(--signal);
+  transform: translateY(-1px);
+}
+.neo-btn:active {
+  box-shadow: var(--neo-inset);
+  transform: none;
+}
+.neo-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--neo-surface);
+  box-shadow: var(--neo-raised-sm);
+  display: grid;
+  place-items: center;
+  color: var(--signal);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition:
+    box-shadow 0.15s,
+    transform 0.12s;
+}
+.neo-icon:hover {
+  transform: translateY(-1px);
+}
+.neo-icon:active {
+  box-shadow: var(--neo-inset);
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Plus Jakarta Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+h1,
+h2,
+h3,
+.display {
+  font-family: "Clash Display", "Plus Jakarta Sans", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.mono {
+  font-family: "Space Mono", monospace;
+}
+a {
+  color: var(--signal);
+}
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(62, 230, 173, 0.35);
+}
+
+.wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.eyebrow {
+  font-family: "Space Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+
+/* Buttons — pill, one signal action per view */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: "Plus Jakarta Sans", sans-serif;
+  transition:
+    transform 0.12s,
+    box-shadow 0.2s,
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+.btn:hover {
+  transform: translateY(-1px);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+.btn-signal {
+  background: var(--signal);
+  color: #04120c;
+  padding: 12px 24px;
+  font-size: 15px;
+}
+.btn-signal:hover {
+  box-shadow: 0 10px 30px rgba(62, 230, 173, 0.32);
+}
+.btn-dark {
+  background: var(--surface2);
+  color: var(--ink);
+  padding: 12px 24px;
+  font-size: 15px;
+  border: 1px solid var(--line);
+}
+.btn-dark:hover {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+.btn-glass {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 14px 26px;
+  font-size: 15px;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.btn-glass:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.btn-lg {
+  padding: 15px 30px;
+  font-size: 16px;
+}
+.btn-sm {
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+/* Card / panel — the floating surface */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 22px;
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
+}
+.pc-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--chip);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+
+/* Inset field (surface2 well nested in a card) */
+.field {
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.field .lbl {
+  font-size: 11px;
+  color: var(--muted2);
+  font-family: "Space Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.field .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.field .amt {
+  font-family: "Clash Display", sans-serif;
+  font-size: 26px;
+}
+.field .sub {
+  font-size: 11px;
+  color: var(--muted2);
+  margin-top: 6px;
+  display: flex;
+  justify-content: space-between;
+}
+.field input,
+.field textarea {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--ink);
+  width: 100%;
+  font-family: inherit;
+}
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--muted2);
+}
+
+/* Modern stacked form field: mono uppercase label ABOVE a full-width inset
+   input. Label never shares a row with the value (fixes the collision). */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.form-field > .flabel {
+  font-family: "Space Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted2);
+}
+.form-field > input,
+.form-field > textarea {
+  width: 100%;
+  background: var(--neo-bg, var(--surface2));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--neo-inset);
+  padding: 14px 16px;
+  color: var(--ink);
+  font-family: "Space Mono", monospace;
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.form-field > input::placeholder,
+.form-field > textarea::placeholder {
+  color: var(--muted2);
+}
+.form-field > input:focus,
+.form-field > textarea:focus {
+  border-color: var(--signal);
+  box-shadow:
+    var(--neo-inset),
+    0 0 0 3px rgba(62, 230, 173, 0.22);
+}
+.form-field.amount > input {
+  font-family: "Clash Display", sans-serif;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.form-field > .ferror {
+  font-size: 12px;
+  color: var(--negative);
+}
+
+/* Token pill */
+.token {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--chip);
+  border-radius: 999px;
+  padding: 5px 10px 5px 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.token i {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--signal), var(--green-mid));
+  display: block;
+}
+.token.usdc i {
+  background: linear-gradient(135deg, #4da8ff, #2f6bd6);
+}
+
+/* Segmented chips + the active-state formula */
+.chips {
+  display: flex;
+  gap: 8px;
+}
+.chips b {
+  flex: 1;
+  text-align: center;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chips b.on,
+.active-state {
+  background: rgba(62, 230, 173, 0.12);
+  border-color: rgba(62, 230, 173, 0.4);
+  color: var(--signal);
+}
+
+/* Token/asset list row */
+.tokrow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+.tokrow .ti {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--signal), var(--green-mid));
+  flex-shrink: 0;
+}
+.tokrow.usdc .ti {
+  background: linear-gradient(135deg, #4da8ff, #2f6bd6);
+}
+.tokrow .tn {
+  flex: 1;
+}
+.tokrow .tn b {
+  display: block;
+  font-size: 14px;
+}
+.tokrow .tn span {
+  font-size: 12px;
+  color: var(--muted2);
+}
+.tokrow .tv {
+  text-align: right;
+}
+.tokrow .tv b {
+  display: block;
+  font-size: 14px;
+}
+.tokrow .tv span {
+  font-size: 12px;
+  color: var(--signal);
+}
+
+/* Balance header + quick actions */
+.acct {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.bal {
+  font-family: "Clash Display", sans-serif;
+  font-size: 40px;
+  text-align: center;
+  margin: 6px 0 20px;
+}
+.actions {
+  display: flex;
+  justify-content: space-between;
+}
+.actions .a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+.actions .a i {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--signal);
+  font-style: normal;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.tabs .off {
+  color: var(--muted2);
+}
+
+/* Trust / verified badge */
+.verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(62, 230, 173, 0.12);
+  border: 1px solid rgba(62, 230, 173, 0.3);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Pulse "live" dot */
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 0 rgba(62, 230, 173, 0.6);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(62, 230, 173, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(62, 230, 173, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(62, 230, 173, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}
+
+/* Section header */
+.sec {
+  padding: 96px 0;
+  position: relative;
+}
+.sec-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 44px;
+  flex-wrap: wrap;
+}
+.sec-head h2 {
+  font-size: clamp(2rem, 4.4vw, 3.4rem);
+}
+.sec-head .eyebrow {
+  display: block;
+  margin-bottom: 16px;
+}
+.sec-head p {
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.6;
+  max-width: 520px;
+  margin-top: 16px;
+}
+
+/* Feature grid (hairline-separated cells) */
+.fgrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  overflow: hidden;
+}
+.fcell {
+  background: var(--bg);
+  padding: 30px;
+}
+.fcell .ico {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: rgba(62, 230, 173, 0.1);
+  display: grid;
+  place-items: center;
+  color: var(--signal);
+  margin-bottom: 16px;
+}
+.fcell h4 {
+  font-size: 16px;
+  margin-bottom: 8px;
+  font-family: "Plus Jakarta Sans", sans-serif;
+  font-weight: 800;
+}
+.fcell p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* ============================================================
+   Marketing landing (reference build: landing-page/VELA Landing.html)
+   The landing is dark-committed by design (aurora hero, glass nav). Pin the
+   dark palette locally so the app's light-mode toggle never washes it out.
+   ============================================================ */
+.landing-root {
+  --bg: #060a09;
+  --bg2: #0a100e;
+  --surface: #111a17;
+  --surface2: #0d1613;
+  --line: rgba(255, 255, 255, 0.09);
+  --signal: #3ee6ad;
+  --ink: #eff5f2;
+  --muted: rgba(239, 245, 242, 0.74);
+  --muted2: rgba(239, 245, 242, 0.56);
+  --chip: rgba(255, 255, 255, 0.06);
+  background: var(--bg);
+  color: var(--ink);
+  display: block;
+}
+.nav-outer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  padding: 18px 16px;
+  pointer-events: none;
+}
+.nav {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(13, 20, 18, 0.72);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 8px 8px 18px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  width: 616px;
+  max-width: 100%;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand img {
+  height: 56px;
+  width: auto;
+  display: block;
+}
+.nav-links {
+  display: flex;
+  gap: 2px;
+  margin: 0 8px;
+}
+.nav-links a {
+  padding: 9px 15px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.nav-links a:hover {
+  background: var(--chip);
+  color: var(--signal);
+}
+.nav-toggle {
+  display: none;
+}
+
+.hero {
+  position: relative;
+  padding: 150px 0 0;
+  text-align: center;
+  overflow: hidden;
+}
+.hero:after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 440px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(6, 10, 9, 0.55) 46%,
+    rgba(6, 10, 9, 0.9) 74%,
+    var(--bg) 100%
+  );
+  z-index: 1;
+  pointer-events: none;
+}
+.aurora {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+.aurora:before,
+.aurora:after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.55;
+  animation: drift 16s ease-in-out infinite;
+}
+.aurora:before {
+  width: 820px;
+  height: 620px;
+  background: radial-gradient(circle at 30% 30%, var(--green-mid), transparent 62%);
+  top: -160px;
+  left: 8%;
+}
+.aurora:after {
+  width: 720px;
+  height: 560px;
+  background: radial-gradient(circle at 60% 40%, var(--signal), transparent 60%);
+  top: -120px;
+  right: 6%;
+  opacity: 0.32;
+  animation-delay: -6s;
+}
+.aurora .blob3 {
+  position: absolute;
+  width: 640px;
+  height: 500px;
+  border-radius: 50%;
+  filter: blur(100px);
+  background: radial-gradient(circle, var(--green), transparent 65%);
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0.4;
+}
+.aurora canvas.waves {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-24px, 24px) scale(1.08);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aurora:before,
+  .aurora:after {
+    animation: none;
+  }
+}
+.hero-inner {
+  position: relative;
+  z-index: 2;
+}
+.hero-inner:before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -40px;
+  transform: translateX(-50%);
+  width: min(920px, 96%);
+  height: 640px;
+  background: radial-gradient(
+    ellipse 60% 55% at 50% 42%,
+    rgba(6, 10, 9, 0.88),
+    rgba(6, 10, 9, 0.55) 55%,
+    transparent 78%
+  );
+  z-index: -1;
+  pointer-events: none;
+}
+.hero .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid rgba(62, 230, 173, 0.28);
+  border-radius: 999px;
+  background: rgba(62, 230, 173, 0.06);
+}
+.hero h1 {
+  font-size: clamp(2.6rem, 6.4vw, 5.2rem);
+  margin: 26px auto 0;
+  max-width: 15ch;
+  line-height: 0.98;
+}
+.hero h1 .g {
+  background: linear-gradient(120deg, var(--signal), var(--lime));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.hero-sub {
+  font-size: clamp(1.05rem, 1.5vw, 1.2rem);
+  color: rgba(239, 245, 242, 0.82);
+  line-height: 1.55;
+  max-width: 560px;
+  margin: 24px auto 0;
+}
+.hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 34px;
+}
+
+.stage {
+  position: relative;
+  z-index: 2;
+  margin-top: 64px;
+  height: 430px;
+}
+.stage-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 22px;
+  padding: 0 24px;
+  -webkit-mask-image: linear-gradient(#000 62%, transparent 99%);
+  mask-image: linear-gradient(#000 62%, transparent 99%);
+}
+.pcard {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.pcard.swap {
+  width: 320px;
+  padding: 22px;
+  transform: translateY(30px);
+}
+.pcard.dash {
+  width: 340px;
+  padding: 22px;
+  z-index: 3;
+}
+.pcard.trend {
+  width: 320px;
+  padding: 20px;
+  transform: translateY(30px);
+}
+.pc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.pcard .field {
+  margin-bottom: 8px;
+}
+.promo {
+  border-radius: 16px;
+  padding: 18px;
+  background: linear-gradient(135deg, var(--green), var(--green-mid));
+  position: relative;
+  overflow: hidden;
+  height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.promo .pv {
+  position: absolute;
+  right: -10px;
+  top: -10px;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(200, 240, 72, 0.35);
+  filter: blur(6px);
+}
+.promo b {
+  font-size: 15px;
+}
+.promo .pt {
+  font-size: 11px;
+  font-family: "Space Mono", monospace;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.1em;
+}
+.rlist {
+  margin-top: 14px;
+}
+.rrow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 0;
+}
+.rrow .ri {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.rrow .rn {
+  flex: 1;
+}
+.rrow .rn b {
+  display: block;
+  font-size: 13px;
+}
+.rrow .rn span {
+  font-size: 11px;
+  color: var(--muted2);
+}
+.rrow .open {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--signal);
+  background: rgba(62, 230, 173, 0.1);
+  border-radius: 999px;
+  padding: 6px 13px;
+}
+
+.arrows {
+  display: flex;
+  gap: 10px;
+}
+.arrows button {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 18px;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+.arrows button:hover {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+.rail {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+}
+.rail::-webkit-scrollbar {
+  display: none;
+}
+.rcard {
+  scroll-snap-align: start;
+  flex: 0 0 300px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 22px;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+.rcard .rc-vis {
+  flex: 1;
+  border-radius: 16px;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+}
+.rcard .rc-vis .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--signal);
+  color: #04120c;
+  font-weight: 800;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 15px;
+}
+.rcard .rc-vis .rings {
+  position: absolute;
+  inset: 0;
+  background: repeating-radial-gradient(
+    circle at 50% 50%,
+    transparent 0 18px,
+    rgba(255, 255, 255, 0.05) 18px 19px
+  );
+}
+.rcard .rc-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rcard .rc-foot i {
+  color: var(--signal);
+  font-style: normal;
+}
+.rcard .rc-foot b {
+  font-family: "Clash Display", sans-serif;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.plat {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+.platcard {
+  position: relative;
+  border-radius: 26px;
+  overflow: hidden;
+  min-height: 340px;
+  padding: 34px;
+  background: linear-gradient(135deg, var(--green), var(--green-mid) 60%, #0f3d33);
+  display: flex;
+  flex-direction: column;
+}
+.platcard h3 {
+  font-size: 28px;
+  color: #fff;
+  max-width: 8ch;
+}
+.platcard p {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 15px;
+  margin-top: 12px;
+  max-width: 26ch;
+  line-height: 1.5;
+}
+.platcard .pglow {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: var(--lime);
+  filter: blur(70px);
+  opacity: 0.4;
+  top: -40px;
+  right: -30px;
+}
+.platcard .pfoot {
+  margin-top: auto;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 2;
+}
+.platcard .mini {
+  position: absolute;
+  right: -20px;
+  bottom: -10px;
+  width: 230px;
+  opacity: 0.95;
+  filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.4));
+}
+.miniui {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px 16px 0 0;
+  padding: 16px;
+  font-size: 12px;
+}
+.miniui .mr {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.miniui .mr:last-child {
+  border: none;
+}
+.miniui .mr b {
+  color: var(--ink);
+}
+
+.faq-grid {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 56px;
+  align-items: start;
+}
+.faq-grid h2 {
+  font-size: clamp(2rem, 4.4vw, 3.2rem);
+}
+.fitem {
+  border-bottom: 1px solid var(--line);
+}
+.fitem summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 24px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  font-weight: 600;
+  font-size: 18px;
+}
+.fitem summary::-webkit-details-marker {
+  display: none;
+}
+.fitem summary .pm {
+  color: var(--signal);
+  font-size: 22px;
+  transition: transform 0.2s;
+}
+.fitem[open] summary .pm {
+  transform: rotate(45deg);
+}
+.fitem .fbody {
+  padding: 0 0 24px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 60ch;
+}
+
+.cta {
+  position: relative;
+  border-radius: 32px;
+  overflow: hidden;
+  padding: 80px 40px;
+  text-align: center;
+  background: linear-gradient(135deg, var(--green), var(--green-mid) 55%, #0f3d33);
+}
+.cta .g1 {
+  position: absolute;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: var(--signal);
+  filter: blur(90px);
+  opacity: 0.35;
+  top: -120px;
+  left: 10%;
+}
+.cta .g2 {
+  position: absolute;
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  background: var(--lime);
+  filter: blur(90px);
+  opacity: 0.3;
+  bottom: -120px;
+  right: 12%;
+}
+.cta h2 {
+  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  color: #fff;
+  position: relative;
+}
+.cta p {
+  color: rgba(255, 255, 255, 0.82);
+  margin-top: 12px;
+  position: relative;
+  font-size: 17px;
+}
+.cta .hero-cta {
+  margin-top: 30px;
+}
+/* "Try [logo] today" — always one line; logo scales with the heading. */
+.cta-try {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.cta-try-logo {
+  height: 0.9em;
+  width: auto;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+footer.site {
+  padding: 56px 0 40px;
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+}
+.foot-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 40px;
+  flex-wrap: wrap;
+  padding-bottom: 36px;
+}
+.foot-brand {
+  max-width: 280px;
+}
+.foot-brand img {
+  height: 52px;
+  margin-bottom: 14px;
+}
+.foot-brand p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.foot-cols {
+  display: flex;
+  gap: 56px;
+  flex-wrap: wrap;
+}
+.foot-col h4 {
+  font-family: "Space Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  margin-bottom: 14px;
+}
+.foot-col a {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 5px 0;
+}
+.foot-col a:hover {
+  color: var(--signal);
+}
+.foot-bot {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted2);
+}
+
+@media (max-width: 900px) {
+  .nav {
+    width: 100%;
+    justify-content: space-between;
+    padding: 8px 8px 8px 14px;
+  }
+  .nav > .btn {
+    margin-left: auto; /* push Launch app + toggle to the right */
+  }
+  .brand img {
+    height: 40px;
+  }
+  .nav-links {
+    display: none;
+  }
+  .nav-links.open {
+    display: flex;
+    position: absolute;
+    top: 70px;
+    left: 16px;
+    right: 16px;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 10px;
+  }
+  .nav-toggle {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--chip);
+    border: none;
+    color: var(--ink);
+    cursor: pointer;
+    font-size: 18px;
+  }
+  .stage {
+    height: auto;
+    margin-top: 40px;
+  }
+  .stage-mask {
+    position: static;
+    flex-wrap: nowrap;
+    justify-content: center;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .pcard {
+    transform: none !important;
+  }
+  /* Only the dashboard mockup on mobile — three stacked cards made the hero
+     scroll forever. The others live on the wider viewport. */
+  .pcard.swap,
+  .pcard.trend {
+    display: none;
+  }
+  .pcard.dash {
+    width: 100%;
+    max-width: 360px;
+  }
+  .plat {
+    grid-template-columns: 1fr;
+  }
+  .fgrid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .faq-grid {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+}
+@media (max-width: 560px) {
+  /* Keep the feature grid 2-up on phones — one column stacked 9 tall cells,
+     which was the biggest single source of mobile scroll. */
+  .fgrid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .fcell {
+    padding: 18px 16px;
+  }
+  .fcell h4 {
+    font-size: 14px;
+  }
+  .fcell p {
+    font-size: 12.5px;
+  }
+  .sec {
+    padding: 56px 0;
+  }
+  .hero {
+    padding-top: 130px;
+  }
+  .cta {
+    padding: 56px 24px;
+  }
+}
+
+/* ============================================================
+   Documentation site (/docs) — brand-matched docs UI
+   ============================================================ */
+.docs-root {
+  min-height: 100vh;
+  background: var(--neo-bg);
+  color: var(--ink);
+}
+
+/* Topbar */
+.docs-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 64px;
+  padding: 0 24px;
+  background: color-mix(in srgb, var(--neo-bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.docs-brand {
+  display: flex;
+  align-items: center;
+}
+.docs-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted2);
+}
+.docs-topbar-spacer {
+  flex: 1;
+}
+.docs-launch {
+  white-space: nowrap;
+}
+
+/* Body: sidebar + content */
+.docs-body {
+  display: flex;
+  align-items: flex-start;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.docs-sidebar {
+  position: sticky;
+  top: 64px;
+  flex-shrink: 0;
+  width: 244px;
+  height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: 28px 16px;
+  border-right: 1px solid var(--line);
+}
+.docs-nav-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  margin: 0 0 12px 12px;
+}
+.docs-nav-link {
+  display: block;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  transition: color 0.15s, background 0.15s;
+}
+.docs-nav-link:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--neo-surface) 60%, transparent);
+}
+.docs-nav-link.active {
+  color: var(--signal);
+  background: var(--neo-bg);
+  box-shadow: var(--neo-inset);
+  font-weight: 700;
+}
+
+/* Content column */
+.docs-content {
+  flex: 1;
+  min-width: 0;
+  padding: 40px clamp(20px, 5vw, 64px) 96px;
+}
+.docs-article {
+  max-width: 760px;
+}
+.docs-title {
+  font-family: "Clash Display", sans-serif;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 6px 0 28px;
+}
+
+/* Prose typography */
+.docs-prose {
+  font-size: 15.5px;
+  line-height: 1.72;
+  color: var(--ink);
+}
+.docs-prose h2 {
+  font-family: "Clash Display", sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 44px 0 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.docs-prose h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 30px 0 10px;
+}
+.docs-prose h4 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 22px 0 8px;
+}
+.docs-prose p {
+  margin: 14px 0;
+  color: var(--muted);
+}
+.docs-prose strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+.docs-prose a {
+  color: var(--signal);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--signal) 40%, transparent);
+}
+.docs-prose a:hover {
+  border-bottom-color: var(--signal);
+}
+.docs-prose ul,
+.docs-prose ol {
+  margin: 14px 0;
+  padding-left: 22px;
+  color: var(--muted);
+}
+.docs-prose li {
+  margin: 6px 0;
+}
+.docs-prose li::marker {
+  color: var(--muted2);
+}
+
+/* Inline + block code */
+.docs-prose code {
+  font-family: "Space Mono", monospace;
+  font-size: 0.86em;
+  background: var(--neo-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--signal);
+}
+.docs-prose pre {
+  background: var(--neo-bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  margin: 18px 0;
+  box-shadow: var(--neo-inset);
+}
+.docs-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Tables */
+.docs-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+  font-size: 14px;
+  display: block;
+  overflow-x: auto;
+}
+.docs-prose th,
+.docs-prose td {
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+}
+.docs-prose th {
+  background: var(--neo-surface);
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.docs-prose td {
+  color: var(--muted);
+}
+
+/* Blockquote (used for notes/callouts) */
+.docs-prose blockquote {
+  margin: 18px 0;
+  padding: 12px 18px;
+  border-left: 3px solid var(--signal);
+  background: color-mix(in srgb, var(--signal) 7%, transparent);
+  border-radius: 0 12px 12px 0;
+}
+.docs-prose blockquote p {
+  margin: 6px 0;
+  color: var(--ink);
+}
+.docs-prose hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 36px 0;
+}
+
+/* Prev/next pager */
+.docs-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 56px;
+}
+.docs-pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 20px;
+  border-radius: 16px;
+  min-width: 180px;
+  transition: transform 0.12s, box-shadow 0.2s;
+}
+.docs-pager-link:hover {
+  transform: translateY(-2px);
+}
+.docs-pager-next {
+  text-align: right;
+  align-items: flex-end;
+}
+.docs-pager-dir {
+  font-size: 12px;
+  color: var(--muted2);
+}
+.docs-pager-title {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* Mobile menu button — hidden on desktop */
+.docs-menu-btn {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .docs-eyebrow {
+    display: none;
+  }
+  .docs-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 60;
+  }
+  /* Sidebar becomes an off-canvas drawer */
+  .docs-sidebar {
+    position: fixed;
+    top: 64px;
+    left: 0;
+    z-index: 55;
+    height: calc(100vh - 64px);
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    background: var(--neo-surface);
+  }
+  .docs-sidebar.open {
+    transform: translateX(0);
+  }
+  .docs-content {
+    padding: 28px 20px 96px;
+  }
+}

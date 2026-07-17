@@ -1,0 +1,9 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "services/*"
+allowBuilds:
+  esbuild: true
+  sharp: true
+  spawn-sync: false
+  "@tailwindcss/oxide": true

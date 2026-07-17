@@ -1,0 +1,10 @@
+# Source-of-truth docs — never reformat (see CLAUDE.md)
+idea.md
+technical-doc.md
+
+pnpm-lock.yaml
+.next/
+.output/
+.wxt/
+.turbo/
+dist/

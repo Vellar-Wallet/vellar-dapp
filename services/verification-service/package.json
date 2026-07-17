@@ -1,0 +1,16 @@
+{
+  "name": "@vela/verification-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Verification submissions, source bundle metadata, artifact comparison, status APIs",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@vela/wallet-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Wallet metadata, account preferences, session/device records, audit logs",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.0",
+    "@vela/service-kit": "workspace:*",
+    "@vela/types": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.4.0",
+    "passkey-kit": "^0.14.0",
+    "pg": "^8.22.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  }
+}

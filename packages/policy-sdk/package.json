@@ -1,0 +1,16 @@
+{
+  "name": "@vela/policy-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Policy client: authoring, validation, serialization, simulation, deployment helpers",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,0 +1,35 @@
+# Local dev dependencies (technical-doc.md §6.4): Postgres + Redis.
+# Usage: docker compose -f infra/docker/docker-compose.yml up -d
+# Host ports are offset (5433/6380) to avoid colliding with other local
+# Postgres/Redis instances.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vela
+      POSTGRES_PASSWORD: vela
+      POSTGRES_DB: vela
+    ports:
+      - "5433:5432"
+    volumes:
+      # Creates the vela_test database on first boot (integration tests only).
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vela"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

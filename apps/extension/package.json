@@ -1,0 +1,33 @@
+{
+  "name": "@vela/extension",
+  "version": "0.0.0",
+  "private": true,
+  "description": "VELA companion extension: dApp connection approvals, signing popup, account quick access",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "postinstall": "wxt prepare",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.1",
+    "@vela/provider-sdk": "workspace:*",
+    "@vela/types": "workspace:*",
+    "@vela/wallet-sdk": "workspace:*",
+    "buffer": "^6.0.3",
+    "passkey-kit": "^0.14.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@wxt-dev/module-react": "^1.1.3",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.7",
+    "wxt": "^0.20.0"
+  }
+}

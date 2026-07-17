@@ -1,0 +1,49 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+.next/
+out/
+.turbo/
+target/
+.wxt/
+.output/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# test artifacts
+playwright-report/
+test-results/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test coverage
+coverage/
+
+# ── IP / strategy docs — kept private for now (competitive vision, roadmap,
+#    design reasoning, decision log). NOT needed to run or contribute to the
+#    code; the public developer docs live in apps/docs and README.md.
+idea.md
+technical-doc.md
+BUILD-PLAN.md
+design.md
+CLAUDE.md
+docs/decisions.md
+docs/sdk-product-direction.md
+landing-page/

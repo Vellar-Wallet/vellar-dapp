@@ -1,0 +1,16 @@
+{
+  "name": "@vela/permission-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "dApp origin permissions, extension connection records, revocation state",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

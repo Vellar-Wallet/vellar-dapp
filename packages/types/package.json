@@ -1,0 +1,16 @@
+{
+  "name": "@vela/types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared domain types for wallet, policy, verification, and lifecycle modules",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

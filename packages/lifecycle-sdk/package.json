@@ -1,0 +1,16 @@
+{
+  "name": "@vela/lifecycle-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Account lifecycle client: inspection, cleanup planning, merge helpers",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

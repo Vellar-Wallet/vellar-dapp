@@ -1,0 +1,16 @@
+{
+  "name": "@vela/worker-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Async jobs: deterministic build workers, retries, dead-letter handling, heavy simulations",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
