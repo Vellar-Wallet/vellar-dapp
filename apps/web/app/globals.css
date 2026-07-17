@@ -781,6 +781,11 @@ a {
   --muted: rgba(239, 245, 242, 0.74);
   --muted2: rgba(239, 245, 242, 0.56);
   --chip: rgba(255, 255, 255, 0.06);
+  /* Also pin the neo tokens dark — the landing/about pages are dark-committed,
+     so cards using --neo-surface must NOT flip to the light palette (which left
+     light text on white cards, invisible). */
+  --neo-bg: #0a0f0d;
+  --neo-surface: #0e1512;
   background: var(--bg);
   color: var(--ink);
   display: block;
