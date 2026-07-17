@@ -800,30 +800,36 @@ a {
   pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   background: rgba(13, 20, 18, 0.72);
   backdrop-filter: blur(18px);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 8px 8px 8px 18px;
+  padding: 8px 8px 8px 20px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
-  width: 616px;
-  max-width: 100%;
+  /* Size to content (not a fixed width) so the logo + links + button always
+     fit without squeezing the logo. Cap the width so it stays a centered pill. */
+  width: auto;
+  max-width: min(100%, 720px);
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+  margin-right: 4px;
 }
 .brand img {
-  height: 56px;
+  height: 40px;
   width: auto;
   display: block;
+  flex-shrink: 0;
 }
 .nav-links {
   display: flex;
   gap: 2px;
-  margin: 0 8px;
+  margin: 0 4px;
+  flex-shrink: 0;
 }
 .nav-links a {
   padding: 9px 15px;
