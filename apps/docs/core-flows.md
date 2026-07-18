@@ -43,7 +43,7 @@ a biometric prompt → "Payment confirmed", balance updates.
 **What happens:**
 
 1. `PaymentClient` builds the SAC transfer. The build **simulates**, so failures
-   (e.g. insufficient balance) surface *before* any signing prompt.
+   (e.g. insufficient balance) surface _before_ any signing prompt.
 2. The user reviews and approves. Only then does the passkey sign the wallet's
    auth entries.
 3. Signed XDR → `POST /wallet/submit` → tracked to finality → balances refetch.

@@ -6,7 +6,8 @@ import { WalletApiError } from "./http-backend";
 
 const passkeyMessages: Record<PasskeyErrorCode, string> = {
   cancelled: "The passkey prompt was dismissed. Try again when you're ready.",
-  "credential-exists": "A passkey for Vellar already exists on this device. Try signing in instead.",
+  "credential-exists":
+    "A passkey for Vellar already exists on this device. Try signing in instead.",
   unsupported: "This browser doesn't support the required passkey features.",
   security: "Passkeys are blocked in this context. Make sure you're on the official Vellar site.",
   aborted: "The passkey request was interrupted. Try again.",

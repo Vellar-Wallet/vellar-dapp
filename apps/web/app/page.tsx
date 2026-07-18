@@ -323,8 +323,8 @@ export default function Landing() {
               <div className="pglow" style={{ background: "var(--signal)" }}></div>
               <h3>Developer SDK</h3>
               <p>
-                Add passkey login and a Stellar smart wallet to your app in minutes — self-custodial,
-                fee-sponsored, no seed phrases.
+                Add passkey login and a Stellar smart wallet to your app in minutes —
+                self-custodial, fee-sponsored, no seed phrases.
               </p>
               <div className="pfoot">
                 <a href="https://docs.vellar.xyz/" className="btn btn-glass">
@@ -383,8 +383,8 @@ export default function Landing() {
               <span className="ext-num mono">02</span>
               <h4>Connect to dApps</h4>
               <p>
-                When a Stellar app requests access, the extension shows exactly which site is asking.
-                You approve per-origin — nothing connects silently.
+                When a Stellar app requests access, the extension shows exactly which site is
+                asking. You approve per-origin — nothing connects silently.
               </p>
             </div>
             <div className="ext-step">
@@ -444,8 +444,8 @@ export default function Landing() {
             </span>
             <h2>Frequently asked questions</h2>
             <p style={{ color: "var(--muted)", marginTop: 16, fontSize: 15, lineHeight: 1.6 }}>
-              Still curious? Reach us at <a href="mailto:hello@vellar.xyz">hello@vellar.xyz</a> or read the{" "}
-              <a href="https://docs.vellar.xyz/">developer docs</a>.
+              Still curious? Reach us at <a href="mailto:hello@vellar.xyz">hello@vellar.xyz</a> or
+              read the <a href="https://docs.vellar.xyz/">developer docs</a>.
             </p>
           </div>
           <div>
@@ -480,10 +480,7 @@ export default function Landing() {
             <a href="https://docs.vellar.xyz/" className="btn btn-glass btn-lg">
               Read the docs
             </a>
-            <a
-              href="https://github.com/Vellar-Wallet/vellar-sdk"
-              className="btn btn-glass btn-lg"
-            >
+            <a href="https://github.com/Vellar-Wallet/vellar-sdk" className="btn btn-glass btn-lg">
               View on GitHub
             </a>
           </div>

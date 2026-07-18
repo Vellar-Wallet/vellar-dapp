@@ -139,7 +139,11 @@ describe("Policy builder", () => {
     expect(await screen.findByText(/policy attached to your account/i)).toBeDefined();
     expect(screen.getByText(/attachhash123/)).toBeDefined();
     await waitFor(() => expect(simulateMock).toHaveBeenCalledWith("p1", SESSION.accountId));
-    expect(deployMock).toHaveBeenCalledWith("p1", expect.objectContaining({ accountId: SESSION.accountId }), expect.anything());
+    expect(deployMock).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ accountId: SESSION.accountId }),
+      expect.anything(),
+    );
   });
 
   it("aborts deploy when simulation fails — never prompts the passkey", async () => {

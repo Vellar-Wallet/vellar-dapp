@@ -2,13 +2,13 @@
 
 ## Prerequisites
 
-| Tool | Version | Used for |
-| --- | --- | --- |
-| **Node.js** | ≥ 20.6 | Runtime (needs `--env-file` support) |
-| **pnpm** | 11.x | Workspace / package manager |
-| **Docker** | any recent | Local Postgres + Redis |
-| **Rust + `stellar` CLI** | cargo 1.94+, stellar 26+ | Only for building/deploying the Soroban policy contract |
-| **Chrome** | any recent | Only for the extension's `dev` task (launches a browser) |
+| Tool                     | Version                  | Used for                                                 |
+| ------------------------ | ------------------------ | -------------------------------------------------------- |
+| **Node.js**              | ≥ 20.6                   | Runtime (needs `--env-file` support)                     |
+| **pnpm**                 | 11.x                     | Workspace / package manager                              |
+| **Docker**               | any recent               | Local Postgres + Redis                                   |
+| **Rust + `stellar` CLI** | cargo 1.94+, stellar 26+ | Only for building/deploying the Soroban policy contract  |
+| **Chrome**               | any recent               | Only for the extension's `dev` task (launches a browser) |
 
 ## Install
 
@@ -28,11 +28,11 @@ cp .env.example .env
 
 Then fill in the values you have. The important ones:
 
-| Variable | Needed for | Notes |
-| --- | --- | --- |
-| `DATABASE_URL` | Persistence | `postgres://vela:vela@localhost:5433/vela` for local Docker |
-| `RELAYER_BASE_URL`, `RELAYER_API_KEY` | Fee sponsorship | OpenZeppelin Relayer; without them, wallet creation/submission return 502 |
-| `SPONSOR_SECRET_KEY` | Address-auth submission + policy deploys | A funded testnet account secret |
+| Variable                              | Needed for                               | Notes                                                                     |
+| ------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------- |
+| `DATABASE_URL`                        | Persistence                              | `postgres://vela:vela@localhost:5433/vela` for local Docker               |
+| `RELAYER_BASE_URL`, `RELAYER_API_KEY` | Fee sponsorship                          | OpenZeppelin Relayer; without them, wallet creation/submission return 502 |
+| `SPONSOR_SECRET_KEY`                  | Address-auth submission + policy deploys | A funded testnet account secret                                           |
 
 The web app needs no env for local testnet use — it defaults to Stellar
 testnet (RPC, Horizon, passphrase, and the smart-wallet wasm hash are all
@@ -60,15 +60,15 @@ pnpm dev --filter=!@vela/extension   # web + gateway + services only
 
 ## Ports
 
-| Service | Port |
-| --- | --- |
-| Web app | `3000` |
-| API gateway | `4000` |
-| wallet-service | `4001` |
+| Service           | Port   |
+| ----------------- | ------ |
+| Web app           | `3000` |
+| API gateway       | `4000` |
+| wallet-service    | `4001` |
 | lifecycle-service | `4002` |
-| policy-service | `4003` |
-| Postgres | `5433` |
-| Redis | `6380` |
+| policy-service    | `4003` |
+| Postgres          | `5433` |
+| Redis             | `6380` |
 
 ## Verify
 

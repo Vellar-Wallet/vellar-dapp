@@ -7,15 +7,15 @@ tool (Docusaurus, VitePress, MkDocs, …).
 
 ## Contents
 
-| Page | What it covers |
-| --- | --- |
-| [Overview](./overview.md) | What VELA is, its capabilities, and how the pieces fit together |
-| [Getting Started](./getting-started.md) | Prerequisites, install, running the full stack locally |
-| [Architecture](./architecture.md) | Monorepo layout, services, shared packages, contracts, data flow |
-| [API Reference](./api-reference.md) | Every HTTP endpoint exposed through the API gateway |
-| [Core Flows](./core-flows.md) | Wallet creation, signing, policies, cleanup, extension pairing — end to end |
-| [Security Model](./security-model.md) | Passkeys, no-key-custody, origin permissions, no silent signing |
-| [Policy Contract](./policy-contract.md) | The configurable spending-limit Soroban contract |
+| Page                                    | What it covers                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| [Overview](./overview.md)               | What VELA is, its capabilities, and how the pieces fit together             |
+| [Getting Started](./getting-started.md) | Prerequisites, install, running the full stack locally                      |
+| [Architecture](./architecture.md)       | Monorepo layout, services, shared packages, contracts, data flow            |
+| [API Reference](./api-reference.md)     | Every HTTP endpoint exposed through the API gateway                         |
+| [Core Flows](./core-flows.md)           | Wallet creation, signing, policies, cleanup, extension pairing — end to end |
+| [Security Model](./security-model.md)   | Passkeys, no-key-custody, origin permissions, no silent signing             |
+| [Policy Contract](./policy-contract.md) | The configurable spending-limit Soroban contract                            |
 
 ## Status
 

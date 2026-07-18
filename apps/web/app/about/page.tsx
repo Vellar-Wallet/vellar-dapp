@@ -21,9 +21,9 @@ export default function About() {
             <span className="eyebrow">About</span>
             <h1>Passkeys, not seed phrases.</h1>
             <p>
-              Vellar is a self-custodial smart wallet for Stellar. You sign in with a passkey —
-              Face ID, Touch ID or a security key — instead of memorizing a seed phrase, and your
-              account is a smart contract that can enforce real, on-chain rules: spending limits,
+              Vellar is a self-custodial smart wallet for Stellar. You sign in with a passkey — Face
+              ID, Touch ID or a security key — instead of memorizing a seed phrase, and your account
+              is a smart contract that can enforce real, on-chain rules: spending limits,
               co-signers, allow-lists. No custody, no compromises.
             </p>
             <p>
@@ -53,7 +53,11 @@ export default function About() {
                 growing into the tooling other Stellar developers can build on.
               </p>
               <div className="persona-links">
-                <a href="https://github.com/Vellar-Wallet" target="_blank" rel="noopener noreferrer">
+                <a
+                  href="https://github.com/Vellar-Wallet"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   GitHub
                 </a>
                 <a href="mailto:hello@vellar.xyz">hello@vellar.xyz</a>

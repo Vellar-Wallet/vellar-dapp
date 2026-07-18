@@ -8,3 +8,9 @@ pnpm-lock.yaml
 .wxt/
 .turbo/
 dist/
+
+# Generated / tool-owned files — don't reformat (their format is defined by the
+# tool that writes them, and reformatting can break the tooling that reads them)
+contracts/**/test_snapshots/
+**/drizzle/meta/
+target/

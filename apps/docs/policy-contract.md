@@ -6,7 +6,7 @@ Testnet wasm hash: `5d52e44c3794a185aaa4a42478b6b59bf9a976ee0d95b08aab8a855d156e
 
 This is a hardened, **configurable** derivative of the audited passkey-kit
 `sample-policy`. It lets a user choose their own spending limit in the UI and
-have *that number* enforced on-chain, per account.
+have _that number_ enforced on-chain, per account.
 
 ## Why a cumulative window, not a per-transaction cap
 

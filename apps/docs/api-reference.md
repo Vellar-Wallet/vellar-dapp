@@ -83,7 +83,17 @@ management).
 
 ```jsonc
 // 200
-{ "sessions": [ { "id": "...", "contractId": "C...", "network": "testnet", "createdAt": "...", "lastActiveAt": "..." } ] }
+{
+  "sessions": [
+    {
+      "id": "...",
+      "contractId": "C...",
+      "network": "testnet",
+      "createdAt": "...",
+      "lastActiveAt": "...",
+    },
+  ],
+}
 ```
 
 ### `DELETE /wallet/session/:id`

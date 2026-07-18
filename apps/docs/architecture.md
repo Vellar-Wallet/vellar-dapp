@@ -22,17 +22,17 @@ infra/          Local dev infrastructure (docker-compose: Postgres, Redis)
 Web and extension share logic through these packages so wallet behavior is
 never duplicated across surfaces.
 
-| Package | Status | Responsibility |
-| --- | --- | --- |
-| `@vela/types` | implemented | Domain types shared end to end (wallet session, policy definition, network) |
-| `@vela/wallet-sdk` | implemented | Wallet connector (PasskeyKit-backed), payment client, balances, tx-status, session store |
-| `@vela/passkey` | implemented | WebAuthn support detection + error normalization |
-| `@vela/provider-sdk` | implemented | dApp provider protocol (zod-validated), page provider, per-origin permissions |
-| `@vela/service-kit` | implemented | Shared backend bootstrap — health route, startup/shutdown, safe DB connect |
-| `@vela/policy-sdk` | stub | Policy client helpers (logic currently lives in the web app + policy-service) |
-| `@vela/lifecycle-sdk` | stub | Lifecycle client helpers (logic currently in the web app + lifecycle-service) |
-| `@vela/verification-sdk` | stub | Verification client helpers (awaits the verification service) |
-| `@vela/ui` | stub | Shared UI primitives |
+| Package                  | Status      | Responsibility                                                                           |
+| ------------------------ | ----------- | ---------------------------------------------------------------------------------------- |
+| `@vela/types`            | implemented | Domain types shared end to end (wallet session, policy definition, network)              |
+| `@vela/wallet-sdk`       | implemented | Wallet connector (PasskeyKit-backed), payment client, balances, tx-status, session store |
+| `@vela/passkey`          | implemented | WebAuthn support detection + error normalization                                         |
+| `@vela/provider-sdk`     | implemented | dApp provider protocol (zod-validated), page provider, per-origin permissions            |
+| `@vela/service-kit`      | implemented | Shared backend bootstrap — health route, startup/shutdown, safe DB connect               |
+| `@vela/policy-sdk`       | stub        | Policy client helpers (logic currently lives in the web app + policy-service)            |
+| `@vela/lifecycle-sdk`    | stub        | Lifecycle client helpers (logic currently in the web app + lifecycle-service)            |
+| `@vela/verification-sdk` | stub        | Verification client helpers (awaits the verification service)                            |
+| `@vela/ui`               | stub        | Shared UI primitives                                                                     |
 
 > The **stub** packages are intentional placeholders. Their functionality
 > exists today inside the apps and services; extracting it into these shared
@@ -42,15 +42,15 @@ never duplicated across surfaces.
 
 All services are Fastify apps in TypeScript, bootstrapped via `@vela/service-kit`.
 
-| Service | Port | Status | Responsibility |
-| --- | --- | --- | --- |
-| `api-gateway` | 4000 | implemented | Single entrypoint; CORS; proxies to the owning service |
-| `wallet-service` | 4001 | implemented | Wallet metadata, sessions/devices, submission, audit log |
-| `lifecycle-service` | 4002 | implemented | Account inspection, cleanup planning, merge |
-| `policy-service` | 4003 | implemented | Policy templates, validation, generate, simulate, deploy |
-| `permission-service` | — | stub | Server-side origin permission records (extension-local is authoritative today) |
-| `verification-service` | — | stub | Contract verification submission/status (planned) |
-| `worker-service` | — | stub | Background jobs — deterministic build workers, indexer (planned) |
+| Service                | Port | Status      | Responsibility                                                                 |
+| ---------------------- | ---- | ----------- | ------------------------------------------------------------------------------ |
+| `api-gateway`          | 4000 | implemented | Single entrypoint; CORS; proxies to the owning service                         |
+| `wallet-service`       | 4001 | implemented | Wallet metadata, sessions/devices, submission, audit log                       |
+| `lifecycle-service`    | 4002 | implemented | Account inspection, cleanup planning, merge                                    |
+| `policy-service`       | 4003 | implemented | Policy templates, validation, generate, simulate, deploy                       |
+| `permission-service`   | —    | stub        | Server-side origin permission records (extension-local is authoritative today) |
+| `verification-service` | —    | stub        | Contract verification submission/status (planned)                              |
+| `worker-service`       | —    | stub        | Background jobs — deterministic build workers, indexer (planned)               |
 
 ### The gateway
 
@@ -86,12 +86,12 @@ or unreachable, so local development and tests work without a database.
 
 ## External dependencies
 
-| Dependency | Used for |
-| --- | --- |
-| **Stellar RPC (Soroban)** | Contract simulation, submission, account state |
-| **Horizon** | Classic-account inspection (cleanup/merge) |
-| **OpenZeppelin Relayer** | Fee sponsorship — the wallet holds no XLM for fees |
-| **passkey-kit** | Passkey smart-wallet SDK + the deployed smart-wallet contract |
+| Dependency                | Used for                                                      |
+| ------------------------- | ------------------------------------------------------------- |
+| **Stellar RPC (Soroban)** | Contract simulation, submission, account state                |
+| **Horizon**               | Classic-account inspection (cleanup/merge)                    |
+| **OpenZeppelin Relayer**  | Fee sponsorship — the wallet holds no XLM for fees            |
+| **passkey-kit**           | Passkey smart-wallet SDK + the deployed smart-wallet contract |
 
 ### A note on submission
 

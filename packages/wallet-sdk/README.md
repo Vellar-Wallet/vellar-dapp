@@ -66,13 +66,13 @@ balance) surface without asking the user to sign.
 
 Returns a `VellarWallet`:
 
-| Member | Description |
-| --- | --- |
-| `session` | The current `WalletSession`, or `null` before create/connect |
-| `create({ username? })` | Register a passkey and create the smart account |
-| `connect()` | Reconnect with an existing passkey |
-| `pay({ to, amount, token })` | Build → simulate → sign → submit; returns `{ hash }` |
-| `connector` / `payments` | Lower-level building blocks for custom flows |
+| Member                       | Description                                                  |
+| ---------------------------- | ------------------------------------------------------------ |
+| `session`                    | The current `WalletSession`, or `null` before create/connect |
+| `create({ username? })`      | Register a passkey and create the smart account              |
+| `connect()`                  | Reconnect with an existing passkey                           |
+| `pay({ to, amount, token })` | Build → simulate → sign → submit; returns `{ hash }`         |
+| `connector` / `payments`     | Lower-level building blocks for custom flows                 |
 
 ### Advanced
 

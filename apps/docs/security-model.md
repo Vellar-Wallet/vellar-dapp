@@ -19,7 +19,7 @@ There is deliberately no seed phrase and no key-import flow.
 
 Every signature requires an explicit, human review:
 
-- **Payments** show a review dialog (amount, recipient, network) *before* the
+- **Payments** show a review dialog (amount, recipient, network) _before_ the
   passkey prompt.
 - **Policy deploys** simulate first, then require a passkey approval to attach.
 - **Extension dApp signing** shows the requesting origin and a decoded summary
