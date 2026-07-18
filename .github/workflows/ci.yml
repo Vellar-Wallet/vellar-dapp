@@ -38,6 +38,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # wallet-sdk's subpath exports (/rpc, /balances) point at built dist, so
+      # anything that imports them (e.g. apps/extension) can't typecheck until
+      # the SDK is built.
+      - name: Build SDK
+        run: pnpm --filter @vela/wallet-sdk build
+
       - name: Format check
         run: pnpm format:check
 
