@@ -444,7 +444,7 @@ export default function Landing() {
             </span>
             <h2>Frequently asked questions</h2>
             <p style={{ color: "var(--muted)", marginTop: 16, fontSize: 15, lineHeight: 1.6 }}>
-              Still curious? Reach us at <a href="mailto:hey@vellar.xyz">hey@vellar.xyz</a> or read the{" "}
+              Still curious? Reach us at <a href="mailto:hello@vellar.xyz">hello@vellar.xyz</a> or read the{" "}
               <a href="https://docs.vellar.xyz/">developer docs</a>.
             </p>
           </div>
@@ -520,7 +520,7 @@ export default function Landing() {
                 <h4>Company</h4>
                 <Link href="/about">About</Link>
                 <a href="https://docs.vellar.xyz/docs/security">Security</a>
-                <a href="mailto:hey@vellar.xyz">Contact</a>
+                <a href="mailto:hello@vellar.xyz">Contact</a>
               </div>
             </div>
           </div>

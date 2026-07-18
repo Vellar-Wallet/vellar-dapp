@@ -56,7 +56,7 @@ export default function About() {
                 <a href="https://github.com/Vellar-Wallet" target="_blank" rel="noopener noreferrer">
                   GitHub
                 </a>
-                <a href="mailto:hey@vellar.xyz">hey@vellar.xyz</a>
+                <a href="mailto:hello@vellar.xyz">hello@vellar.xyz</a>
               </div>
             </div>
           </section>
