@@ -108,7 +108,6 @@ export default function Landing() {
   return (
     <div className="landing-root">
       <LandingNav />
-      <span id="top" />
 
       {/* HERO */}
       <header className="hero">

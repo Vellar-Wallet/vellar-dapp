@@ -10,17 +10,17 @@ export function LandingNav() {
   return (
     <div className="nav-outer">
       <nav className="nav">
-        <a href="#top" className="brand">
+        <Link href="/" className="brand" onClick={close}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-light.png" alt="Vellar" />
-        </a>
+        </Link>
         <div className={`nav-links${open ? " open" : ""}`}>
           <Link href="/about" onClick={close}>
             About
           </Link>
-          <a href="#faq" onClick={close}>
+          <Link href="/#faq" onClick={close}>
             FAQ
-          </a>
+          </Link>
           <a href="https://docs.vellar.xyz/" onClick={close}>
             Docs
           </a>
