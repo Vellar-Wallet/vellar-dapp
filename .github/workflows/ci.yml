@@ -57,3 +57,13 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Mocked e2e only (@ci tag): the verify + cleanup + home flows intercept
+      # the gateway/Horizon, so they need no backend or secrets. The live-testnet
+      # specs (wallet/policy/extension) are NOT tagged @ci and are excluded here
+      # — they require a relayer key + running services (run locally / manually).
+      - name: Install Playwright browser
+        run: pnpm --filter @vela/web exec playwright install --with-deps chromium
+
+      - name: E2E (mocked, CI-safe)
+        run: pnpm --filter @vela/web test:e2e:ci

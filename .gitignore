@@ -46,6 +46,7 @@ design.md
 CLAUDE.md
 docs/decisions.md
 docs/sdk-product-direction.md
+scf-application-answers.md
 landing-page/
 .vercel
 .env*
