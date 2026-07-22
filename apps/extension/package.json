@@ -15,6 +15,8 @@
     "@stellar/stellar-sdk": "^16.0.1",
     "@vela/provider-sdk": "workspace:*",
     "@vela/types": "workspace:*",
+    "@vela/ui": "workspace:*",
+    "@vela/verification-sdk": "workspace:*",
     "@vela/wallet-sdk": "workspace:*",
     "buffer": "^6.0.3",
     "passkey-kit": "^0.14.0",

@@ -14,6 +14,7 @@ import { Logo } from "./logo";
 const nav = [
   { href: "/dashboard", label: "Wallet", icon: <WalletIcon /> },
   { href: "/policies", label: "Policies", icon: <ShieldIcon /> },
+  { href: "/verify", label: "Verify", icon: <BadgeCheckIcon /> },
   { href: "/cleanup", label: "Clean up", icon: <BroomIcon /> },
   { href: "/settings", label: "Settings", icon: <GearIcon /> },
 ];
@@ -217,6 +218,24 @@ function ShieldIcon() {
       strokeWidth="2"
     >
       <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
+function BadgeCheckIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 2l2.4 1.8 3 .1 1 2.8 2.4 1.8-.9 2.9.9 2.9-2.4 1.8-1 2.8-3 .1L12 22l-2.4-1.8-3-.1-1-2.8L3.2 15.5l.9-2.9-.9-2.9 2.4-1.8 1-2.8 3-.1L12 2z" />
       <path d="M9 12l2 2 4-4" />
     </svg>
   );

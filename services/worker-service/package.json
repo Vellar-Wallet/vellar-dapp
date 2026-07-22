@@ -4,13 +4,28 @@
   "private": true,
   "description": "Async jobs: deterministic build workers, retries, dead-letter handling, heavy simulations",
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.0",
+    "@vela/service-kit": "workspace:*",
+    "fastify": "^5.4.0",
+    "@vela/types": "workspace:*",
+    "@vela/verification-service": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.22.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

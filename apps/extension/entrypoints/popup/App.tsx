@@ -2,10 +2,13 @@ import "../../lib/buffer-polyfill";
 import "./popup.css";
 import { useCallback, useEffect, useState } from "react";
 import { browser } from "wxt/browser";
+import { TrustBadge } from "@vela/ui";
+import type { VerificationStatus } from "@vela/verification-sdk";
 import { browserKv } from "../../lib/browser-kv";
 import type { PendingApprovalSummary } from "../../lib/messages";
 import { loadState, revokeGrant, type ExtensionState, type PairedWallet } from "../../lib/state";
 import { formatStroops, summarizeTransaction, type TransactionSummary } from "../../lib/tx-summary";
+import { verificationClient } from "../../lib/verification";
 
 const NETWORK_PASSPHRASES = {
   testnet: "Test SDF Network ; September 2015",
@@ -101,7 +104,33 @@ function useTxSummary(approval: PendingApprovalSummary): TransactionSummary | nu
   return summary;
 }
 
+/** Trust signal for a contract a transaction will call (§5.5 — trust badge
+ * during approval). Best-effort: a lookup failure yields "unverified" so the
+ * badge degrades to a neutral "Unverified" rather than blocking the review. */
+function useContractTrust(contractId: string | undefined): VerificationStatus {
+  const [status, setStatus] = useState<VerificationStatus>("unverified");
+  useEffect(() => {
+    if (!contractId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await verificationClient().getStatus(contractId);
+        if (!cancelled) setStatus(result.status);
+      } catch {
+        if (!cancelled) setStatus("unverified");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [contractId]);
+  return status;
+}
+
 function OperationLine({ op }: { op: TransactionSummary["operations"][number] }) {
+  const contractId = op.kind === "contract-call" ? op.contract : undefined;
+  const trust = useContractTrust(contractId);
+
   if (op.kind === "transfer") {
     return (
       <p className="mono" style={{ margin: "4px 0 0", fontSize: 11, wordBreak: "break-all" }}>
@@ -111,9 +140,14 @@ function OperationLine({ op }: { op: TransactionSummary["operations"][number] })
   }
   if (op.kind === "contract-call") {
     return (
-      <p className="mono" style={{ margin: "4px 0 0", fontSize: 11, wordBreak: "break-all" }}>
-        call <strong>{op.fn}</strong> on {op.contract.slice(0, 6)}…{op.contract.slice(-6)}
-      </p>
+      <div style={{ margin: "4px 0 0" }}>
+        <p className="mono" style={{ margin: 0, fontSize: 11, wordBreak: "break-all" }}>
+          call <strong>{op.fn}</strong> on {op.contract.slice(0, 6)}…{op.contract.slice(-6)}
+        </p>
+        <div style={{ marginTop: 4 }}>
+          <TrustBadge status={trust} size="sm" />
+        </div>
+      </div>
     );
   }
   return (

@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:ci": "playwright test --grep @ci"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.0",
@@ -18,6 +19,8 @@
     "@vela/passkey": "workspace:*",
     "@vela/provider-sdk": "workspace:*",
     "@vela/types": "workspace:*",
+    "@vela/ui": "workspace:*",
+    "@vela/verification-sdk": "workspace:*",
     "@vela/wallet-sdk": "workspace:*",
     "next": "^16.0.0",
     "passkey-kit": "^0.14.0",
