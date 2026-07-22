@@ -7,6 +7,8 @@
 // (balances-rpc is intentionally NOT re-exported here — import it from
 // "@vela/wallet-sdk/rpc" so stellar-sdk stays out of bundles that don't need it)
 export * from "./client";
+export * from "./config";
+export * from "./http-backend";
 export * from "./balances";
 export * from "./connector";
 export * from "./passkeykit-connector";
