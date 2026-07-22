@@ -1,10 +1,35 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 
 // Shared bootstrap for services/* (technical-doc.md §6.3). Keeps health
 // checks and process lifecycle identical across services without copy-paste.
 
+export {
+  registerMetrics,
+  metricsRegistry,
+  domainMetrics,
+  recordOutcome,
+  __resetMetricsForTest,
+  type Outcome,
+} from "./metrics";
+
 export function registerHealth(app: FastifyInstance, serviceName: string): void {
   app.get("/health", async () => ({ status: "ok", service: serviceName }));
+}
+
+/**
+ * Structured domain-event log (idea.md §13 Logging): one consistent shape for
+ * the events the spec calls out (auth, tx lifecycle, policy, verification,
+ * cleanup). A single helper means every service logs `event` + context the same
+ * way, so log-based queries and dashboards are uniform. This complements the
+ * durable `activity_logs` audit trail — logs are for operational search, the
+ * audit table is the record of truth.
+ */
+export function logEvent(
+  log: Pick<FastifyBaseLogger, "info">,
+  event: string,
+  context: Record<string, unknown> = {},
+): void {
+  log.info({ event, ...context }, event);
 }
 
 /**

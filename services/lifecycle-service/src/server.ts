@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth } from "@vela/service-kit";
+import { registerHealth, registerMetrics, domainMetrics, recordOutcome } from "@vela/service-kit";
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
 import { buildCleanupPlan, isClassicAccountId } from "./planner";
@@ -35,6 +35,7 @@ function validatePair(accountId: string, destination: string): string | undefine
 export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
   const app = Fastify({ logger: true });
   registerHealth(app, "lifecycle-service");
+  registerMetrics(app, "lifecycle-service");
 
   app.post("/lifecycle/inspect", async (request, reply) => {
     const parsed = inspectBodySchema.safeParse(request.body);
@@ -122,8 +123,12 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
 
     const plan = buildCleanupPlan(account, destination);
     if (!plan.mergeReady) {
+      // §13 alerting: abnormal cleanup failure rates. A merge refused because
+      // the account still has blockers is a "not ready" outcome, not success.
+      recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "failure");
       return reply.code(409).send({ error: "not_merge_ready", plan });
     }
+    recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "success");
     return reply.send({ step: buildMergeStep(account, destination, passphrase) });
   });
 

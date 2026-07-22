@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth } from "@vela/service-kit";
+import { registerHealth, registerMetrics, domainMetrics, recordOutcome } from "@vela/service-kit";
 import type { PolicyDefinition } from "@vela/types";
 import { PolicyDeployError, type PolicyDeployer } from "./deploy";
 import { generatePolicy, templates, validateDefinition, type GeneratedPolicy } from "./templates";
@@ -79,6 +79,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
 
   const app = Fastify({ logger: true });
   registerHealth(app, "policy-service");
+  registerMetrics(app, "policy-service");
 
   app.get("/policies/templates", async () =>
     templates.map(({ type, title, description, enforcement }) => ({
@@ -189,6 +190,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     } catch (err) {
       if (err instanceof PolicyDeployError) {
         request.log.error({ err, policyId: id }, "policy instance deploy failed");
+        recordOutcome(domainMetrics.policyDeployed, "policy-service", "failure");
         return reply.code(502).send({ error: "deploy_failed", code: err.code });
       }
       throw err;
@@ -197,6 +199,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     record.status = "instance_deployed";
     record.instance = { ...result, deployedAt: now().toISOString() };
     await policies.update(record);
+    recordOutcome(domainMetrics.policyDeployed, "policy-service", "success");
     return reply.send({ policy: record, contractId: result.contractId });
   });
 

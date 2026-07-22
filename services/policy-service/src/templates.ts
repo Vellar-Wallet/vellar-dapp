@@ -17,8 +17,16 @@ import type { PolicyDefinition } from "@vela/types";
  * limit + window as immutable constructor args, so the amount chosen in the
  * builder is the amount actually enforced on-chain.
  */
+// Testnet wasm hash of the spending-limit policy contract. This is now the
+// hash of the CANONICAL reproducible build — the bytes `stellar contract build`
+// emits inside the verification toolchain image (infra/docker/…), uploaded to
+// testnet 2026-07-20 (tx 6f83e098…, deployer vela-policy-deployer). So the
+// deployed artifact == what the verification pipeline reproduces on any machine
+// running the image (docs/decisions.md: container-as-source-of-truth). The prior
+// hash (5d52e44c…) was a macOS-local build that a Linux container can't
+// bit-reproduce — see the reproducibility finding in docs/decisions.md.
 export const SPENDING_POLICY_WASM_HASH =
-  "5d52e44c3794a185aaa4a42478b6b59bf9a976ee0d95b08aab8a855d156e9ff1";
+  "0f6b858d61799a33efdc2303c60eb0c148fd2983b7d2336fc345b5492a24b791";
 
 /** Stroops per XLM (7 decimals). */
 const STROOPS_PER_XLM = 10_000_000n;

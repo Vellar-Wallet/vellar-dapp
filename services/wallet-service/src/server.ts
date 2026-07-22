@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth } from "@vela/service-kit";
+import { registerHealth, registerMetrics, domainMetrics, recordOutcome } from "@vela/service-kit";
 import {
   createMemoryAuditLog,
   createMemorySessionRepository,
@@ -58,6 +58,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
   const app = Fastify({ logger: true });
   registerHealth(app, "wallet-service");
+  registerMetrics(app, "wallet-service");
 
   async function openSession(contractId: string, network: "testnet" | "mainnet") {
     const timestamp = now().toISOString();
@@ -91,6 +92,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     } catch (err) {
       const sub = err instanceof SubmissionError ? err : undefined;
       request.log.error(err, "wallet deployment submission failed");
+      recordOutcome(domainMetrics.walletCreated, "wallet-service", "failure", network);
       return reply.code(502).send({
         error: sub?.code ?? "submission_failed",
         message: sub?.message ?? "Transaction submission failed",
@@ -100,6 +102,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     await wallets.insert({ keyId, contractId, network, createdAt: now().toISOString() });
     const session = await openSession(contractId, network);
     await audit.record("wallet.created", { contractId, network, txHash: hash });
+    recordOutcome(domainMetrics.walletCreated, "wallet-service", "success", network);
     return reply.code(201).send({ contractId, sessionId: session.id, txHash: hash });
   });
 
@@ -111,10 +114,14 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     const { keyId, network } = parsed.data;
 
     const wallet = await wallets.findByKeyId(keyId, network);
-    if (!wallet) return reply.code(404).send({ error: "wallet_not_found" });
+    if (!wallet) {
+      recordOutcome(domainMetrics.passkeyAuth, "wallet-service", "failure", network);
+      return reply.code(404).send({ error: "wallet_not_found" });
+    }
 
     const session = await openSession(wallet.contractId, network);
     await audit.record("wallet.connected", { contractId: wallet.contractId, network });
+    recordOutcome(domainMetrics.passkeyAuth, "wallet-service", "success", network);
     return reply.send({ contractId: wallet.contractId, sessionId: session.id });
   });
 
@@ -128,10 +135,15 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     try {
       const { hash } = await submitter.submit(signedXdr);
       await audit.record("tx.submitted", { network, txHash: hash });
+      recordOutcome(domainMetrics.txSigned, "wallet-service", "success", network);
       return reply.send({ hash });
     } catch (err) {
       const sub = err instanceof SubmissionError ? err : undefined;
       request.log.error(err, "transaction submission failed");
+      recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+      // Submission goes through the relayer/RPC path — a failure here is also an
+      // RPC-degradation signal (§13 alerting: tx submission spikes/failures).
+      domainMetrics.rpcErrors.inc({ service: "wallet-service", upstream: "relayer" });
       return reply.code(502).send({
         error: sub?.code ?? "submission_failed",
         message: sub?.message ?? "Transaction submission failed",

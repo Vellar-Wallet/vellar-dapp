@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
+    "@fastify/helmet": "^13.0.0",
     "@fastify/http-proxy": "^11.0.0",
+    "@fastify/rate-limit": "^10.2.0",
     "@vela/service-kit": "workspace:*",
     "fastify": "^5.4.0"
   },
