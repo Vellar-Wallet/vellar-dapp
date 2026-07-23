@@ -14,5 +14,8 @@ export * from "./connector";
 export * from "./passkeykit-connector";
 export * from "./payments";
 export * from "./payments-client";
+export * from "./policy-types";
+export * from "./policy-client";
+export * from "./policy-facade";
 export * from "./session";
 export * from "./tx-status";
