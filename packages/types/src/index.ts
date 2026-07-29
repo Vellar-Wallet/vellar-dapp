@@ -51,6 +51,10 @@ export interface PolicyDefinition {
   timelocks?: {
     adminActionDelaySeconds?: number;
   };
+  verifiedOnly?: {
+    registryAddress?: string;
+    enforcementMode?: "strict" | "trusted_publishers";
+  };
 }
 
 // --- Contract Verification Module (idea.md §6.3) ---

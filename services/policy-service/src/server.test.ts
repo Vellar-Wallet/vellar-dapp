@@ -56,6 +56,11 @@ describe("validateDefinition", () => {
         type: "timelock",
         owners: [C1],
         timelocks: { adminActionDelaySeconds: 3600 },
+      {
+        version: "1",
+        type: "verified_only",
+        owners: [C1],
+        verifiedOnly: { registryAddress: C1, enforcementMode: "strict" },
       },
     ]) {
       expect(validateDefinition(definition)).toEqual({ valid: true, errors: [] });
@@ -90,6 +95,11 @@ describe("validateDefinition", () => {
       /contract address/,
     ],
     [
+      "verified_only bad registry address",
+      { version: "1", type: "verified_only", owners: [C1], verifiedOnly: { registryAddress: G1 } },
+      /contract address/,
+    ],
+    [
       "bad owner address",
       { version: "1", type: "single_owner", owners: ["nope"] },
       /Stellar address/,
@@ -119,7 +129,36 @@ describe("Policy API", () => {
       kind: "policy-contract",
       wasmHash: SPENDING_POLICY_WASM_HASH,
     });
-    expect(res.json()).toHaveLength(5);
+    const verifiedOnly = res.json().find((t: { type: string }) => t.type === "verified_only");
+    expect(verifiedOnly).toBeDefined();
+    expect(verifiedOnly.enforcement.kind).toBe("policy-contract");
+    expect(verifiedOnly.enforcement.descriptor).toContain("verified registry");
+    expect(res.json()).toHaveLength(6);
+  });
+
+  it("generate verified_only policy generates artifacts with constructor args and descriptor", async () => {
+    const server = build();
+    const verifiedPolicy = {
+      version: "1",
+      type: "verified_only",
+      owners: [C1],
+      verifiedOnly: {
+        registryAddress: C1,
+        enforcementMode: "strict",
+      },
+    };
+    const res = await server.inject({
+      method: "POST",
+      url: "/policies/generate",
+      payload: { definition: verifiedPolicy, network: "testnet" },
+    });
+    expect(res.statusCode).toBe(201);
+    const { policy } = res.json();
+    expect(policy.manifest.enforcement.constructorArgs).toEqual({
+      registryAddress: C1,
+      enforcementMode: "strict",
+    });
+    expect(policy.manifest.enforcement.descriptor).toContain("verified registry");
   });
 
   it("generate → review artifacts → GET → deploy records the deployment", async () => {

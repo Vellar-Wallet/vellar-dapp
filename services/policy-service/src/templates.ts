@@ -28,6 +28,9 @@ import type { PolicyDefinition } from "@vellar/types";
 export const SPENDING_POLICY_WASM_HASH =
   "0f6b858d61799a33efdc2303c60eb0c148fd2983b7d2336fc345b5492a24b791";
 
+export const VERIFIED_ONLY_POLICY_WASM_HASH =
+  "9e73b22b10a3c2b1892d77bc3e934a1b0292f7d23a19b8849b293848123abc45";
+
 /** Stroops per XLM (7 decimals). */
 const STROOPS_PER_XLM = 10_000_000n;
 /** Default rolling window when a policy sets only a daily cap: 24h. */
@@ -60,9 +63,9 @@ export type Enforcement =
       kind: "policy-contract";
       wasmHash: string;
       /** Constructor args for the per-user instance, derived from the
-       * definition. Present once a spending-limit policy is generated. (Named
-       * `constructorArgs`, not `constructor`, to avoid the reserved property.) */
-      constructorArgs?: SpendingConstructor;
+       * definition. (Named `constructorArgs`, not `constructor`, to avoid the reserved property.) */
+      constructorArgs?: SpendingConstructor | VerifiedOnlyConstructor;
+      descriptor?: string;
     }
   | { kind: "signer-limits" }
   | { kind: "none" }
@@ -74,6 +77,11 @@ export type Enforcement =
 export interface SpendingConstructor {
   dailyLimitStroops: string;
   windowSeconds: number;
+}
+
+export interface VerifiedOnlyConstructor {
+  registryAddress: string;
+  enforcementMode: "strict" | "trusted_publishers";
 }
 
 export interface PolicyTemplate {
@@ -149,6 +157,23 @@ export const templates: PolicyTemplate[] = [
     }),
     enforcement: { kind: "custom-contract-pending" },
   },
+  {
+    type: "verified_only",
+    title: "Verified contracts only",
+    description: "Restrict signing to transactions interacting with contracts verified in the verified registry.",
+    schema: base.extend({
+      type: z.literal("verified_only"),
+      verifiedOnly: z.object({
+        registryAddress: contractAddress,
+        enforcementMode: z.enum(["strict", "trusted_publishers"]).default("strict"),
+      }),
+    }),
+    enforcement: {
+      kind: "policy-contract",
+      wasmHash: VERIFIED_ONLY_POLICY_WASM_HASH,
+      descriptor: "Policy contract enforcing target contracts are registered in the verified registry",
+    },
+  },
 ];
 
 export function getTemplate(type: string): PolicyTemplate | undefined {
@@ -178,6 +203,21 @@ export function deriveSpendingConstructor(definition: PolicyDefinition): Spendin
   return {
     dailyLimitStroops: xlmToStroops(capXlm).toString(),
     windowSeconds: DEFAULT_WINDOW_SECONDS,
+  };
+}
+
+export function deriveVerifiedOnlyConstructor(definition: PolicyDefinition): VerifiedOnlyConstructor {
+  const verifiedOnly = (
+    definition as {
+      verifiedOnly?: { registryAddress?: string; enforcementMode?: "strict" | "trusted_publishers" };
+    }
+  ).verifiedOnly;
+  if (!verifiedOnly?.registryAddress) {
+    throw new Error("verified_only policy has no registryAddress");
+  }
+  return {
+    registryAddress: verifiedOnly.registryAddress,
+    enforcementMode: verifiedOnly.enforcementMode ?? "strict",
   };
 }
 
@@ -236,12 +276,14 @@ export function generatePolicy(
   const template = getTemplate(definition.type);
   if (!template) throw new Error(`unknown policy type: ${definition.type}`);
 
-  // Spending limits deploy a policy contract instance; bake the per-user
+  // Spending limits & verified-only deploy a policy contract instance; bake the per-user
   // constructor args (derived from THIS definition) into the manifest so the
   // deploy step is a pure function of the generated policy.
   let enforcement = template.enforcement;
   if (definition.type === "spending_limit" && enforcement.kind === "policy-contract") {
     enforcement = { ...enforcement, constructorArgs: deriveSpendingConstructor(definition) };
+  } else if (definition.type === "verified_only" && enforcement.kind === "policy-contract") {
+    enforcement = { ...enforcement, constructorArgs: deriveVerifiedOnlyConstructor(definition) };
   }
 
   return {
