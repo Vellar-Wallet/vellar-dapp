@@ -1,65 +1,73 @@
-# Vellar Wallet
+# Device Pairing & Session Issuance Simulation Suite
 
-![Vellar](apps/web/public/vellar.jpg)
+This directory contains a self-contained route suite that simulates a device
+pairing, session issuance, and revocation flow, as requested in issue #97.
 
-**Vellar** is a web-first Stellar smart wallet with a companion browser extension.
-Passkey onboarding (no seed phrases), programmable on-chain account policies,
-contract verification & trust signals, and account cleanup/merge tooling — plus
-agentic payments via [x402](https://x402.org), so an autonomous agent can spend
-under an on-chain budget without ever holding your keys.
+It runs a simple Express server to expose five endpoints that model the
+complete lifecycle of a device session.
 
-The SDK that powers Vellar is published separately as
-[`vellar-sdk`](https://github.com/Vellar-Wallet/vellar-sdk), with full docs at
-**[docs.vellar.xyz](https://docs.vellar.xyz)**.
+## Running the Simulation
 
-## Layout
-
-Monorepo (pnpm + Turborepo): `apps/` (web, extension, docs) · `packages/` (shared SDKs/UI/types) · `services/` (backend) · `contracts/` (Soroban) · `infra/`.
-
-## Getting started
+This suite requires `express` and `body-parser`. First, install the
+dependencies from within this directory:
 
 ```sh
-pnpm install
-pnpm typecheck
+pnpm install express body-parser
 ```
 
-## Running locally
+Then, start the server:
 
-1. **Start the database** (Postgres + Redis) — the backend services load their
-   config from a root `.env` and connect to Postgres on boot:
+```sh
+node server.js
+```
 
-   ```sh
-   cp .env.example .env        # then fill in RELAYER_* and SPONSOR_SECRET_KEY
-   docker compose -f infra/docker/docker-compose.yml up -d
-   ```
+The server will start on `http://localhost:4501`.
 
-   The services read `.env` automatically (via `tsx --env-file-if-exists`). If
-   Postgres is unreachable they fall back to **in-memory storage** with a
-   warning (data won't survive a restart) rather than crashing — but for a real
-   run you want the database up.
+## Testing the Flow
 
-2. **Run the stack** (web + gateway + services). The extension's `dev` task
-   launches a browser and needs Chrome installed; exclude it if you don't have
-   Chrome or only want the backend:
+A test script, `test.js`, is included to demonstrate the full sequence from
+requesting pairing to verifying revocation. It uses the built-in `fetch` from
+Node.js.
 
-   ```sh
-   pnpm dev                          # everything, incl. the extension (needs Chrome)
-   pnpm dev --filter=!@vellar/extension  # web + gateway + services only
-   ```
+To run the test script, first ensure the server is running in another terminal,
+then execute:
 
-   Ports: web `:3000`, gateway `:4000`, wallet `:4001`, lifecycle `:4002`,
-   policy `:4003`, Postgres `:5433`, Redis `:6380`.
+```sh
+node test.js
+```
 
-3. **Verify:** `curl localhost:4000/health` and open `http://localhost:3000`.
+You will see detailed output for each step of the flow, confirming that the
+logic for approval and revocation is working correctly.
 
-Integration tests that hit a real database run against a local test DB (seeded
-by the compose init script) when `TEST_DATABASE_URL` is set; otherwise they
-skip. See `.env.example` for the expected connection string shape.
+## Endpoints
 
-## Contributing
+### `POST /request-pairing`
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+A device initiates a pairing request by submitting its `publicKey`. The server
+returns a unique `deviceId` for tracking.
 
-## License
+**Body:** `{ "publicKey": "string" }`
 
-Apache-2.0 — see [LICENSE](LICENSE).
+### `POST /approve-pairing/:deviceId`
+
+A user approves a pending pairing request for a given `deviceId`. This action is
+a prerequisite for issuing a session.
+
+### `POST /issue-session`
+
+The approved device requests a session token by presenting its `deviceId` and
+`publicKey`. This endpoint will fail if the pairing has not been approved. On
+success, it returns a `sessionId`.
+
+**Body:** `{ "deviceId": "string", "publicKey": "string" }`
+
+### `GET /session-status/:sessionId`
+
+Checks the current status of a given `sessionId`. The status will be `active` or
+`revoked`.
+
+### `POST /revoke-session`
+
+Invalidates a session, changing its status to `revoked`.
+
+**Body:** `{ "sessionId": "string" }`
