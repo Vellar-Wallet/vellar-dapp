@@ -1,4 +1,5 @@
 const BASE_URL = "http://localhost:4500";
+const MAX_POLLS = 10; // Prevent infinite loops
 
 const matchingSubmission = {
   contractId: "C-MATCHING-123",
@@ -30,27 +31,40 @@ async function runTest(name, submission) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(submission),
   });
+  if (!submitRes.ok) {
+    throw new Error(`Submission failed with status ${submitRes.status}: ${await submitRes.text()}`);
+  }
   const submitBody = await submitRes.json();
   console.log("   Response:", submitBody);
-  if (submitRes.status !== 202) {
-    throw new Error("Submission failed!");
-  }
 
   // 2. Poll for status
   console.log("\n2. Polling for build status...");
   let status = "submitted";
-  while (status !== "complete") {
+  let pollCount = 0;
+  while (status !== "complete" && pollCount < MAX_POLLS) {
     await sleep(500); // Wait before polling
     const statusRes = await fetch(`${BASE_URL}/status/${submission.contractId}`);
+    if (!statusRes.ok) {
+      throw new Error(`Status poll failed with status ${statusRes.status}: ${await statusRes.text()}`);
+    }
     const statusBody = await statusRes.json();
     status = statusBody.status;
+    pollCount++;
     console.log(`   Polled status: ${status}`);
   }
+
+  if (status !== "complete") {
+    throw new Error(`Build did not complete after ${MAX_POLLS} polls.`);
+  }
+
   console.log("   Build complete!");
 
   // 3. Get diff
   console.log("\n3. Getting diff report...");
   const diffRes = await fetch(`${BASE_URL}/diff/${submission.contractId}`);
+  if (!diffRes.ok) {
+    throw new Error(`Diff request failed with status ${diffRes.status}: ${await diffRes.text()}`);
+  }
   const diffBody = await diffRes.json();
 
   if (diffBody.match) {
