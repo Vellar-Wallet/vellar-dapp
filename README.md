@@ -1,65 +1,62 @@
-# Vellar Wallet
+# Verification Submission & Diff Simulation Suite
 
-![Vellar](apps/web/public/vellar.jpg)
+This directory contains a self-contained route suite that simulates the contract
+verification submission and status-diffing flow, as requested in issue #94.
 
-**Vellar** is a web-first Stellar smart wallet with a companion browser extension.
-Passkey onboarding (no seed phrases), programmable on-chain account policies,
-contract verification & trust signals, and account cleanup/merge tooling — plus
-agentic payments via [x402](https://x402.org), so an autonomous agent can spend
-under an on-chain budget without ever holding your keys.
+It runs a simple Express server to expose three endpoints:
 
-The SDK that powers Vellar is published separately as
-[`vellar-sdk`](https://github.com/Vellar-Wallet/vellar-sdk), with full docs at
-**[docs.vellar.xyz](https://docs.vellar.xyz)**.
+- `POST /submit`: Accepts a mock contract submission.
+- `GET /status/:contractId`: Reports the build status, transitioning from
+  `building` to `complete`.
+- `GET /diff/:contractId`: Compares the submitted details against a reference
+  and reports any differences.
 
-## Layout
+## Running the Simulation
 
-Monorepo (pnpm + Turborepo): `apps/` (web, extension, docs) · `packages/` (shared SDKs/UI/types) · `services/` (backend) · `contracts/` (Soroban) · `infra/`.
-
-## Getting started
+This suite requires `express` and `body-parser`. First, install the
+dependencies from within this directory:
 
 ```sh
-pnpm install
-pnpm typecheck
+pnpm install express body-parser
 ```
 
-## Running locally
+Then, start the server:
 
-1. **Start the database** (Postgres + Redis) — the backend services load their
-   config from a root `.env` and connect to Postgres on boot:
+```sh
+node server.js
+```
 
-   ```sh
-   cp .env.example .env        # then fill in RELAYER_* and SPONSOR_SECRET_KEY
-   docker compose -f infra/docker/docker-compose.yml up -d
-   ```
+The server will start on `http://localhost:4500`.
 
-   The services read `.env` automatically (via `tsx --env-file-if-exists`). If
-   Postgres is unreachable they fall back to **in-memory storage** with a
-   warning (data won't survive a restart) rather than crashing — but for a real
-   run you want the database up.
+## Testing the Flow
 
-2. **Run the stack** (web + gateway + services). The extension's `dev` task
-   launches a browser and needs Chrome installed; exclude it if you don't have
-   Chrome or only want the backend:
+A test script, `test.js`, is included to demonstrate the full flow for both a
+matching and a non-matching submission. It uses the built-in `fetch` from Node.js.
 
-   ```sh
-   pnpm dev                          # everything, incl. the extension (needs Chrome)
-   pnpm dev --filter=!@vellar/extension  # web + gateway + services only
-   ```
+To run the test script, first ensure the server is running in another terminal,
+then execute:
 
-   Ports: web `:3000`, gateway `:4000`, wallet `:4001`, lifecycle `:4002`,
-   policy `:4003`, Postgres `:5433`, Redis `:6380`.
+```sh
+node test.js
+```
 
-3. **Verify:** `curl localhost:4000/health` and open `http://localhost:3000`.
+You will see output detailing the submission, status polling, and final diff
+result for both scenarios.
 
-Integration tests that hit a real database run against a local test DB (seeded
-by the compose init script) when `TEST_DATABASE_URL` is set; otherwise they
-skip. See `.env.example` for the expected connection string shape.
+## Endpoints
 
-## Contributing
+### `POST /submit`
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Accepts a JSON body with contract source details and initiates a mock build process.
 
-## License
+### `GET /status/:contractId`
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Returns the current status of a submission. On the first two requests for a given
+`contractId`, it returns `{ "status": "building" }`. On the third and subsequent
+requests, it returns `{ "status": "complete" }`.
+
+### `GET /diff/:contractId`
+
+Returns a diff report comparing the submitted details to a hardcoded reference
+contract. The response includes a `match` boolean and a list of `diffs` if
+there is a mismatch.
