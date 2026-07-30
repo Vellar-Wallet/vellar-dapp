@@ -39,7 +39,7 @@ async function runTest(name, submission) {
 
   // 2. Poll for status
   console.log("\n2. Polling for build status...");
-  let status = "submitted";
+  let status = submitBody.status; // Start with the status from the submission response
   let pollCount = 0;
   while (status !== "complete" && pollCount < MAX_POLLS) {
     await sleep(500); // Wait before polling
@@ -50,7 +50,7 @@ async function runTest(name, submission) {
     const statusBody = await statusRes.json();
     status = statusBody.status;
     pollCount++;
-    console.log(`   Polled status: ${status}`);
+    console.log(`   Poll #${pollCount}: Status is now '${status}'`);
   }
 
   if (status !== "complete") {

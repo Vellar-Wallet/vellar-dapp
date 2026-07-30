@@ -1,10 +1,25 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 
-// In-memory store for submissions and status poll tracking.
-// In a real app, this would be a database.
-const submissions = new Map();
-const pollCounts = new Map();
+/**
+ * =============================================================================
+ *  Mock Data Store & Business Logic
+ *  In a real application, this would live in separate files (e.g., a database
+ *  service) and be properly modeled.
+ * =============================================================================
+ */
+
+const STATUS = {
+  PENDING: "pending",
+  BUILDING: "building",
+  COMPLETE: "complete",
+  NOT_FOUND: "not_found",
+};
+
+const POLLS_UNTIL_COMPLETE = 2;
+
+// In-memory store for submissions and their build state.
+const submissionStore = new Map();
 
 // A hardcoded reference contract for diffing against.
 const referenceContract = {
@@ -13,6 +28,31 @@ const referenceContract = {
   toolchainVersion: "1.94.0",
   buildFlags: [],
 };
+
+function createSubmission(contractId, details) {
+  submissionStore.set(contractId, {
+    details,
+    pollCount: 0,
+  });
+}
+
+function getSubmission(contractId) {
+  return submissionStore.get(contractId)?.details;
+}
+
+function getSubmissionStatus(contractId) {
+  const submission = submissionStore.get(contractId);
+  if (!submission) {
+    return STATUS.NOT_FOUND;
+  }
+
+  // Increment poll count for the simulation
+  submission.pollCount += 1;
+
+  return submission.pollCount <= POLLS_UNTIL_COMPLETE
+    ? STATUS.BUILDING
+    : STATUS.COMPLETE;
+}
 
 const app = express();
 app.use(bodyParser.json());
@@ -30,11 +70,9 @@ app.post("/submit", (req, res) => {
     return res.status(400).json({ error: "contractId is required" });
   }
 
-  submissions.set(contractId, details);
-  pollCounts.set(contractId, 0); // Initialize poll count
-
+  createSubmission(contractId, details);
   console.log(`[Server] Received submission for contract: ${contractId}`);
-  res.status(202).json({ status: "submitted", contractId });
+  res.status(202).json({ status: STATUS.PENDING, contractId });
 });
 
 /**
@@ -46,17 +84,13 @@ app.post("/submit", (req, res) => {
 app.get("/status/:contractId", (req, res) => {
   const { contractId } = req.params;
 
-  if (!submissions.has(contractId)) {
+  const status = getSubmissionStatus(contractId);
+
+  if (status === STATUS.NOT_FOUND) {
     return res.status(404).json({ error: "Contract not found" });
   }
 
-  const count = pollCounts.get(contractId) ?? 0;
-  pollCounts.set(contractId, count + 1);
-
-  // Transition to 'complete' after 2 polls.
-  const status = count < 2 ? "building" : "complete";
-
-  console.log(`[Server] Status check for ${contractId}: ${status} (poll #${count + 1})`);
+  console.log(`[Server] Status check for ${contractId}: ${status}`);
   res.json({ status });
 });
 
@@ -68,7 +102,7 @@ app.get("/status/:contractId", (req, res) => {
  */
 app.get("/diff/:contractId", (req, res) => {
   const { contractId } = req.params;
-  const submission = submissions.get(contractId);
+  const submission = getSubmission(contractId);
 
   if (!submission) {
     return res.status(404).json({ error: "Contract not found" });
