@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashArtifact } from "./artifact";
-import { assertPublicHttpsRepoUrl, RepoUrlError } from "./repo-url-guard";
+import {
+  assertPublicHttpsRepoUrl,
+  gitConnectionPinArgs,
+  RepoUrlError,
+  type ResolvedPin,
+} from "./repo-url-guard";
 
 // BuildExecutor (technical-doc.md §8.4): the seam that rebuilds a submitted
 // contract deterministically, in isolation, and returns the built wasm bytes.
@@ -133,8 +138,9 @@ export interface DockerBuildExecutorConfig {
     env?: Record<string, string>,
   ) => Promise<{ code: number; out: string; timedOut?: boolean }>;
   /** repoUrl SSRF guard (FIX 6); defaults to the real https+DNS check. Injected
-   * so tests don't hit the network. Throws RepoUrlError to reject. */
-  assertRepoUrl?: (repoUrl: string) => Promise<void>;
+   * so tests don't hit the network. Throws RepoUrlError to reject, else returns
+   * the validated pin (undefined for an IP-literal host). */
+  assertRepoUrl?: (repoUrl: string) => Promise<ResolvedPin | undefined>;
 }
 
 /**
@@ -165,11 +171,13 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
       }
       // SSRF guard (security-audit.md H2/FIX 6): the clone runs on the HOST,
       // outside the build sandbox. Require public https and re-resolve DNS right
-      // before cloning, rejecting private/loopback/link-local answers (rebinding
-      // defense). Runs regardless of the git-level protocol pin below.
+      // before cloning, rejecting private/loopback/link-local answers. The guard
+      // RETURNS the validated address so we can pin git's connection to it — git
+      // otherwise resolves the hostname again independently (the TOCTOU window).
       const assertRepoUrl = config.assertRepoUrl ?? assertPublicHttpsRepoUrl;
+      let pin: ResolvedPin | undefined;
       try {
-        await assertRepoUrl(input.repoUrl);
+        pin = await assertRepoUrl(input.repoUrl);
       } catch (err) {
         if (err instanceof RepoUrlError) {
           throw new BuildExecutorError(err.message, "repo_url_rejected");
@@ -180,8 +188,10 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
       const workdir = await mkdtemp(join(tmpdir(), "vela-verify-"));
       const log: string[] = [];
       try {
-        // Belt-and-braces at the git level: only allow https, and pass repoUrl
-        // after `--` so a "-"-prefixed value can never be parsed as an option.
+        // Pin git's connection to the guard-validated IP (http.curloptResolve)
+        // AND forbid redirects (http.followRedirects=false) so git cannot be
+        // sent to a different, unpinned host it would resolve freely. Only
+        // https, and pass repoUrl after `--`.
         const clone = await run(
           "git",
           [
@@ -189,6 +199,7 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
             "protocol.allow=never",
             "-c",
             "protocol.https.allow=always",
+            ...gitConnectionPinArgs(pin),
             "clone",
             "--no-checkout",
             "--",

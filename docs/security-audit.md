@@ -94,22 +94,32 @@ ambient host git/SSH credentials.
   RFC1918/link-local (defeat rebinding); pass repoUrl after `--`; `protocol.allow=never` for
   non-https; run the clone itself inside network isolation with no ambient credentials.
 
-> **Status (FIX 6): mitigated, NOT fully closed — one residual TOCTOU window.** Implemented in
-> `services/worker-service/src/repo-url-guard.ts` + `executor.ts`: the guard requires public
-> `https`, rejects userinfo, and **re-resolves DNS immediately before the clone**, refusing any
-> answer in a private/loopback/link-local range (incl. `169.254.169.254`, RFC1918, IPv6
-> loopback/link-local, IPv4-mapped). The clone also pins `protocol.allow=never` +
-> `protocol.https.allow=always` and passes `repoUrl` after `--`.
-> **Residual risk (DNS rebinding, narrowed):** the guard's resolution and git's own connection
-> resolution are **separate lookups** — the checked IP is **not pinned into git's connection**
-> (no `-c http.curloptResolve=host:443:<ip>` / `--resolve` equivalent is passed). An attacker
-> controlling a DNS record with a ~0 TTL could therefore answer _public_ to the guard and
-> _private_ to git's subsequent lookup. The window is small (two lookups milliseconds apart,
-> both on the host resolver/cache) but non-zero. **To fully close:** pin the guard-resolved
-> public IP into the git connection via `-c http.curloptResolve=<host>:443:<ip>`, or run the
-> clone inside a network namespace that can only reach public routes. Tracked as a follow-up;
-> the current guard blocks the direct-literal and stable-DNS SSRF vectors that made H2 a live
-> read primitive.
+> **Status (FIX 6): CLOSED.** Implemented in `services/worker-service/src/repo-url-guard.ts` +
+> `executor.ts`. The guard requires public `https`, rejects userinfo, resolves the host once,
+> and refuses any answer in a private/loopback/link-local range (incl. `169.254.169.254`,
+> RFC1918, IPv6 loopback/link-local, IPv4-mapped). It **returns the validated IP**, which the
+> executor pins into git's connection so the check and the connection agree **by construction,
+> not by timing**:
+>
+> - **Connection pinned:** `-c http.curloptResolve=<host>:443:<ip>` (libcurl `CURLOPT_RESOLVE`)
+>   forces git to connect to the exact address the guard validated — git does **not** re-resolve
+>   the hostname. This substitutes the address only; **TLS SNI + certificate validation still use
+>   the hostname**, so the pin does not open a MITM window (verified against git 2.50.1's
+>   `http.curloptResolve` semantics).
+> - **Redirects forbidden:** `-c http.followRedirects=false` turns any 30x into an error, so the
+>   remote cannot bounce git to a different, unpinned host that it would resolve freely. (This is
+>   chosen over re-running the guard per redirect target — an error is simpler and strictly
+>   safer for a verification clone, which never legitimately needs a cross-host redirect.)
+> - Plus `protocol.allow=never` + `protocol.https.allow=always` and `repoUrl` after `--`.
+>
+> A test asserts a host whose DNS flips public→private between the guard's resolution and the
+> clone connects to the pinned **public** IP (or fails), never the private one. The rebinding
+> TOCTOU window is therefore closed.
+>
+> **Stronger alternative (for later):** when the worker gets its own dedicated host, run the
+> clone inside a network namespace that can only reach public routes — that removes reliance on
+> the git/libcurl pin entirely and also covers any non-HTTP fetch path. Not required now; the
+> pin + redirect-block fully closes the HTTPS clone path this executor uses.
 
 ### H3 — Blind SSRF upgraded to a read primitive via the public build log `[my code]`
 

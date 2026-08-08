@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertPublicHttpsRepoUrl,
+  gitConnectionPinArgs,
   isBlockedAddress,
   parseHttpsRepoUrl,
   RepoUrlError,
@@ -53,11 +54,28 @@ describe("isBlockedAddress — private / loopback / link-local ranges", () => {
 
 describe("assertPublicHttpsRepoUrl — full guard with injectable resolver (defeats DNS rebinding)", () => {
   it("passes when the host resolves to a public address", async () => {
-    await expect(
-      assertPublicHttpsRepoUrl("https://github.com/x.git", {
-        resolve: async () => ["140.82.112.3"],
-      }),
-    ).resolves.toBeUndefined();
+    const pin = await assertPublicHttpsRepoUrl("https://github.com/x.git", {
+      resolve: async () => ["140.82.112.3"],
+    });
+    // Returns the validated pin so the CALLER pins git's connection to the exact
+    // IP the guard checked (no independent re-resolution by git).
+    expect(pin).toEqual({ host: "github.com", port: 443, ip: "140.82.112.3" });
+  });
+
+  it("returns no pin for an IP-literal host (host IS the checked address)", async () => {
+    const pin = await assertPublicHttpsRepoUrl("https://93.184.216.34/x.git", {
+      resolve: async () => {
+        throw new Error("should not resolve an IP literal");
+      },
+    });
+    expect(pin).toBeUndefined();
+  });
+
+  it("pins the first validated address when several resolve", async () => {
+    const pin = await assertPublicHttpsRepoUrl("https://github.com/x.git", {
+      resolve: async () => ["140.82.112.3", "140.82.113.4"],
+    });
+    expect(pin).toEqual({ host: "github.com", port: 443, ip: "140.82.112.3" });
   });
 
   it("rejects when the host resolves to a private address (rebinding-style)", async () => {
@@ -91,5 +109,21 @@ describe("assertPublicHttpsRepoUrl — full guard with injectable resolver (defe
     await expect(
       assertPublicHttpsRepoUrl("http://127.0.0.1/x", { resolve }),
     ).rejects.toBeInstanceOf(RepoUrlError);
+  });
+});
+
+describe("gitConnectionPinArgs — pin git's connection + forbid redirects", () => {
+  it("pins host:port:ip and forbids redirects when a pin is present", () => {
+    const args = gitConnectionPinArgs({ host: "github.com", port: 443, ip: "140.82.112.3" });
+    expect(args).toEqual([
+      "-c",
+      "http.followRedirects=false",
+      "-c",
+      "http.curloptResolve=github.com:443:140.82.112.3",
+    ]);
+  });
+
+  it("still forbids redirects with no pin (IP-literal host)", () => {
+    expect(gitConnectionPinArgs(undefined)).toEqual(["-c", "http.followRedirects=false"]);
   });
 });

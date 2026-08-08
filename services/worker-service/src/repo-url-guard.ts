@@ -74,29 +74,42 @@ export interface RepoUrlGuardDeps {
   resolve?: (hostname: string) => Promise<string[]>;
 }
 
+/** A validated resolution the caller pins into git's connection so git does not
+ * re-resolve the hostname independently (TOCTOU / rebinding close). Undefined
+ * when the URL host is already an IP literal (no resolution, nothing to pin). */
+export interface ResolvedPin {
+  host: string;
+  port: number;
+  ip: string;
+}
+
 async function defaultResolve(hostname: string): Promise<string[]> {
   const results = await lookup(hostname, { all: true });
   return results.map((r) => r.address);
 }
 
-/** Full guard: https-only + every resolved address must be public. Throws
- * RepoUrlError otherwise. Run this immediately before the clone so the checked
- * resolution is the one git will use (rebinding defense). */
+/** Full guard: https-only + EVERY resolved address must be public. Throws
+ * RepoUrlError otherwise. Returns the validated pin (host:port:ip) so the caller
+ * can force git to connect to the exact address the guard checked — closing the
+ * window where git would otherwise resolve the hostname again independently.
+ * Undefined for an IP-literal host (the host is already the checked address). */
 export async function assertPublicHttpsRepoUrl(
   repoUrl: string,
   deps: RepoUrlGuardDeps = {},
-): Promise<void> {
+): Promise<ResolvedPin | undefined> {
   const url = parseHttpsRepoUrl(repoUrl);
   const resolve = deps.resolve ?? defaultResolve;
+  const port = url.port ? Number(url.port) : 443;
 
-  // If the host is already an IP literal, check it directly.
+  // If the host is already an IP literal, check it directly. No pin: git will
+  // connect to that literal, which is the exact value we validated.
   if (isIP(url.hostname)) {
     if (isBlockedAddress(url.hostname)) {
       throw new RepoUrlError(
         `repoUrl host ${url.hostname} is a private/loopback/link-local address.`,
       );
     }
-    return;
+    return undefined;
   }
 
   let addresses: string[];
@@ -117,4 +130,27 @@ export async function assertPublicHttpsRepoUrl(
       );
     }
   }
+  // Pin the FIRST validated address (all passed the block check). git connects
+  // to this exact IP; TLS still validates the certificate against the hostname
+  // (curloptResolve substitutes the address only, not the cert identity).
+  return { host: url.hostname, port, ip: addresses[0]! };
+}
+
+/** Build the git `-c` args that (a) pin the connection to the guard-validated IP
+ * so git does not re-resolve, and (b) forbid redirects so git cannot be sent to
+ * a different, unpinned host that it WOULD resolve freely. Pass a null/undefined
+ * pin for an IP-literal host (nothing to pin, but redirects are still forbidden). */
+export function gitConnectionPinArgs(pin: ResolvedPin | undefined): string[] {
+  const args: string[] = [
+    // Any redirect (even to the same host) becomes an error, so a 30x to an
+    // unpinned host can never trigger a free re-resolution.
+    "-c",
+    "http.followRedirects=false",
+  ];
+  if (pin) {
+    // libcurl CURLOPT_RESOLVE: substitute the address for host:port. TLS SNI +
+    // certificate validation still use `host`, so this does not open a MITM.
+    args.push("-c", `http.curloptResolve=${pin.host}:${pin.port}:${pin.ip}`);
+  }
+  return args;
 }

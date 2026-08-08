@@ -5,7 +5,7 @@ import {
   stubBuildExecutor,
   type DockerBuildExecutorConfig,
 } from "./executor";
-import { RepoUrlError } from "./repo-url-guard";
+import { assertPublicHttpsRepoUrl, RepoUrlError } from "./repo-url-guard";
 
 const repoInput = {
   sourceType: "repo" as const,
@@ -16,8 +16,9 @@ const repoInput = {
 };
 
 // Pass-through SSRF guard for tests that aren't exercising the guard itself, so
-// they don't hit real DNS (the guard has its own dedicated tests).
-const passRepoUrl = async () => {};
+// they don't hit real DNS (the guard has its own dedicated tests). Returns a
+// fixed public pin, as the real guard would.
+const passRepoUrl = async () => ({ host: "github.com", port: 443, ip: "140.82.112.3" });
 
 // A fake `run` seam that scripts responses per command and records the docker
 // args, so we can assert isolation flags + timeout wiring without real Docker.
@@ -135,7 +136,7 @@ describe("dockerBuildExecutor isolation", () => {
     expect(calls.find((c) => c.cmd === "git")).toBeUndefined();
   });
 
-  it("passes https protocol pins + `--` separator to git clone", async () => {
+  it("pins the connection to the guard IP, forbids redirects, and `--`-separates the url", async () => {
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
     const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
     await ex.build(repoInput).catch(() => {}); // reaches artifact read + throws; we only inspect args
@@ -143,10 +144,47 @@ describe("dockerBuildExecutor isolation", () => {
       (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
     );
     expect(cloneCall?.args).toContain("protocol.allow=never");
+    // Connection pinned to the guard-validated IP (no independent re-resolution).
+    expect(cloneCall?.args).toContain("http.curloptResolve=github.com:443:140.82.112.3");
+    // Redirects forbidden so a 30x can't send git to an unpinned host.
+    expect(cloneCall?.args).toContain("http.followRedirects=false");
     expect(cloneCall?.args).toContain("--");
     // repoUrl comes AFTER the -- so a "-"-prefixed value can't be an option.
     const sep = cloneCall!.args.indexOf("--");
     expect(cloneCall!.args.indexOf(repoInput.repoUrl)).toBeGreaterThan(sep);
+  });
+
+  it("rebinding: DNS flipping public→private connects to the pinned public IP, never the private one", async () => {
+    // The real guard resolves ONCE (public), returns that pin; the executor
+    // pins git to it. Even if the next DNS lookup would return a private
+    // address, git connects to the pinned public IP. Here the guard sees public
+    // and we assert the pin carries the public IP into the clone command.
+    let call = 0;
+    const flippingResolve = async () => {
+      call += 1;
+      return call === 1 ? ["93.184.216.34"] : ["169.254.169.254"]; // public, then private
+    };
+    const guard = (repoUrl: string) =>
+      assertPublicHttpsRepoUrl(repoUrl, { resolve: flippingResolve });
+    const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    await ex.build(repoInput).catch(() => {});
+    const cloneCall = calls.find(
+      (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
+    );
+    // Pinned to the PUBLIC IP the guard validated; the later private answer is
+    // never used (git does not re-resolve).
+    expect(cloneCall?.args).toContain("http.curloptResolve=github.com:443:93.184.216.34");
+    expect(cloneCall?.args.join(" ")).not.toContain("169.254.169.254");
+  });
+
+  it("rebinding: a host that resolves private at guard time is rejected before any clone", async () => {
+    const guard = (repoUrl: string) =>
+      assertPublicHttpsRepoUrl(repoUrl, { resolve: async () => ["169.254.169.254"] });
+    const { run, calls } = fakeRun({});
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "repo_url_rejected" });
+    expect(calls.find((c) => c.cmd === "git")).toBeUndefined();
   });
 
   it("rejects non-repo submissions (upload) with unsupported_source", async () => {
