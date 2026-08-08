@@ -7,6 +7,7 @@ import { createRpcArtifactResolver } from "./resolver";
 import { createPgJobStore } from "./pg-job-store";
 import { startWorkerLoop, type WorkerMetrics } from "./loop";
 import { createAttestor, type Attestor } from "./attestor";
+import { assertAttestorSafeForNetwork } from "./attestor-guard";
 import { createRegistrySubmitter } from "./registry-submitter";
 
 // @vellar/worker-service — the deterministic build worker (technical-doc.md §8.4).
@@ -90,6 +91,18 @@ await metricsApp.listen({
 let attestor: Attestor | undefined;
 let sweepTimer: ReturnType<typeof setInterval> | undefined;
 if (config.attestorSecretKey && config.attestationRegistryId) {
+  // M5 hard guard: the attestor is a single hot key today; refuse to wire it
+  // against a MAINNET registry until a multisig/smart-account attestor exists
+  // (unless explicitly overridden). Fail closed.
+  try {
+    assertAttestorSafeForNetwork({
+      networkPassphrase: config.networkPassphrase,
+      allowSingleKey: process.env.ALLOW_SINGLE_KEY_ATTESTOR === "1",
+    });
+  } catch (err) {
+    console.error(`[worker-service] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
   attestor = createAttestor({
     submitter: createRegistrySubmitter({
       rpcUrl: config.rpcUrl,

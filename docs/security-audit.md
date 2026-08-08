@@ -144,6 +144,23 @@ read oracle. Same build-box gating as H2.
   forges provenance for any contract and can rotate itself away; the entire verified-recipient
   trust layer = one hot G-key on an internet-facing worker. **Fix:** attestor as
   multisig/smart-account so `require_auth` enforces threshold on-chain.
+  **Status (FIX 4): DEFERRED behind a hard guard.** M5 is only exploitable once a *mainnet*
+  registry exists, and none does — the deployed registry is testnet. Rather than ship an
+  untested smart-account attestor now, the worker refuses to wire the single-key attestor
+  against a mainnet registry (`assertAttestorSafeForNetwork`,
+  `services/worker-service/src/attestor-guard.ts`): boot fails on the mainnet passphrase unless
+  `ALLOW_SINGLE_KEY_ATTESTOR=1` is set. The single-key attestor keeps working on testnet. The
+  intended design when mainnet is scheduled:
+  > **Smart-account attestor.** Make the registry's attestor a Soroban smart-account
+  > (C-address) rather than a single G-key. `attestation-registry`'s `upsert`/`revoke`/
+  > `set_attestor` already gate on `require_auth(attestor)` (`lib.rs:124-180`), so pointing the
+  > stored attestor at a C-address means the account's own `__check_auth` enforces an M-of-N
+  > threshold (or a policy) on-chain — no registry-contract change to the auth model. The worker
+  > then submits `upsert`/`revoke` *through* that account (co-signing to threshold) instead of
+  > signing with a lone keypair (`registry-submitter.ts:39`). A single host compromise is then
+  > insufficient to forge provenance. (Ed25519 classic multisig was rejected: Soroban
+  > `require_auth` on a G-account checks a single ed25519 signature and does not compose with
+  > classic multisig thresholds.)
 
 - **M6 — DB fallback fails open + health lies `[my code]`** — `service-kit/src/index.ts:49-64`,
   `wallet-service/src/index.ts:31-61`. No `DATABASE_URL` (or transient unreachability — Render
