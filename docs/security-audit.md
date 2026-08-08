@@ -272,6 +272,17 @@ check using the **already-exported** symbol at `passkey-kit/dist/index.js:31`. T
 `server.ts:76-107` does none of this. This is the same invariant the keyId "client-authoritative"
 refutation rested on, so **the refutation stands and the fix and the refutation are one fact.**
 
+> **⚠ Limitation of the derivation gate — do NOT read `existsByContractId` as authentication.**
+> FIX 2 proves only that `contractId == derive(keyId)`, i.e. it binds the address to the keyId. It
+> does **not** prove a genuine WebAuthn authenticator exists or that a real user controls the key: a
+> scripted P-256 keypair produces a perfectly valid self-authored deploy and a matching
+> `derive(keyId)` contractId. So a "recognized wallet" (a row in the wallets table, checked by
+> `WalletRepository.existsByContractId`) is a **metering and scoping primitive only** — it bounds
+> *which* contracts the funding paths will pay for, and lets budgets attribute spend to a wallet. It
+> is **never** an identity, trust, or ownership signal, and no future code may treat it as one
+> (e.g. to gate a sensitive action, render a "verified user" badge, or skip an on-chain check). The
+> only real authority remains the passkey signature validated on-chain by `__check_auth`.
+
 ### V2 — The relayer is a second unscoped funding source. **CONFIRMED**
 
 `createHybridSubmitter` sends anything failing `needsSponsorRebuild` to the **relayer**

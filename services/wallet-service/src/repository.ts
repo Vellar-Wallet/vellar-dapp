@@ -25,7 +25,14 @@ export interface WalletRepository {
   findByKeyId(keyId: string, network: Network): Promise<WalletRecord | undefined>;
   /** True when the server has a wallet record for this contract on this network.
    * Used to scope funding-path submissions to wallets the product created
-   * (security-audit.md C1/H1/V2). */
+   * (security-audit.md C1/H1/V2).
+   *
+   * NOT AUTHENTICATION: a "recognized wallet" only means contractId ==
+   * derive(keyId) held at creation (FIX 2). A scripted P-256 keypair yields a
+   * valid self-authored deploy, so this is a metering/scoping primitive only —
+   * never an identity, trust, or ownership signal. On-chain __check_auth is the
+   * only real authority. (See the derivation-gate limitation note in
+   * docs/security-audit.md.) */
   existsByContractId(contractId: string, network: Network): Promise<boolean>;
 }
 
