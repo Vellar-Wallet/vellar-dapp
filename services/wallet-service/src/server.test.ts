@@ -15,6 +15,7 @@ import {
 } from "./repository";
 import { createUnconfiguredSubmitter, SubmissionError, type TransactionSubmitter } from "./relayer";
 import { buildServer } from "./server";
+import { deriveWalletContractId } from "./derivation";
 
 function workingSubmitter(): TransactionSubmitter {
   return { submit: vi.fn().mockResolvedValue({ hash: "txhash123" }) };
@@ -191,6 +192,41 @@ describe("GET /wallet/session/:id", () => {
     const server = build(workingSubmitter());
     const res = await server.inject({ url: "/wallet/session/does-not-exist" });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("POST /wallet/create derivation gate (V1)", () => {
+  const PASSPHRASE = "Test SDF Network ; September 2015";
+  const KEY_ID = "AAECAwQFBgcICQoLDA0ODw";
+
+  it("accepts a create whose contractId equals derive(keyId)", async () => {
+    const derived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    app = buildServer({ submitter: workingSubmitter(), networkPassphrase: PASSPHRASE });
+    const res = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: derived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().contractId).toBe(derived);
+  });
+
+  it("rejects (403) a create whose contractId does not equal derive(keyId), before submission", async () => {
+    const submitter = workingSubmitter();
+    app = buildServer({ submitter, networkPassphrase: PASSPHRASE });
+    const res = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: {
+        keyId: KEY_ID,
+        contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        network: "testnet",
+        signedTx: "xdr",
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("contract_id_mismatch");
+    expect(submitter.submit).not.toHaveBeenCalled();
   });
 });
 

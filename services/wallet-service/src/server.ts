@@ -13,6 +13,7 @@ import {
 } from "./repository";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 import { assertScopedToKnownWallets, ScopeError } from "./scope";
+import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
 // passkeys by design (technical-doc.md §8 — no silent signing, no server key
@@ -84,6 +85,27 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
     const { keyId, contractId, network, signedTx } = parsed.data;
+
+    // Derivation gate (security-audit.md V1): the smart-account address is a
+    // secret-free pure function of the keyId, so a caller must not be able to
+    // map their keyId to a contractId that isn't derive(keyId). This closes
+    // /wallet/create as a third funding path and enforces the invariant the
+    // keyId "client-authoritative" property rests on. Passphrase from server
+    // config, never the request body (V5).
+    if (deps.networkPassphrase) {
+      try {
+        assertDerivedContractId(keyId, contractId, {
+          networkPassphrase: deps.networkPassphrase,
+        });
+      } catch (err) {
+        if (err instanceof DerivationMismatchError) {
+          request.log.warn({ code: err.code }, "rejected create with mismatched contractId");
+          recordOutcome(domainMetrics.walletCreated, "wallet-service", "failure", network);
+          return reply.code(403).send({ error: err.code, message: err.message });
+        }
+        throw err;
+      }
+    }
 
     if (await wallets.findByKeyId(keyId, network)) {
       return reply.code(409).send({ error: "wallet_exists" });
