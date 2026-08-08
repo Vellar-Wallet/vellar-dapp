@@ -94,6 +94,23 @@ ambient host git/SSH credentials.
   RFC1918/link-local (defeat rebinding); pass repoUrl after `--`; `protocol.allow=never` for
   non-https; run the clone itself inside network isolation with no ambient credentials.
 
+> **Status (FIX 6): mitigated, NOT fully closed — one residual TOCTOU window.** Implemented in
+> `services/worker-service/src/repo-url-guard.ts` + `executor.ts`: the guard requires public
+> `https`, rejects userinfo, and **re-resolves DNS immediately before the clone**, refusing any
+> answer in a private/loopback/link-local range (incl. `169.254.169.254`, RFC1918, IPv6
+> loopback/link-local, IPv4-mapped). The clone also pins `protocol.allow=never` +
+> `protocol.https.allow=always` and passes `repoUrl` after `--`.
+> **Residual risk (DNS rebinding, narrowed):** the guard's resolution and git's own connection
+> resolution are **separate lookups** — the checked IP is **not pinned into git's connection**
+> (no `-c http.curloptResolve=host:443:<ip>` / `--resolve` equivalent is passed). An attacker
+> controlling a DNS record with a ~0 TTL could therefore answer _public_ to the guard and
+> _private_ to git's subsequent lookup. The window is small (two lookups milliseconds apart,
+> both on the host resolver/cache) but non-zero. **To fully close:** pin the guard-resolved
+> public IP into the git connection via `-c http.curloptResolve=<host>:443:<ip>`, or run the
+> clone inside a network namespace that can only reach public routes. Tracked as a follow-up;
+> the current guard blocks the direct-literal and stable-DNS SSRF vectors that made H2 a live
+> read primitive.
+
 ### H3 — Blind SSRF upgraded to a read primitive via the public build log `[my code]`
 
 `services/worker-service/src/executor.ts:164`
