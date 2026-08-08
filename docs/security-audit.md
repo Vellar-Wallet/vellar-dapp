@@ -243,5 +243,95 @@ read oracle. Same build-box gating as H2.
 
 **Can wait (hardening / latent):** M3, M7, M9, L1–L7, I1.
 
-_(Remediation order is revised in the V1–V6 follow-up analysis; see that section of the
-conversation / a future appendix for the updated mainnet-blocking sequence.)_
+_(Remediation order is revised in the V1–V6 follow-up below.)_
+
+---
+
+## V1–V6 Follow-up — deeper verification of the load-bearing claims
+
+Six questions that could change the remediation plan were traced to code (two via investigators
+reading the pinned passkey-kit source and the installed `passkey-kit@0.14.0` derivation code).
+Verdicts below; three of them changed the plan.
+
+### V1 — `/wallet/create` derivation gate is available. **CONFIRMED**
+
+The create tx goes to the **relayer**, not the sponsor: `createHybridSubmitter`
+(`wallet-service/src/index.ts:17-25`) routes to the sponsor only when
+`needsSponsorRebuild` is true (`sponsor.ts:26-39`), and a wallet deploy carries
+**source-account (deployer) auth**, so the predicate is false → relayer fallback.
+
+The smart-account address is a **secret-free pure function of the keyId** under the pinned
+scheme (`node_modules/…/passkey-kit/dist/utils.js:28-37`):
+`salt = sha256(keyId)`; `deployer = Keypair.fromRawEd25519Seed(sha256("kalepail"))`
+(`constants.js:56`, public, no secret); `contractId = StrKey.encodeContract(sha256(HashIdPreimage{
+networkId: sha256(passphrase), fromAddress(deployer, salt)}))` — **wasm hash is not an input**.
+The client uses this default deployer (`apps/web/lib/connector-factory.ts:57-61`, no `deploySource`).
+Every input is in the create body (`keyId`) or a pinned constant, so the server can reject unless
+`deriveContractAddress(keyId, pinnedDeployer, pinnedPassphrase) === body.contractId` — a one-line
+check using the **already-exported** symbol at `passkey-kit/dist/index.js:31`. Today
+`server.ts:76-107` does none of this. This is the same invariant the keyId "client-authoritative"
+refutation rested on, so **the refutation stands and the fix and the refutation are one fact.**
+
+### V2 — The relayer is a second unscoped funding source. **CONFIRMED**
+
+`createHybridSubmitter` sends anything failing `needsSponsorRebuild` to the **relayer**
+(`sponsor.ts:114-117`), funded by `RELAYER_API_KEY`, reachable unauthenticated via the same
+routes. **C1's sponsor-only scoping does not cover the relayer branch** — scoping must happen at
+the route, before the submitter selects a branch, or the abuse simply relocates to the relayer.
+
+### V3 — M4 is NOT permanent fund lock. **REFUTED → M4 stays Medium (availability)**
+
+The pinned smart-wallet source is readable
+(`~/.cargo/git/checkouts/passkey-kit-…/50981cc/contracts/smart-wallet/src/lib.rs`).
+`remove_signer` runs **no policy code** (`:302-308`, explicit comment that calling the policy
+there would let a rejecting policy block its own removal), and `__check_auth` has an
+`is_sole_self_removal` exception that **skips consulting a policy** when the only context is that
+policy's own removal (`:433-449`, `context.rs:15-45`). In this repo the policy attaches as a
+standalone `SignerLimits(None)` signer (`connector-factory.ts:107-124`), so the admin passkey
+removes it alone. Recovery = one `remove_signer(SignerKey.Policy(<addr>))` — **but there is no
+wired detach UI** (`policy.ts` exposes only attach/deploy), so recovery today needs a direct
+`kit.remove(...)` SDK call. **This safety depends on the attach shape**, which is app code, not
+the contract — so a test must pin it.
+
+### V4 — H2+L2 do NOT compose into sponsor spend. **REFUTED (as spend) / CONFIRMED (as reachability)**
+
+A co-located worker's host-side `git clone` (`executor.ts:163`, `defaultRun` = host `spawn`,
+`:292-294`) **can** reach `http://127.0.0.1:4001/4003`, but git smart-HTTP clone issues a **GET**
+and every sponsor-spending route is **POST-only** (`server.ts:128,156`) — so no unauthenticated
+spend via clone. It **does** confirm the worker reaches internal-only ports the internet cannot,
+and H3 reads them back out. **Do not encode "POST-only" as a control** — fix the reachability
+(bind `127.0.0.1`, isolate the worker, allowlist repoUrl).
+
+### V5 — `network` is a label, not a routing input. **CONFIRMED**
+
+RPC/passphrase are fixed from env at process start (`config.ts:18-19`); the request `network`
+field is used only for storage/metrics/lookup (`server.ts:68,102-105,116,137-138,169`), never for
+submission routing. **Rule for all remediation guards: key off server config only, never the
+request body's `network`.**
+
+### V6 — Two infra facts remain gated on the dashboard
+
+From committed configs: neither `render.yaml` nor `railway.json` publishes any port beyond the
+injected `$PORT`, and neither sets an `autoDeploy`/branch/trigger field. **Provable from repo:**
+the repo never asks to expose 4001-4004. **NOT provable from repo (needs dashboard):** whether the
+platform edge firewalls the other bound listeners, and whether `autoDeploy` is on. Both manifests
+are testnet-only.
+
+### Revised mainnet-blocking order
+
+1. **Scope both funding paths at the route** (C1 + H1 + V2). Validate the tx is a Vellar wallet
+   op before the submitter selects sponsor *or* relayer; lower the sponsor fee bid to
+   simulation-derived.
+2. **Derivation gate on `/wallet/create`** (V1). Reject unless `derive(keyId) === contractId` —
+   closes create as a third funding path and enforces the client-authoritative invariant.
+3. **Per-path spend budgets** keyed off server config only (H1/M2/V5); meter `/policies/generate`
+   or budget on spend; require the wallet to exist before a sponsored deploy.
+4. **Attestor as multisig/smart-account** before any mainnet registry (M5).
+5. **Policy attach invariant + detach path** (V3): pin the standalone-signer attach shape with a
+   test; wire detach into the web app.
+6. **Worker network isolation** (H2+H3+L2+V4): bind downstream to `127.0.0.1`; repoUrl allowlist
+   with DNS re-check; split public/private build logs.
+
+**Dropped from blocking:** M4 (availability-only per V3; gate `verified_only` out of the mainnet
+builder + add detach UI when that path is enabled).
+**Still gated on dashboard (V6):** final severity of L2 (port exposure) and M9 (autoDeploy).
