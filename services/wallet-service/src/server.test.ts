@@ -307,6 +307,67 @@ describe("POST /wallet/create derivation gate (V1)", () => {
   });
 });
 
+describe("POST /wallet/create budget line (FIX 3)", () => {
+  const PASSPHRASE = "Test SDF Network ; September 2015";
+  const KEY_ID = "AAECAwQFBgcICQoLDA0ODw";
+
+  it("consumes the create budget and proceeds when allowed", async () => {
+    const derived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    const tryConsume = vi.fn().mockResolvedValue({ ok: true });
+    app = buildServer({
+      submitter: workingSubmitter(),
+      networkPassphrase: PASSPHRASE,
+      budget: { tryConsume },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: derived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(tryConsume).toHaveBeenCalledWith({ line: "create", network: "testnet", stroops: 0n });
+  });
+
+  it("returns 503 (create_budget_exceeded) and does NOT submit when the budget refuses", async () => {
+    const derived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    const submitter = workingSubmitter();
+    app = buildServer({
+      submitter,
+      networkPassphrase: PASSPHRASE,
+      budget: { tryConsume: async () => ({ ok: false, reason: "budget_exceeded" }) },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: derived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("create_budget_exceeded");
+    expect(submitter.submit).not.toHaveBeenCalled();
+  });
+
+  it("fails closed: a budget accounting error refuses the create", async () => {
+    const derived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    const submitter = workingSubmitter();
+    app = buildServer({
+      submitter,
+      networkPassphrase: PASSPHRASE,
+      budget: {
+        tryConsume: async () => {
+          throw new Error("db down");
+        },
+      },
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: derived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(submitter.submit).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /wallet/submit funding-path scoping (C1/H1/V2)", () => {
   const PASSPHRASE = "Test SDF Network ; September 2015";
   const KNOWN_WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";

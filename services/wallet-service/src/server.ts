@@ -1,6 +1,12 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth, registerMetrics, domainMetrics, recordOutcome } from "@vellar/service-kit";
+import {
+  registerHealth,
+  registerMetrics,
+  domainMetrics,
+  recordOutcome,
+  type SpendBudget,
+} from "@vellar/service-kit";
 import {
   createMemoryAuditLog,
   createMemorySessionRepository,
@@ -56,6 +62,11 @@ export interface WalletServiceDeps {
   /** Readiness probe for DB-aware /health (FIX 7). Returns false when the
    * persistence layer is degraded so the orchestrator stops routing. */
   isReady?: () => boolean | Promise<boolean>;
+  /** Rolling-window spend budget for the "create" funding line (FIX 3). When
+   * set, /wallet/create consumes it before relayer-funding a deploy; a refusal
+   * returns 503. Unset = budgeting disabled (dev / no relayer). The sponsor
+   * line is metered inside the submitter, where the fee is known. */
+  budget?: SpendBudget;
 }
 
 export function buildServer(deps: WalletServiceDeps): FastifyInstance {
@@ -112,6 +123,29 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     if (await wallets.findByKeyId(keyId, network)) {
       return reply.code(409).send({ error: "wallet_exists" });
+    }
+
+    // Meter wallet creation on its own budget line (FIX 3): creation is
+    // relayer-funded and unauthenticated, so cap it separately from submit so
+    // create-spam can't drain the budget legitimate submits need. Count-only
+    // (relayer quota isn't server-held XLM). Fails CLOSED — a refusal or an
+    // accounting error blocks the create rather than funding it unmetered.
+    if (deps.budget) {
+      let allowed: boolean;
+      try {
+        const r = await deps.budget.tryConsume({ line: "create", network, stroops: 0n });
+        allowed = r.ok;
+      } catch (err) {
+        request.log.error(err, "create budget accounting failed; refusing");
+        allowed = false;
+      }
+      if (!allowed) {
+        recordOutcome(domainMetrics.walletCreated, "wallet-service", "failure", network);
+        return reply.code(503).send({
+          error: "create_budget_exceeded",
+          message: "Wallet-creation budget reached; try again later.",
+        });
+      }
     }
 
     // Submit before persisting: a stored mapping to an undeployed contract

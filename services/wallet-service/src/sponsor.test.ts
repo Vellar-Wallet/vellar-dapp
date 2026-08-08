@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enforceFeeCap, SPONSOR_DEFAULT_MAX_FEE_STROOPS } from "./sponsor";
+import { consumeSponsorBudget, enforceFeeCap, SPONSOR_DEFAULT_MAX_FEE_STROOPS } from "./sponsor";
 import { SubmissionError } from "./relayer";
 
 describe("enforceFeeCap", () => {
@@ -30,5 +30,42 @@ describe("enforceFeeCap", () => {
   it("honors a custom (looser) cap", () => {
     expect(() => enforceFeeCap("5000000", "10000000")).not.toThrow();
     expect(() => enforceFeeCap("10000001", "10000000")).toThrow(SubmissionError);
+  });
+});
+
+describe("consumeSponsorBudget (FIX 3, fails closed)", () => {
+  it("no-ops when no budget is wired", async () => {
+    await expect(consumeSponsorBudget("100", undefined, undefined)).resolves.toBeUndefined();
+    await expect(consumeSponsorBudget("100", { tryConsume: async () => ({ ok: true }) }, undefined)).resolves.toBeUndefined();
+  });
+
+  it("consumes the sponsor line with the real fee and proceeds when allowed", async () => {
+    const calls: unknown[] = [];
+    const budget = {
+      tryConsume: async (req: unknown) => {
+        calls.push(req);
+        return { ok: true as const };
+      },
+    };
+    await expect(consumeSponsorBudget("12345", budget, "testnet")).resolves.toBeUndefined();
+    expect(calls[0]).toEqual({ line: "sponsor", network: "testnet", stroops: 12345n });
+  });
+
+  it("throws sponsor_budget_exceeded when the budget refuses", async () => {
+    const budget = { tryConsume: async () => ({ ok: false as const, reason: "budget_exceeded" }) };
+    const attempt = consumeSponsorBudget("100", budget, "mainnet");
+    await expect(attempt).rejects.toBeInstanceOf(SubmissionError);
+    await expect(attempt).rejects.toMatchObject({ code: "sponsor_budget_exceeded" });
+  });
+
+  it("fails closed: an accounting error refuses (does not proceed)", async () => {
+    const budget = {
+      tryConsume: async () => {
+        throw new Error("db down");
+      },
+    };
+    await expect(consumeSponsorBudget("100", budget, "testnet")).rejects.toMatchObject({
+      code: "sponsor_budget_exceeded",
+    });
   });
 });

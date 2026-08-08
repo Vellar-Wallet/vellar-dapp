@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   type xdr,
 } from "@stellar/stellar-sdk";
+import type { SpendBudget, BudgetNetwork } from "@vellar/service-kit";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 
 // Direct-RPC fee sponsorship (docs/decisions.md 2026-07-16 P27-V2 finding):
@@ -24,6 +25,13 @@ export interface SponsorConfig {
    * (security-audit.md C1/H1): a genuine wallet op assesses well under 0.1 XLM;
    * anything higher is anomalous and is not auto-sponsored. */
   maxFeeStroops?: string;
+  /** Rolling-window spend budget for the "sponsor" line (FIX 3). Consumed with
+   * the real simulation-derived fee AFTER prepareTransaction and BEFORE signing,
+   * so a budget refusal costs only a (free) simulation. Fails closed. */
+  budget?: SpendBudget;
+  /** Network label for budget accounting — from server config, never a request
+   * body (V5). Required when budget is set. */
+  budgetNetwork?: BudgetNetwork;
 }
 
 // Default per-call sponsor fee cap: 0.1 XLM. Replaces the old hardcoded
@@ -40,6 +48,28 @@ export function enforceFeeCap(feeStroops: string, maxStroops: string): void {
       `Sponsor fee ${feeStroops} stroops exceeds the ${maxStroops}-stroop cap; refusing to sponsor.`,
       "sponsor_fee_too_high",
     );
+  }
+}
+
+/** Consume the sponsor budget line for a fee, or throw
+ * SubmissionError("sponsor_budget_exceeded"). No-op when no budget is wired.
+ * FAILS CLOSED: a refusal OR an accounting error blocks the submission. Pure of
+ * RPC so it is unit-testable. */
+export async function consumeSponsorBudget(
+  feeStroops: string,
+  budget: SpendBudget | undefined,
+  network: BudgetNetwork | undefined,
+): Promise<void> {
+  if (!budget || !network) return;
+  let allowed: boolean;
+  try {
+    const r = await budget.tryConsume({ line: "sponsor", network, stroops: BigInt(feeStroops) });
+    allowed = r.ok;
+  } catch {
+    allowed = false; // fail closed
+  }
+  if (!allowed) {
+    throw new SubmissionError("Sponsor spend budget reached; try again later.", "sponsor_budget_exceeded");
   }
 }
 
@@ -107,6 +137,11 @@ export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmit
       // prepareTransaction sets the true simulation-derived fee. Refuse to
       // sponsor anything over the cap (security-audit.md C1/H1).
       enforceFeeCap(prepared.fee, maxFeeStroops);
+
+      // Consume the rolling-window sponsor budget with the REAL fee, before
+      // signing/submitting (FIX 3). Fails closed.
+      await consumeSponsorBudget(prepared.fee, config.budget, config.budgetNetwork);
+
       prepared.sign(sponsor);
 
       const sent = await server.sendTransaction(prepared);
