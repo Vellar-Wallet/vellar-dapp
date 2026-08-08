@@ -1,4 +1,4 @@
-import { portFromEnv, startService, tryConnectDb } from "@vellar/service-kit";
+import { hostFromEnv, portFromEnv, startService, tryConnectDb } from "@vellar/service-kit";
 import { configFromEnv } from "./config";
 import { buildServer, type VerificationServiceDeps } from "./server";
 
@@ -43,4 +43,7 @@ if (!config.databaseUrl) {
   );
 }
 
-await startService(app, { port: portFromEnv("VERIFICATION_SERVICE_PORT", 4004) });
+await startService(app, {
+  port: portFromEnv("VERIFICATION_SERVICE_PORT", 4004),
+  host: hostFromEnv("127.0.0.1"),
+});

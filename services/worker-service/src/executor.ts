@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hashArtifact } from "./artifact";
+import { assertPublicHttpsRepoUrl, RepoUrlError } from "./repo-url-guard";
 
 // BuildExecutor (technical-doc.md §8.4): the seam that rebuilds a submitted
 // contract deterministically, in isolation, and returns the built wasm bytes.
@@ -50,7 +51,8 @@ export class BuildExecutorError extends Error {
       | "clone_failed"
       | "build_failed"
       | "artifact_missing"
-      | "unsupported_source",
+      | "unsupported_source"
+      | "repo_url_rejected",
     readonly log = "",
   ) {
     super(message);
@@ -128,7 +130,11 @@ export interface DockerBuildExecutorConfig {
     args: string[],
     cwd: string,
     timeoutMs?: number,
+    env?: Record<string, string>,
   ) => Promise<{ code: number; out: string; timedOut?: boolean }>;
+  /** repoUrl SSRF guard (FIX 6); defaults to the real https+DNS check. Injected
+   * so tests don't hit the network. Throws RepoUrlError to reject. */
+  assertRepoUrl?: (repoUrl: string) => Promise<void>;
 }
 
 /**
@@ -157,10 +163,42 @@ export function dockerBuildExecutor(config: DockerBuildExecutorConfig): BuildExe
           "unsupported_source",
         );
       }
+      // SSRF guard (security-audit.md H2/FIX 6): the clone runs on the HOST,
+      // outside the build sandbox. Require public https and re-resolve DNS right
+      // before cloning, rejecting private/loopback/link-local answers (rebinding
+      // defense). Runs regardless of the git-level protocol pin below.
+      const assertRepoUrl = config.assertRepoUrl ?? assertPublicHttpsRepoUrl;
+      try {
+        await assertRepoUrl(input.repoUrl);
+      } catch (err) {
+        if (err instanceof RepoUrlError) {
+          throw new BuildExecutorError(err.message, "repo_url_rejected");
+        }
+        throw err;
+      }
+
       const workdir = await mkdtemp(join(tmpdir(), "vela-verify-"));
       const log: string[] = [];
       try {
-        const clone = await run("git", ["clone", "--no-checkout", input.repoUrl, "repo"], workdir);
+        // Belt-and-braces at the git level: only allow https, and pass repoUrl
+        // after `--` so a "-"-prefixed value can never be parsed as an option.
+        const clone = await run(
+          "git",
+          [
+            "-c",
+            "protocol.allow=never",
+            "-c",
+            "protocol.https.allow=always",
+            "clone",
+            "--no-checkout",
+            "--",
+            input.repoUrl,
+            "repo",
+          ],
+          workdir,
+          undefined,
+          { GIT_TERMINAL_PROMPT: "0" },
+        );
         log.push(clone.out);
         if (clone.code !== 0) {
           throw new BuildExecutorError("git clone failed", "clone_failed", log.join("\n"));
@@ -289,9 +327,15 @@ async function findReleaseWasm(
   return join(repoDir, paths[0]!);
 }
 
-function defaultRun(cmd: string, args: string[], cwd: string, timeoutMs?: number) {
+function defaultRun(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  timeoutMs?: number,
+  env?: Record<string, string>,
+) {
   return new Promise<{ code: number; out: string; timedOut?: boolean }>((resolve) => {
-    const child = spawn(cmd, args, { cwd });
+    const child = spawn(cmd, args, { cwd, env: env ? { ...process.env, ...env } : process.env });
     let out = "";
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;

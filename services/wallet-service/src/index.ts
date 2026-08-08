@@ -1,6 +1,7 @@
 import {
   budgetLimitsFromEnv,
   createUnavailableBudget,
+  hostFromEnv,
   portFromEnv,
   resolvePersistencePolicy,
   startService,
@@ -26,10 +27,7 @@ const budgetLimits = {
     { defaultMaxXlm: 20, defaultMaxCount: 20 },
   ),
   // wallet create (relayer-funded): count-only, 30/window.
-  create: budgetLimitsFromEnv(
-    { maxCountVar: "BUDGET_CREATE_MAX_COUNT" },
-    { defaultMaxCount: 30 },
-  ),
+  create: budgetLimitsFromEnv({ maxCountVar: "BUDGET_CREATE_MAX_COUNT" }, { defaultMaxCount: 30 }),
 };
 
 const config = configFromEnv();
@@ -79,7 +77,8 @@ deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allo
 // FIX 3 budget: Postgres-backed when durable, otherwise a fail-closed stub that
 // refuses to fund (never sponsor/create unmetered). The network label is from
 // server config, never a request body (V5).
-const budgetNetwork = config.relayer?.networkPassphrase === DEFAULTS.networkPassphrase ? "testnet" : "mainnet";
+const budgetNetwork =
+  config.relayer?.networkPassphrase === DEFAULTS.networkPassphrase ? "testnet" : "mainnet";
 let budget: SpendBudget;
 if (dbHandle) {
   const { createPgSpendBudget } = await import("@vellar/service-kit");
@@ -132,4 +131,7 @@ if (!config.relayer) {
   );
 }
 
-await startService(app, { port: portFromEnv("WALLET_SERVICE_PORT", 4001) });
+await startService(app, {
+  port: portFromEnv("WALLET_SERVICE_PORT", 4001),
+  host: hostFromEnv("127.0.0.1"),
+});

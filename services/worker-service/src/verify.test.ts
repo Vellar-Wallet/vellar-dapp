@@ -128,8 +128,13 @@ describe("runVerification", () => {
     expect(outcome.status).toBe("failed");
     expect(outcome.deployedHash).toBe("b".repeat(64));
     expect(outcome.outputHash).toBeUndefined();
+    // Private log carries the raw compiler output...
     expect(outcome.log).toContain("Build failed");
     expect(outcome.log).toContain("E0432");
+    // ...but the PUBLIC statusDetail must NOT leak it (H3/FIX 6).
+    expect(outcome.statusDetail).toBe("Build failed (build_failed).");
+    expect(outcome.statusDetail).not.toContain("E0432");
+    expect(outcome.statusDetail).not.toContain("compile blew up");
   });
 
   it("propagates truly unexpected errors from the resolver", async () => {

@@ -2,6 +2,7 @@ import {
   budgetLimitsFromEnv,
   createPgSpendBudget,
   createUnavailableBudget,
+  hostFromEnv,
   portFromEnv,
   resolvePersistencePolicy,
   startService,
@@ -79,7 +80,8 @@ deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allo
 
 // FIX 3 deploy budget: Postgres-backed when durable, else fail-closed stub.
 // Network label from server config, never a request body (V5).
-deps.budgetNetwork = config.networkPassphrase === DEFAULTS.networkPassphrase ? "testnet" : "mainnet";
+deps.budgetNetwork =
+  config.networkPassphrase === DEFAULTS.networkPassphrase ? "testnet" : "mainnet";
 const budget: SpendBudget = dbHandle
   ? createPgSpendBudget(dbHandle.db, { windowMs: BUDGET_WINDOW_MS, limits: deployLimits })
   : createUnavailableBudget();
@@ -100,4 +102,7 @@ if (!config.databaseUrl) {
   );
 }
 
-await startService(app, { port: portFromEnv("POLICY_SERVICE_PORT", 4003) });
+await startService(app, {
+  port: portFromEnv("POLICY_SERVICE_PORT", 4003),
+  host: hostFromEnv("127.0.0.1"),
+});

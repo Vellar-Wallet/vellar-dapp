@@ -30,11 +30,7 @@ export {
   type ConsumeResult,
 } from "./budget";
 
-export {
-  createPgSpendBudget,
-  type BudgetDb,
-  type PgBudgetConfig,
-} from "./pg-budget";
+export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
 
 export interface HealthOptions {
   /** Optional readiness probe. When it returns false (or throws), /health
@@ -160,4 +156,17 @@ export function portFromEnv(name: string, fallback: number): number {
     throw new Error(`${name} must be a valid port number, got "${raw}"`);
   }
   return port;
+}
+
+/**
+ * Resolve the bind host (security-audit.md L2/V4/FIX 6). BIND_HOST overrides;
+ * otherwise the caller's default. Downstream services default to "127.0.0.1" so
+ * they are unreachable except via the gateway's localhost proxy even if the
+ * platform doesn't firewall non-$PORT ports; only the gateway defaults to
+ * "0.0.0.0". An explicit BIND_HOST (e.g. for a distributed deployment where the
+ * gateway reaches services over a private network) still wins.
+ */
+export function hostFromEnv(defaultHost: string, env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.BIND_HOST;
+  return raw && raw.trim() !== "" ? raw.trim() : defaultHost;
 }

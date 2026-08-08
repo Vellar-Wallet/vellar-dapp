@@ -15,6 +15,7 @@ interface Row {
   outputHash?: string;
   deployedHash?: string;
   log?: string;
+  statusDetail?: string;
   /** When the record reached a terminal state — orders "latest per contract". */
   completedAtMs?: number;
 }
@@ -54,6 +55,7 @@ export function createMemoryJobStore(): MemoryJobStore {
       row.outputHash = result.outputHash;
       row.deployedHash = result.deployedHash;
       row.log = result.log;
+      row.statusDetail = result.statusDetail;
       row.completedAtMs = Date.now();
     },
     async listLatestVerified(limit) {

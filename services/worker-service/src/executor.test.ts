@@ -5,6 +5,7 @@ import {
   stubBuildExecutor,
   type DockerBuildExecutorConfig,
 } from "./executor";
+import { RepoUrlError } from "./repo-url-guard";
 
 const repoInput = {
   sourceType: "repo" as const,
@@ -13,6 +14,10 @@ const repoInput = {
   toolchainVersion: "1.94.0",
   buildFlags: ["--release"],
 };
+
+// Pass-through SSRF guard for tests that aren't exercising the guard itself, so
+// they don't hit real DNS (the guard has its own dedicated tests).
+const passRepoUrl = async () => {};
 
 // A fake `run` seam that scripts responses per command and records the docker
 // args, so we can assert isolation flags + timeout wiring without real Docker.
@@ -26,8 +31,11 @@ function fakeRun(opts: {
   const calls: { cmd: string; args: string[]; timeoutMs?: number }[] = [];
   const run: NonNullable<DockerBuildExecutorConfig["run"]> = async (cmd, args, _cwd, timeoutMs) => {
     calls.push({ cmd, args, timeoutMs });
-    if (cmd === "git" && args[0] === "clone") return { code: opts.cloneCode ?? 0, out: "cloned" };
-    if (cmd === "git" && args[0] === "checkout")
+    // clone args now carry `-c protocol...` flags before the subcommand, so
+    // match by presence, not position.
+    if (cmd === "git" && args.includes("clone"))
+      return { code: opts.cloneCode ?? 0, out: "cloned" };
+    if (cmd === "git" && args.includes("checkout"))
       return { code: opts.checkoutCode ?? 0, out: "checked out" };
     if (cmd === "docker")
       return { code: opts.buildCode ?? 0, out: "built", timedOut: opts.buildTimedOut };
@@ -44,7 +52,7 @@ describe("dockerBuildExecutor isolation", () => {
     });
     // readFile will fail (no real file) — we only care about the docker args,
     // so let the build reach artifact reading and throw artifact_missing.
-    const ex = dockerBuildExecutor({ image: "vela-verify:test", run });
+    const ex = dockerBuildExecutor({ image: "vela-verify:test", run, assertRepoUrl: passRepoUrl });
     await expect(ex.build(repoInput)).rejects.toBeInstanceOf(BuildExecutorError);
 
     const dockerCall = calls.find((c) => c.cmd === "docker");
@@ -64,7 +72,12 @@ describe("dockerBuildExecutor isolation", () => {
 
   it("passes the configured timeout (ms) to the build run", async () => {
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
-    const ex = dockerBuildExecutor({ image: "img", run, timeoutSeconds: 42 });
+    const ex = dockerBuildExecutor({
+      image: "img",
+      run,
+      timeoutSeconds: 42,
+      assertRepoUrl: passRepoUrl,
+    });
     await expect(ex.build(repoInput)).rejects.toBeInstanceOf(BuildExecutorError);
     const dockerCall = calls.find((c) => c.cmd === "docker");
     expect(dockerCall!.timeoutMs).toBe(42_000);
@@ -72,7 +85,14 @@ describe("dockerBuildExecutor isolation", () => {
 
   it("honors custom resource caps", async () => {
     const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
-    const ex = dockerBuildExecutor({ image: "img", run, memory: "4g", cpus: "1", pidsLimit: 128 });
+    const ex = dockerBuildExecutor({
+      image: "img",
+      run,
+      memory: "4g",
+      cpus: "1",
+      pidsLimit: 128,
+      assertRepoUrl: passRepoUrl,
+    });
     await expect(ex.build(repoInput)).rejects.toBeInstanceOf(BuildExecutorError);
     const a = calls.find((c) => c.cmd === "docker")!.args.join(" ");
     expect(a).toContain("--memory 4g");
@@ -82,7 +102,12 @@ describe("dockerBuildExecutor isolation", () => {
 
   it("fails with build_failed when the build times out", async () => {
     const { run } = fakeRun({ buildTimedOut: true, buildCode: 124 });
-    const ex = dockerBuildExecutor({ image: "img", run, timeoutSeconds: 1 });
+    const ex = dockerBuildExecutor({
+      image: "img",
+      run,
+      timeoutSeconds: 1,
+      assertRepoUrl: passRepoUrl,
+    });
     await expect(ex.build(repoInput)).rejects.toMatchObject({
       name: "BuildExecutorError",
       code: "build_failed",
@@ -92,13 +117,41 @@ describe("dockerBuildExecutor isolation", () => {
 
   it("fails with clone_failed when git clone fails", async () => {
     const { run } = fakeRun({ cloneCode: 1 });
-    const ex = dockerBuildExecutor({ image: "img", run });
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
     await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "clone_failed" });
+  });
+
+  it("rejects a repoUrl the SSRF guard blocks BEFORE cloning (FIX 6)", async () => {
+    const { run, calls } = fakeRun({});
+    const ex = dockerBuildExecutor({
+      image: "img",
+      run,
+      assertRepoUrl: async () => {
+        throw new RepoUrlError("blocked");
+      },
+    });
+    await expect(ex.build(repoInput)).rejects.toMatchObject({ code: "repo_url_rejected" });
+    // git clone must never run when the guard rejects.
+    expect(calls.find((c) => c.cmd === "git")).toBeUndefined();
+  });
+
+  it("passes https protocol pins + `--` separator to git clone", async () => {
+    const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
+    await ex.build(repoInput).catch(() => {}); // reaches artifact read + throws; we only inspect args
+    const cloneCall = calls.find(
+      (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
+    );
+    expect(cloneCall?.args).toContain("protocol.allow=never");
+    expect(cloneCall?.args).toContain("--");
+    // repoUrl comes AFTER the -- so a "-"-prefixed value can't be an option.
+    const sep = cloneCall!.args.indexOf("--");
+    expect(cloneCall!.args.indexOf(repoInput.repoUrl)).toBeGreaterThan(sep);
   });
 
   it("rejects non-repo submissions (upload) with unsupported_source", async () => {
     const { run } = fakeRun({});
-    const ex = dockerBuildExecutor({ image: "img", run });
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: passRepoUrl });
     await expect(
       ex.build({ sourceType: "upload", sourceArchiveRef: "a", toolchainVersion: "1.94.0" }),
     ).rejects.toMatchObject({ code: "unsupported_source" });

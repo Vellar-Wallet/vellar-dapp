@@ -65,7 +65,9 @@ export function createPgJobStore(db: NodePgDatabase): VerificationJobStore {
         status: result.status,
         outputHash: result.outputHash,
         deployedHash: result.deployedHash,
+        // Private full log (operators) + public sanitized statusDetail (H3/FIX 6).
         log: result.log,
+        statusDetail: result.statusDetail,
         updatedAt: now.toISOString(),
       };
       await db

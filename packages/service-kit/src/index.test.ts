@@ -1,6 +1,23 @@
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { portFromEnv, redactDbUrl, registerHealth, tryConnectDb } from "./index";
+import { hostFromEnv, portFromEnv, redactDbUrl, registerHealth, tryConnectDb } from "./index";
+
+describe("hostFromEnv (FIX 6c bind host)", () => {
+  it("returns the caller default when BIND_HOST is unset", () => {
+    expect(hostFromEnv("127.0.0.1", {})).toBe("127.0.0.1");
+    expect(hostFromEnv("0.0.0.0", {})).toBe("0.0.0.0");
+  });
+
+  it("BIND_HOST overrides the default (e.g. distributed private-network deploy)", () => {
+    expect(hostFromEnv("127.0.0.1", { BIND_HOST: "0.0.0.0" })).toBe("0.0.0.0");
+    expect(hostFromEnv("0.0.0.0", { BIND_HOST: "10.0.0.5" })).toBe("10.0.0.5");
+  });
+
+  it("ignores an empty BIND_HOST", () => {
+    expect(hostFromEnv("127.0.0.1", { BIND_HOST: "" })).toBe("127.0.0.1");
+    expect(hostFromEnv("127.0.0.1", { BIND_HOST: "  " })).toBe("127.0.0.1");
+  });
+});
 
 describe("registerHealth", () => {
   it("responds with ok and the service name", async () => {

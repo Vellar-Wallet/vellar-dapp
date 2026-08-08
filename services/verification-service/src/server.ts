@@ -25,8 +25,13 @@ export interface VerificationRecordInternal extends VerificationRecord {
   sourceArchiveRef?: string;
   /** Optional lockfile digest, part of the deterministic-build inputs (idea.md §6.3). */
   lockfileHash?: string;
-  /** Human-readable build/compare log, populated by the worker (esp. on failure). */
+  /** PRIVATE full build/clone output (operators only). Populated by the worker.
+   * NEVER returned by the public API — toPublic strips it (security-audit.md
+   * H3/FIX 6): it may carry clone stderr, host paths, and resolved IPs. */
   log?: string;
+  /** PUBLIC sanitized one-line status returned to submitters — a short reason
+   * with no raw build output. Populated by the worker (verify.ts statusDetail). */
+  statusDetail?: string;
 }
 
 export interface VerificationRepository {
@@ -226,7 +231,11 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
 
 /** Strip internal-only fields (archive ref, lockfile hash) from API responses —
  * the public record is the @vellar/types shape plus the build log. */
-function toPublic(record: VerificationRecordInternal): VerificationRecord & { log?: string } {
-  const { sourceArchiveRef: _ref, lockfileHash: _lock, ...pub } = record;
+function toPublic(
+  record: VerificationRecordInternal,
+): VerificationRecord & { statusDetail?: string } {
+  // Strip the internal fields AND the private `log` (H3/FIX 6): only the
+  // sanitized statusDetail is safe to return unauthenticated.
+  const { sourceArchiveRef: _ref, lockfileHash: _lock, log: _log, ...pub } = record;
   return pub;
 }

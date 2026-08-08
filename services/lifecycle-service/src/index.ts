@@ -1,8 +1,11 @@
-import { portFromEnv, startService } from "@vellar/service-kit";
+import { hostFromEnv, portFromEnv, startService } from "@vellar/service-kit";
 import { createHorizonAccountReader } from "./horizon";
 import { buildServer } from "./server";
 
 const horizonUrl = process.env.HORIZON_URL || "https://horizon-testnet.stellar.org";
 
 const app = buildServer({ reader: createHorizonAccountReader(horizonUrl) });
-await startService(app, { port: portFromEnv("LIFECYCLE_SERVICE_PORT", 4002) });
+await startService(app, {
+  port: portFromEnv("LIFECYCLE_SERVICE_PORT", 4002),
+  host: hostFromEnv("127.0.0.1"),
+});

@@ -69,6 +69,7 @@ function jobStoreOver(
       r.outputHash = result.outputHash;
       r.deployedHash = result.deployedHash;
       r.log = result.log;
+      r.statusDetail = result.statusDetail;
       r.updatedAt = new Date().toISOString();
       await records.update(r);
     },
@@ -145,7 +146,9 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
     expect(record.status).toBe("failed");
     expect(record.deployedHash).toBe("d".repeat(64));
     expect(record.outputHash).toBeTruthy();
-    expect(record.log).toContain("Mismatch");
+    // Public API exposes the sanitized statusDetail, not the raw log (H3/FIX 6).
+    expect(record.statusDetail).toContain("does not match");
+    expect(record.log).toBeUndefined();
   });
 
   it("a contract that can't be resolved on-chain fails with a clear reason (no build)", async () => {
@@ -160,6 +163,7 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
 
     expect(await status(app, C_MATCH)).toBe("failed");
     const history = await app.inject({ method: "GET", url: `/verification/${C_MATCH}` });
-    expect(history.json().records[0].log).toContain("Could not resolve");
+    expect(history.json().records[0].statusDetail).toContain("Could not resolve");
+    expect(history.json().records[0].log).toBeUndefined();
   });
 });

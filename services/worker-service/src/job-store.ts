@@ -1,5 +1,4 @@
-import type { VerificationStatus } from "@vellar/types";
-import type { VerificationJobInput } from "./verify";
+import type { VerificationJobInput, VerificationOutcome } from "./verify";
 
 // The worker's view of the shared verification store. verification-service
 // writes "submitted" records; the worker claims them (submitted → building),
@@ -20,15 +19,7 @@ export interface VerificationJobStore {
    * Returns the claimed jobs (empty when the queue is idle). */
   claimSubmitted(limit: number): Promise<ClaimedJob[]>;
   /** Record a terminal outcome for a claimed job. */
-  complete(
-    recordId: string,
-    result: {
-      status: Extract<VerificationStatus, "verified" | "failed">;
-      outputHash?: string;
-      deployedHash?: string;
-      log: string;
-    },
-  ): Promise<void>;
+  complete(recordId: string, result: VerificationOutcome): Promise<void>;
   /** The attestor's upgrade-sweep watch list: per contract, the LATEST terminal
    * record — included only when that latest run is `verified` (a later failed
    * run supersedes an older verified one) and carries the rebuilt hash. */

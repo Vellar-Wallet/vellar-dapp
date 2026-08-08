@@ -30,9 +30,14 @@ function fakeSubmitter(over: Partial<AttestationSubmitter> = {}) {
 const verified = (hash: string | null = HASH_A): VerificationOutcome => ({
   status: "verified",
   ...(hash === null ? {} : { outputHash: hash }),
+  statusDetail: "ok",
   log: "ok",
 });
-const failed = (): VerificationOutcome => ({ status: "failed", log: "mismatch" });
+const failed = (): VerificationOutcome => ({
+  status: "failed",
+  statusDetail: "mismatch",
+  log: "mismatch",
+});
 
 describe("attestor.reportOutcome", () => {
   it("upserts on verified with the rebuilt hash and now+ttl expiry", async () => {
@@ -159,16 +164,26 @@ describe("memory store listLatestVerified", () => {
     // CVERIFIED: single verified run → listed.
     store.submit("r1", job("CVERIFIED"));
     await store.claimSubmitted(1);
-    await store.complete("r1", { status: "verified", outputHash: HASH_A, log: "" });
+    await store.complete("r1", {
+      status: "verified",
+      outputHash: HASH_A,
+      statusDetail: "",
+      log: "",
+    });
 
     // CSUPERSEDED: verified, then a LATER failed run → not listed.
     store.submit("r2", job("CSUPERSEDED"));
     await store.claimSubmitted(1);
-    await store.complete("r2", { status: "verified", outputHash: HASH_A, log: "" });
+    await store.complete("r2", {
+      status: "verified",
+      outputHash: HASH_A,
+      statusDetail: "",
+      log: "",
+    });
     await new Promise((r) => setTimeout(r, 2));
     store.submit("r3", job("CSUPERSEDED"));
     await store.claimSubmitted(1);
-    await store.complete("r3", { status: "failed", log: "" });
+    await store.complete("r3", { status: "failed", statusDetail: "", log: "" });
 
     // CPENDING: still submitted → not listed.
     store.submit("r4", job("CPENDING"));

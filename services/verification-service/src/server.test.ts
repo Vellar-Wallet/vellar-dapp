@@ -216,6 +216,28 @@ describe("GET /verification/:contractId", () => {
     expect(res.json().records).toEqual([]);
   });
 
+  it("strips the private build log but returns the public statusDetail (H3/FIX 6)", async () => {
+    const records = createMemoryVerificationRepository();
+    app = buildServer({ records });
+    await app.inject({ method: "POST", url: "/verification/submit", payload: validRepoSubmission });
+    const stored = (await records.findByContract(C1))[0]!;
+    // Simulate the worker completing the record with both fields.
+    await records.update({
+      ...stored,
+      status: "failed",
+      log: "git clone stderr: fatal: could not read from /Users/op/.ssh/id_rsa; host 10.0.0.5",
+      statusDetail: "Build failed (clone_failed).",
+    });
+
+    const res = await app.inject({ method: "GET", url: `/verification/${C1}` });
+    const rec = res.json().records[0];
+    expect(rec.statusDetail).toBe("Build failed (clone_failed).");
+    // The private log (with host paths / internal host) must NOT be exposed.
+    expect(rec.log).toBeUndefined();
+    expect(JSON.stringify(rec)).not.toContain("id_rsa");
+    expect(JSON.stringify(rec)).not.toContain("10.0.0.5");
+  });
+
   it("400s on an invalid contract id", async () => {
     const { app } = build();
     const res = await app.inject({ method: "GET", url: `/verification/${G1}` });
