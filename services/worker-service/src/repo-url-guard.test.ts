@@ -71,11 +71,26 @@ describe("assertPublicHttpsRepoUrl — full guard with injectable resolver (defe
     expect(pin).toBeUndefined();
   });
 
-  it("pins the first validated address when several resolve", async () => {
+  it("pins the first validated address when several resolve (all validated first)", async () => {
     const pin = await assertPublicHttpsRepoUrl("https://github.com/x.git", {
       resolve: async () => ["140.82.112.3", "140.82.113.4"],
     });
     expect(pin).toEqual({ host: "github.com", port: 443, ip: "140.82.112.3" });
+  });
+
+  it("rejects a multi-homed host mixing public + private records (does NOT pin the public leg)", async () => {
+    await expect(
+      assertPublicHttpsRepoUrl("https://multi.example.com/x.git", {
+        resolve: async () => ["140.82.112.3", "10.0.0.5"],
+      }),
+    ).rejects.toBeInstanceOf(RepoUrlError);
+  });
+
+  it("carries a non-standard https port into the pin", async () => {
+    const pin = await assertPublicHttpsRepoUrl("https://git.example.com:8443/x.git", {
+      resolve: async () => ["203.0.113.9"],
+    });
+    expect(pin).toEqual({ host: "git.example.com", port: 8443, ip: "203.0.113.9" });
   });
 
   it("rejects when the host resolves to a private address (rebinding-style)", async () => {

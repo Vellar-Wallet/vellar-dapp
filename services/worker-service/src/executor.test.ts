@@ -178,6 +178,46 @@ describe("dockerBuildExecutor isolation", () => {
     expect(cloneCall?.args.join(" ")).not.toContain("169.254.169.254");
   });
 
+  it("pins the exact IP the guard RESOLVED (not a fixture) — plumbing guard", async () => {
+    // The pinned IP must be whatever the resolver returned, threaded through the
+    // real assertPublicHttpsRepoUrl into the executor. Assert against the value
+    // the resolver actually produced (captured), so a refactor that breaks the
+    // guard→executor plumbing — e.g. dropping the returned pin, or the executor
+    // ignoring it — fails loudly instead of matching a hardcoded constant.
+    const resolvedIp = "198.51.100.77"; // TEST-NET-2, public; known only to the resolver
+    let handedToGuard: string | undefined;
+    const capturingResolve = async () => {
+      handedToGuard = resolvedIp;
+      return [resolvedIp];
+    };
+    const guard = (repoUrl: string) =>
+      assertPublicHttpsRepoUrl(repoUrl, { resolve: capturingResolve });
+    const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    await ex.build(repoInput).catch(() => {});
+
+    const cloneCall = calls.find(
+      (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
+    );
+    // The resolver ran, and the clone pins EXACTLY what it returned.
+    expect(handedToGuard).toBe(resolvedIp);
+    expect(cloneCall?.args).toContain(`http.curloptResolve=github.com:443:${resolvedIp}`);
+  });
+
+  it("pins the URL's non-standard port, not a hardcoded 443", async () => {
+    const guard = (repoUrl: string) =>
+      assertPublicHttpsRepoUrl(repoUrl, { resolve: async () => ["203.0.113.9"] });
+    const { run, calls } = fakeRun({ wasmList: "target/wasm32v1-none/release/x.wasm" });
+    const ex = dockerBuildExecutor({ image: "img", run, assertRepoUrl: guard });
+    await ex
+      .build({ ...repoInput, repoUrl: "https://git.example.com:8443/repo.git" })
+      .catch(() => {});
+    const cloneCall = calls.find(
+      (c) => c.cmd === "git" && c.args[c.args.indexOf("clone") ?? -1] === "clone",
+    );
+    expect(cloneCall?.args).toContain("http.curloptResolve=git.example.com:8443:203.0.113.9");
+  });
+
   it("rebinding: a host that resolves private at guard time is rejected before any clone", async () => {
     const guard = (repoUrl: string) =>
       assertPublicHttpsRepoUrl(repoUrl, { resolve: async () => ["169.254.169.254"] });

@@ -123,6 +123,9 @@ export async function assertPublicHttpsRepoUrl(
   if (addresses.length === 0) {
     throw new RepoUrlError(`repoUrl host ${url.hostname} did not resolve to any address.`);
   }
+  // EVERY resolved address must be public: reject if ANY is blocked, so a
+  // multi-homed host that mixes a public and a private A/AAAA record (a
+  // rebinding tactic) is refused outright rather than pinned to its public leg.
   for (const addr of addresses) {
     if (isBlockedAddress(addr)) {
       throw new RepoUrlError(
@@ -130,10 +133,19 @@ export async function assertPublicHttpsRepoUrl(
       );
     }
   }
-  // Pin the FIRST validated address (all passed the block check). git connects
-  // to this exact IP; TLS still validates the certificate against the hostname
-  // (curloptResolve substitutes the address only, not the cert identity).
-  return { host: url.hostname, port, ip: addresses[0]! };
+
+  // Selection of the pinned address is DELIBERATE, not resolver-order luck:
+  // every address above passed the block check, so any is safe to connect to.
+  // We pin the first — a single, stable choice. NOTE: git connects to exactly
+  // this one IP (curloptResolve gives it no alternates), so if a multi-homed
+  // host's first record is unreachable at clone time the clone fails rather than
+  // silently falling back to another address. That is intended: a clone failure
+  // is a retryable transient, not a reason to remove the pin (removing it
+  // reopens the rebinding TOCTOU). If multi-homed reachability becomes a real
+  // problem, add all validated IPs (curloptResolve accepts a comma list) — do
+  // NOT drop the pin.
+  const pinnedIp = addresses[0]!;
+  return { host: url.hostname, port, ip: pinnedIp };
 }
 
 /** Build the git `-c` args that (a) pin the connection to the guard-validated IP
