@@ -1,4 +1,13 @@
-import { jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 // Postgres schema for wallet-service (idea.md §9: wallets, wallet_sessions,
 // activity_logs). Timestamps are timestamptz; repos convert to/from the ISO
@@ -31,3 +40,20 @@ export const activityLogs = pgTable("activity_logs", {
   at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
   data: jsonb("data").notNull().$type<Record<string, unknown>>(),
 });
+
+// Rolling-window funding-path spend ledger (security-audit.md H1/M2/FIX 3).
+// One row per sponsored/created call; the budget check sums stroops and counts
+// rows within the window for (line, network). Indexed on (line, network, at)
+// so the window scan is cheap.
+export const spendLedger = pgTable(
+  "spend_ledger",
+  {
+    id: text("id").primaryKey(),
+    line: text("line").notNull(), // "sponsor" | "deploy" | "create"
+    network: text("network").notNull(),
+    stroops: bigint("stroops", { mode: "bigint" }).notNull(),
+    count: integer("count").notNull(),
+    at: timestamp("at", { withTimezone: true, mode: "date" }).notNull(),
+  },
+  (table) => [index("spend_ledger_line_network_at_idx").on(table.line, table.network, table.at)],
+);

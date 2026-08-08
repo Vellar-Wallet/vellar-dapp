@@ -18,6 +18,18 @@ export {
   type PersistenceDecision,
 } from "./persistence";
 
+export {
+  withinCeiling,
+  createUnavailableBudget,
+  budgetLimitsFromEnv,
+  type SpendBudget,
+  type BudgetLimits,
+  type BudgetLine,
+  type BudgetNetwork,
+  type ConsumeRequest,
+  type ConsumeResult,
+} from "./budget";
+
 export interface HealthOptions {
   /** Optional readiness probe. When it returns false (or throws), /health
    * responds 503 so the orchestrator stops routing traffic — used to surface a
