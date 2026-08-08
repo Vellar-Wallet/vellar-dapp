@@ -7,6 +7,7 @@ import { getWalletRuntime } from "@/lib/connector-factory";
 import { useWalletSession } from "@/lib/wallet-context";
 import {
   deployPolicy,
+  detachPolicy,
   enforcementLabel,
   generatePolicy,
   listTemplates,
@@ -321,6 +322,8 @@ type DeployState =
   | { name: "simulating" }
   | { name: "deploying"; step: string }
   | { name: "done"; contractId: string; attachTxHash: string }
+  | { name: "detaching"; contractId: string }
+  | { name: "detached"; removalTxHash: string }
   | { name: "error"; message: string };
 
 function ReviewCard({
@@ -369,6 +372,20 @@ function ReviewCard({
       });
     } catch (err) {
       setState({ name: "error", message: err instanceof Error ? err.message : "Deploy failed" });
+    }
+  }
+
+  async function runDetach(contractId: string) {
+    setState({ name: "detaching", contractId });
+    try {
+      const runtime = await getWalletRuntime();
+      const { hash } = await detachPolicy(contractId, session, {
+        resume: runtime.resume,
+        detachPolicy: runtime.detachPolicy,
+      });
+      setState({ name: "detached", removalTxHash: hash });
+    } catch (err) {
+      setState({ name: "error", message: err instanceof Error ? err.message : "Detach failed" });
     }
   }
 
@@ -424,7 +441,7 @@ function ReviewCard({
         </div>
       )}
 
-      {state.name === "done" ? (
+      {state.name === "done" || state.name === "detaching" ? (
         <div
           className="neo-inset"
           style={{ padding: "14px 16px", fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}
@@ -435,8 +452,33 @@ function ReviewCard({
           <p className="mono" style={{ margin: "8px 0 0", fontSize: 11, wordBreak: "break-all" }}>
             contract {state.contractId}
           </p>
-          <p className="mono" style={{ margin: "4px 0 0", fontSize: 11, wordBreak: "break-all" }}>
-            tx {state.attachTxHash}
+          {state.name === "done" && (
+            <p className="mono" style={{ margin: "4px 0 0", fontSize: 11, wordBreak: "break-all" }}>
+              tx {state.attachTxHash}
+            </p>
+          )}
+          <p style={{ margin: "12px 0 0" }}>
+            Changed your mind, or a policy is blocking transactions you need? You can remove it —
+            your passkey detaches it directly, no policy approval required.
+          </p>
+          <button
+            type="button"
+            className="neo-btn"
+            disabled={state.name === "detaching"}
+            onClick={() => void runDetach(state.contractId)}
+            style={{ marginTop: 10, fontSize: 12 }}
+          >
+            {state.name === "detaching" ? "Approve in your passkey to remove…" : "Detach this policy"}
+          </button>
+        </div>
+      ) : state.name === "detached" ? (
+        <div
+          className="neo-inset"
+          style={{ padding: "14px 16px", fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}
+        >
+          <p style={{ margin: 0, color: "var(--signal)", fontWeight: 700 }}>✓ Policy removed</p>
+          <p className="mono" style={{ margin: "8px 0 0", fontSize: 11, wordBreak: "break-all" }}>
+            tx {state.removalTxHash}
           </p>
         </div>
       ) : deployable ? (

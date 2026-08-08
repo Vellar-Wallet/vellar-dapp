@@ -9,6 +9,7 @@ import {
 } from "vellar-sdk";
 import { walletConfig } from "./config";
 import { createHttpWalletBackend } from "./http-backend";
+import { policyAttachArgs } from "./policy-signer";
 
 // Builds the real PasskeyKit-backed wallet runtime. The connector and the
 // payment client MUST share one PasskeyKit instance — the connected passkey's
@@ -38,6 +39,14 @@ export interface WalletRuntime {
    * to this wallet (policy-service /deploy-instance). Returns the tx hash.
    */
   attachPolicy(policyContractId: string): Promise<{ hash: string }>;
+  /**
+   * Detaches a policy signer from the smart account: passkey-signed kit.remove
+   * of SignerKey.Policy. Because the policy is a standalone signer, the wallet's
+   * self-removal exception lets the admin passkey remove it WITHOUT the policy's
+   * consent — the recovery path for a wallet stuck behind a reject-everything
+   * policy (security-audit.md V3 / FIX 5). Returns the tx hash.
+   */
+  detachPolicy(policyContractId: string): Promise<{ hash: string }>;
 }
 
 /** 7 days — the device-signer session length. The contract stores the
@@ -106,15 +115,28 @@ export function getWalletRuntime(): Promise<WalletRuntime> {
       },
       async attachPolicy(policyContractId) {
         const { SignerStore } = await import("passkey-kit");
-        // A policy signer carries its own on-chain constraint, so it needs no
-        // SignerLimits and no expiration (revoked by removing the signer).
-        // Persistent so it survives as a durable rule on the account.
-        const tx = await kit.addPolicy(
-          policyContractId,
-          undefined,
-          SignerStore.Persistent,
-          undefined,
-        );
+        // Standalone policy signer (SignerLimits = None) — see policy-signer.ts
+        // and security-audit.md V3: this is what lets the admin passkey detach a
+        // rejecting policy without its consent. policyAttachArgs pins the shape.
+        const args = policyAttachArgs(policyContractId);
+        const store =
+          args.store === "Persistent" ? SignerStore.Persistent : SignerStore.Temporary;
+        const tx = await kit.addPolicy(args.policyContractId, args.limits, store, args.expiration);
+        const signed = (await kit.sign(tx)) ?? tx;
+        const { hash } = await backend.submitTransaction({
+          signedXdr: typeof signed === "string" ? signed : (signed as { toXDR(): string }).toXDR(),
+          network: config.network,
+        });
+        return { hash };
+      },
+      async detachPolicy(policyContractId) {
+        // Recovery path (security-audit.md V3 / FIX 5): the admin passkey removes
+        // the policy signer WITHOUT the policy's consent — the wallet's
+        // is_sole_self_removal exception skips a rejecting policy for its own
+        // removal, so this un-bricks a wallet stuck behind a reject-everything
+        // policy (e.g. verified_only with no live attestation).
+        const { SignerKey } = await import("passkey-kit");
+        const tx = await kit.remove(SignerKey.Policy(policyContractId));
         const signed = (await kit.sign(tx)) ?? tx;
         const { hash } = await backend.submitTransaction({
           signedXdr: typeof signed === "string" ? signed : (signed as { toXDR(): string }).toXDR(),

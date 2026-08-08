@@ -91,3 +91,26 @@ export async function deployPolicy(
   const policy = await api.recordDeployment(policyId, hash, contractId);
   return { policy, contractId, attachTxHash: hash };
 }
+
+/** Runtime seam for detaching a policy — the connector-factory's detachPolicy
+ * plus the optional reconnect. Narrow so tests inject a fake. */
+export interface PolicyDetachRuntime {
+  resume?: (keyId: string) => Promise<void>;
+  detachPolicy: (policyContractId: string) => Promise<{ hash: string }>;
+}
+
+/**
+ * Detach an attached policy from the wallet (security-audit.md V3 / FIX 5).
+ * The admin passkey removes the standalone policy signer WITHOUT the policy's
+ * consent — the recovery path for a wallet stuck behind a reject-everything
+ * policy. Only the passkey prompt gates it (no silent signing). Returns the
+ * removal tx hash.
+ */
+export async function detachPolicy(
+  policyContractId: string,
+  session: { keyId?: string },
+  runtime: PolicyDetachRuntime,
+): Promise<{ hash: string }> {
+  if (session.keyId && runtime.resume) await runtime.resume(session.keyId);
+  return runtime.detachPolicy(policyContractId);
+}
