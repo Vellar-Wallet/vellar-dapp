@@ -8,6 +8,8 @@ export type Db = NodePgDatabase;
 export interface DbHandle {
   db: Db;
   close(): Promise<void>;
+  /** Cheap liveness check for DB-aware /health (FIX 7). */
+  ping(): Promise<boolean>;
 }
 
 /** Connects and applies pending migrations (idempotent) before returning. */
@@ -20,5 +22,13 @@ export async function connectDb(databaseUrl: string): Promise<DbHandle> {
   return {
     db,
     close: () => pool.end(),
+    ping: async () => {
+      try {
+        await pool.query("SELECT 1");
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }

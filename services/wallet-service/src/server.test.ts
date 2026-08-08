@@ -195,6 +195,83 @@ describe("GET /wallet/session/:id", () => {
   });
 });
 
+describe("GET /health readiness (FIX 7)", () => {
+  it("200 when no probe is wired (dev default)", async () => {
+    const server = build(workingSubmitter());
+    expect((await server.inject({ url: "/health" })).statusCode).toBe(200);
+  });
+
+  it("503 when the readiness probe reports the persistence layer is down", async () => {
+    app = buildServer({ submitter: workingSubmitter(), isReady: () => false });
+    const res = await app.inject({ url: "/health" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().status).toBe("unavailable");
+  });
+});
+
+describe("POST /wallet/submit fails closed when scope check errors (FIX 7 mid-run)", () => {
+  const PASSPHRASE = "Test SDF Network ; September 2015";
+  const KNOWN_WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+  function buildInvokeTx(subject: string): string {
+    const account = new Account(Keypair.random().publicKey(), "0");
+    const addr = Address.fromString(subject);
+    const authEntry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: addr.toScAddress(),
+          nonce: xdr.Int64.fromString("0"),
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: addr.toScAddress(),
+            functionName: "transfer",
+            args: [],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+    const op = Operation.invokeHostFunction({
+      func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+        new xdr.InvokeContractArgs({
+          contractAddress: addr.toScAddress(),
+          functionName: "transfer",
+          args: [],
+        }),
+      ),
+      auth: [authEntry],
+    });
+    return new TransactionBuilder(account, { fee: "100", networkPassphrase: PASSPHRASE })
+      .addOperation(op)
+      .setTimeout(30)
+      .build()
+      .toXDR();
+  }
+
+  it("returns 503 (not 500, not sponsored) when the wallet repo throws mid-run", async () => {
+    const submitter = workingSubmitter();
+    const wallets = createMemoryWalletRepository();
+    // Simulate a dropped DB connection during the scope lookup.
+    wallets.existsByContractId = async () => {
+      throw new Error("connection terminated");
+    };
+    app = buildServer({ submitter, wallets, networkPassphrase: PASSPHRASE });
+    const res = await app.inject({
+      method: "POST",
+      url: "/wallet/submit",
+      payload: { signedXdr: buildInvokeTx(KNOWN_WALLET), network: "testnet" },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("persistence_unavailable");
+    expect(submitter.submit).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /wallet/create derivation gate (V1)", () => {
   const PASSPHRASE = "Test SDF Network ; September 2015";
   const KEY_ID = "AAECAwQFBgcICQoLDA0ODw";

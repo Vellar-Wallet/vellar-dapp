@@ -12,8 +12,39 @@ export {
   type Outcome,
 } from "./metrics";
 
-export function registerHealth(app: FastifyInstance, serviceName: string): void {
-  app.get("/health", async () => ({ status: "ok", service: serviceName }));
+export {
+  resolvePersistencePolicy,
+  type PersistenceInputs,
+  type PersistenceDecision,
+} from "./persistence";
+
+export interface HealthOptions {
+  /** Optional readiness probe. When it returns false (or throws), /health
+   * responds 503 so the orchestrator stops routing traffic — used to surface a
+   * degraded persistence layer (security-audit.md M6 / FIX 7). A missing probe
+   * keeps the classic always-200 liveness behavior. */
+  isReady?: () => boolean | Promise<boolean>;
+}
+
+export function registerHealth(
+  app: FastifyInstance,
+  serviceName: string,
+  options: HealthOptions = {},
+): void {
+  app.get("/health", async (_request, reply) => {
+    if (options.isReady) {
+      let ready = false;
+      try {
+        ready = await options.isReady();
+      } catch {
+        ready = false; // a probe that throws is treated as not-ready
+      }
+      if (!ready) {
+        return reply.code(503).send({ status: "unavailable", service: serviceName });
+      }
+    }
+    return { status: "ok", service: serviceName };
+  });
 }
 
 /**

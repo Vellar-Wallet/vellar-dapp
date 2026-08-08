@@ -1,4 +1,5 @@
-import { portFromEnv, startService, tryConnectDb } from "@vellar/service-kit";
+import { portFromEnv, resolvePersistencePolicy, startService, tryConnectDb } from "@vellar/service-kit";
+import type { DbHandle } from "./db/client";
 import { configFromEnv } from "./config";
 import { createPolicyDeployer } from "./deploy";
 import { buildServer, type PolicyServiceDeps } from "./server";
@@ -22,21 +23,35 @@ deps.deployer = config.sponsorSecretKey
 
 // Postgres-backed policy store when configured; otherwise in-memory (dev only).
 let closeDb: (() => Promise<void>) | undefined;
+let dbHandle: DbHandle | undefined;
 if (config.databaseUrl) {
   const databaseUrl = config.databaseUrl;
   const { connectDb } = await import("./db/client");
   const { createPgPolicyRepository } = await import("./db/pg-repository");
-  // Degrade to in-memory (with an actionable warning) if Postgres is
-  // unreachable, rather than crashing the service with a raw ECONNREFUSED.
   const handle = await tryConnectDb(() => connectDb(databaseUrl), {
     databaseUrl,
     log: { warn: (message) => console.warn(message) },
   });
   if (handle) {
+    dbHandle = handle;
     deps.policies = createPgPolicyRepository(handle.db);
     closeDb = handle.close;
   }
 }
+
+// FIX 7 (M6): fail closed in production before serving. The sponsor-funded
+// deploy budget (FIX 3) lives here and needs durable state.
+const policy = resolvePersistencePolicy({
+  databaseUrl: config.databaseUrl,
+  nodeEnv: process.env.NODE_ENV,
+  connected: config.databaseUrl ? dbHandle !== undefined : undefined,
+  allowInmemory: process.env.ALLOW_INMEMORY === "1",
+});
+if (policy.action === "fail") {
+  console.error(`[policy-service] ${policy.reason}`);
+  process.exit(1);
+}
+deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allow-inmemory";
 
 const app = buildServer(deps);
 if (closeDb) {
@@ -48,7 +63,8 @@ if (!deps.deployer) {
 }
 if (!config.databaseUrl) {
   app.log.warn(
-    "DATABASE_URL not set — using an in-memory policy store; policies will NOT survive a restart.",
+    "DATABASE_URL not set — using an in-memory policy store; policies will NOT survive a restart. " +
+      "(ALLOW_INMEMORY explicitly permits this; production without it refuses to boot.)",
   );
 }
 

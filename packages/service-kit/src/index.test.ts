@@ -11,6 +11,36 @@ describe("registerHealth", () => {
     expect(res.json()).toEqual({ status: "ok", service: "test-service" });
     await app.close();
   });
+
+  it("returns 200 when a readiness probe reports ready", async () => {
+    const app = Fastify();
+    registerHealth(app, "svc", { isReady: () => true });
+    const res = await app.inject({ method: "GET", url: "/health" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "ok", service: "svc" });
+    await app.close();
+  });
+
+  it("returns 503 when the readiness probe reports NOT ready (M6 DB-aware health)", async () => {
+    const app = Fastify();
+    registerHealth(app, "svc", { isReady: () => false });
+    const res = await app.inject({ method: "GET", url: "/health" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ status: "unavailable", service: "svc" });
+    await app.close();
+  });
+
+  it("returns 503 when an async readiness probe rejects (treat errors as not-ready)", async () => {
+    const app = Fastify();
+    registerHealth(app, "svc", {
+      isReady: async () => {
+        throw new Error("db connection lost");
+      },
+    });
+    const res = await app.inject({ method: "GET", url: "/health" });
+    expect(res.statusCode).toBe(503);
+    await app.close();
+  });
 });
 
 describe("portFromEnv", () => {

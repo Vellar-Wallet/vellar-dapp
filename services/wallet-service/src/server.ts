@@ -53,6 +53,9 @@ export interface WalletServiceDeps {
    * server config, NEVER the request body's network field (security-audit V5).
    * When unset, submission scoping is disabled (dev/no-relayer). */
   networkPassphrase?: string;
+  /** Readiness probe for DB-aware /health (FIX 7). Returns false when the
+   * persistence layer is degraded so the orchestrator stops routing. */
+  isReady?: () => boolean | Promise<boolean>;
 }
 
 export function buildServer(deps: WalletServiceDeps): FastifyInstance {
@@ -63,7 +66,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const { submitter } = deps;
 
   const app = Fastify({ logger: true });
-  registerHealth(app, "wallet-service");
+  registerHealth(app, "wallet-service", { isReady: deps.isReady });
   registerMetrics(app, "wallet-service");
 
   async function openSession(contractId: string, network: "testnet" | "mainnet") {
@@ -174,7 +177,15 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
           recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
           return reply.code(403).send({ error: err.code, message: err.message });
         }
-        throw err;
+        // A repository error here means we cannot verify the tx is scoped to a
+        // known wallet (e.g. Postgres dropped mid-run). Fail CLOSED — refuse to
+        // sponsor/relay rather than degrade to unmetered submission (FIX 7).
+        request.log.error(err, "scoping check failed; refusing submission");
+        recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+        return reply.code(503).send({
+          error: "persistence_unavailable",
+          message: "Cannot verify wallet scope right now; try again shortly.",
+        });
       }
     }
 

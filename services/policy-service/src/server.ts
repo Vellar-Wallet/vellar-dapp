@@ -70,6 +70,8 @@ export interface PolicyServiceDeps {
   /** Deploys per-user policy contract instances server-side (sponsor-funded).
    * undefined = /deploy-instance returns 503 (no sponsor configured). */
   deployer?: PolicyDeployer;
+  /** Readiness probe for DB-aware /health (FIX 7). */
+  isReady?: () => boolean | Promise<boolean>;
 }
 
 export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
@@ -78,7 +80,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
   const deployer = deps.deployer;
 
   const app = Fastify({ logger: true });
-  registerHealth(app, "policy-service");
+  registerHealth(app, "policy-service", { isReady: deps.isReady });
   registerMetrics(app, "policy-service");
 
   app.get("/policies/templates", async () =>
