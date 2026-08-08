@@ -55,9 +55,9 @@ describe.skipIf(!DATABASE_URL)("createPgSpendBudget (atomic rolling-window budge
       ...baseConfig,
       limits: { ...baseConfig.limits, sponsor: { maxStroops: 1_000_000n, maxCount: 500 } },
     });
-    expect((await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1_000_000n })).ok).toBe(
-      true,
-    );
+    expect(
+      (await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1_000_000n })).ok,
+    ).toBe(true);
     const over = await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1n });
     expect(over.ok).toBe(false);
     if (!over.ok) expect(over.reason).toBe("budget_exceeded");
@@ -68,9 +68,15 @@ describe.skipIf(!DATABASE_URL)("createPgSpendBudget (atomic rolling-window budge
       ...baseConfig,
       limits: { ...baseConfig.limits, create: { maxCount: 2 } },
     });
-    expect((await budget.tryConsume({ line: "create", network: "testnet", stroops: 0n })).ok).toBe(true);
-    expect((await budget.tryConsume({ line: "create", network: "testnet", stroops: 0n })).ok).toBe(true);
-    expect((await budget.tryConsume({ line: "create", network: "testnet", stroops: 0n })).ok).toBe(false);
+    expect((await budget.tryConsume({ line: "create", network: "testnet", stroops: 0n })).ok).toBe(
+      true,
+    );
+    expect((await budget.tryConsume({ line: "create", network: "testnet", stroops: 0n })).ok).toBe(
+      true,
+    );
+    expect((await budget.tryConsume({ line: "create", network: "testnet", stroops: 0n })).ok).toBe(
+      false,
+    );
   });
 
   it("scopes by (line, network): mainnet budget is separate from testnet", async () => {
@@ -78,14 +84,16 @@ describe.skipIf(!DATABASE_URL)("createPgSpendBudget (atomic rolling-window budge
       ...baseConfig,
       limits: { ...baseConfig.limits, sponsor: { maxStroops: 1_000_000n, maxCount: 1 } },
     });
-    expect((await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1_000_000n })).ok).toBe(
-      true,
-    );
+    expect(
+      (await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1_000_000n })).ok,
+    ).toBe(true);
     // testnet is now full, but mainnet still has room.
-    expect((await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1n })).ok).toBe(false);
-    expect((await budget.tryConsume({ line: "sponsor", network: "mainnet", stroops: 1_000_000n })).ok).toBe(
-      true,
+    expect((await budget.tryConsume({ line: "sponsor", network: "testnet", stroops: 1n })).ok).toBe(
+      false,
     );
+    expect(
+      (await budget.tryConsume({ line: "sponsor", network: "mainnet", stroops: 1_000_000n })).ok,
+    ).toBe(true);
   });
 
   it("ignores rows outside the rolling window", async () => {

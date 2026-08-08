@@ -24,9 +24,7 @@ export interface PersistenceInputs {
 }
 
 export type PersistenceDecision =
-  | { action: "use-postgres" }
-  | { action: "allow-inmemory" }
-  | { action: "fail"; reason: string };
+  { action: "use-postgres" } | { action: "allow-inmemory" } | { action: "fail"; reason: string };
 
 const isProduction = (nodeEnv: string | undefined) => nodeEnv === "production";
 

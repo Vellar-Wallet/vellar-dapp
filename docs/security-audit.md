@@ -7,17 +7,17 @@
 >
 > **Method:** 10 deep investigators (one per priority hunt), each required to read the
 > mitigating code before reporting; every finding then adversarially re-verified against the
-> actual code (the verifier defaults to *refuting*). 21 findings surfaced — 16 confirmed at
+> actual code (the verifier defaults to _refuting_). 21 findings surfaced — 16 confirmed at
 > severity, 5 downgraded, 0 refuted. Read-only: no code was modified to produce this.
 >
 > **The headline:** the design claim "no app-layer auth is fine because value transfer is
 > gated on-chain" holds for **user-fund theft** but fails for one class of side effect the
-> chain never sees: **the sponsor account's own spending.** The sponsor is the fee *payer*,
+> chain never sees: **the sponsor account's own spending.** The sponsor is the fee _payer_,
 > not the wallet; `__check_auth` governs the auth entries' effects, but nothing on-chain
-> restricts *who may make the sponsor pay*. That is where the Critical lives.
+> restricts _who may make the sponsor pay_. That is where the Critical lives.
 
 Severities were assigned for the **pre-mainnet posture**: the code path is identical for
-testnet and mainnet, and the sponsor/relayer paths arm on secret *presence* with no network
+testnet and mainnet, and the sponsor/relayer paths arm on secret _presence_ with no network
 gate, so a testnet-only finding today becomes a funded-mainnet finding the moment a mainnet
 key is configured.
 
@@ -36,11 +36,11 @@ source-account. It never inspects `op.func` (target contract / function) or the 
 `{func, auth}` with the **sponsor account as fee payer** at a 10,000,000-stroop (1 XLM)
 inclusion-fee ceiling, `prepareTransaction` (re-simulates real fee), sponsor-signs, submits.
 
-- **Attack (zero cost, no auth):** build any single-op `invokeHostFunction` against *any*
+- **Attack (zero cost, no auth):** build any single-op `invokeHostFunction` against _any_
   Soroban contract (a DEX, a token, the attacker's own contract) whose auth entry uses
   address credentials, POST to `/wallet/submit`. The sponsor pays the fee. The attacker uses
   the sponsor as a free fee-payer for arbitrary on-chain activity.
-- **On-chain gate coverage: NONE.** Paying the fee *is* the side effect; the sponsor is not
+- **On-chain gate coverage: NONE.** Paying the fee _is_ the side effect; the sponsor is not
   the wallet, so `__check_auth` never sees it and nothing on-chain restricts who uses the
   sponsor as fee payer.
 - **Testnet:** free XLM, drains a refillable account — real bug, no loss. **Mainnet:** direct
@@ -69,7 +69,7 @@ unmetered so a fresh policyId per deploy defeats it — no total cap.
 **The gateway rate limit does not bind:** no `trustProxy` → `req.ip` is the socket peer;
 behind Render/Railway ingress it collapses to one shared 120/min bucket (hurts legit users,
 does not stop an IP-rotating attacker who gets a fresh 120/min per IP). `X-Forwarded-For`
-spoofing to *lower* the count does **not** work (no keyGenerator, XFF untrusted) — the failure
+spoofing to _lower_ the count does **not** work (no keyGenerator, XFF untrusted) — the failure
 is the opposite. Deploy-instance is the more expensive lever (deploy cost + rent per call).
 
 - **Fix:** C1's scoping + a per-sponsor rolling-window **spend** budget (not request cap)
@@ -112,7 +112,7 @@ read oracle. Same build-box gating as H2.
 ## 🟡 MEDIUM
 
 - **M1 — Session enumeration + revocation `[my code]`** — `wallet-service/src/server.ts:163-183`.
-  `GET /wallet/sessions?contractId=` lists every session for any *public* contractId;
+  `GET /wallet/sessions?contractId=` lists every session for any _public_ contractId;
   `DELETE /wallet/session/:id` revokes any by id — no ownership check. **Verified sessions are
   NOT access tokens** (only consumer is a cosmetic "this device" label + self-disconnect;
   web `connected` state derives from the SDK localStorage store, not the server row), so this
@@ -127,7 +127,7 @@ read oracle. Same build-box gating as H2.
 - **M3 — Spending-limit tumbling window allows 2× the limit `[my code]`** —
   `contracts/policy-templates/spending-limit/src/lib.rs:281-284` (identical in token variant
   `:317-320`). Full cap just before reset + full cap just after = 2× across a boundary; the
-  documented invariant is off by 2×. Overflow is *safe* (`overflow-checks=true` + `checked_add`,
+  documented invariant is off by 2×. Overflow is _safe_ (`overflow-checks=true` + `checked_add`,
   panic on None). **Fix:** true sliding window, or document the 2× honestly.
 
 - **M4 — verified-recipient bricks all covered transfers with no live registry `[my code]`** —
@@ -144,19 +144,20 @@ read oracle. Same build-box gating as H2.
   forges provenance for any contract and can rotate itself away; the entire verified-recipient
   trust layer = one hot G-key on an internet-facing worker. **Fix:** attestor as
   multisig/smart-account so `require_auth` enforces threshold on-chain.
-  **Status (FIX 4): DEFERRED behind a hard guard.** M5 is only exploitable once a *mainnet*
+  **Status (FIX 4): DEFERRED behind a hard guard.** M5 is only exploitable once a _mainnet_
   registry exists, and none does — the deployed registry is testnet. Rather than ship an
   untested smart-account attestor now, the worker refuses to wire the single-key attestor
   against a mainnet registry (`assertAttestorSafeForNetwork`,
   `services/worker-service/src/attestor-guard.ts`): boot fails on the mainnet passphrase unless
   `ALLOW_SINGLE_KEY_ATTESTOR=1` is set. The single-key attestor keeps working on testnet. The
   intended design when mainnet is scheduled:
+
   > **Smart-account attestor.** Make the registry's attestor a Soroban smart-account
   > (C-address) rather than a single G-key. `attestation-registry`'s `upsert`/`revoke`/
   > `set_attestor` already gate on `require_auth(attestor)` (`lib.rs:124-180`), so pointing the
   > stored attestor at a C-address means the account's own `__check_auth` enforces an M-of-N
   > threshold (or a policy) on-chain — no registry-contract change to the auth model. The worker
-  > then submits `upsert`/`revoke` *through* that account (co-signing to threshold) instead of
+  > then submits `upsert`/`revoke` _through_ that account (co-signing to threshold) instead of
   > signing with a lone keypair (`registry-submitter.ts:39`). A single host compromise is then
   > insufficient to forge provenance. (Ed25519 classic multisig was rejected: Soroban
   > `require_auth` on a G-account checks a single ed25519 signature and does not compose with
@@ -165,8 +166,8 @@ read oracle. Same build-box gating as H2.
 - **M6 — DB fallback fails open + health lies `[my code]`** — `service-kit/src/index.ts:49-64`,
   `wallet-service/src/index.ts:31-61`. No `DATABASE_URL` (or transient unreachability — Render
   free Postgres expires at 30 days) → silent in-memory repos, `/health` still returns
-  `{status:ok}`. Loses audit log, session list, passkey-dedupe on every restart. *Downgraded
-  from High:* the map is not the ownership gate (on-chain is), so this is durability / audit-
+  `{status:ok}`. Loses audit log, session list, passkey-dedupe on every restart. _Downgraded
+  from High:_ the map is not the ownership gate (on-chain is), so this is durability / audit-
   integrity / availability, not authz bypass. **Fix:** DB-probing `/health` → 503 when
   in-memory in production; fail-closed boot when `DATABASE_URL` is set-but-unreachable (mirror
   worker-service, which already `exit(1)`s).
@@ -186,9 +187,9 @@ read oracle. Same build-box gating as H2.
 - **M9 — Deploy from `main` with tsx, no build/typecheck/audit gate `[my code]`** —
   `services/all-in-one/package.json` (start = `tsx`, no build), `render.yaml:22-23`. Push-
   triggered; CI runs typecheck/test/build but is not wired as a deploy precondition and no
-  in-repo branch protection enforces it. *Downgraded from High:* requires push-to-main access
+  in-repo branch protection enforces it. _Downgraded from High:_ requires push-to-main access
   (insider/token compromise); only committed target is testnet; the self-merge vector was
-  **refuted** (`close-prs-*.yml` only *close* PRs — no checkout, no merge). **Fix:**
+  **refuted** (`close-prs-*.yml` only _close_ PRs — no checkout, no merge). **Fix:**
   `autoDeploy: false`, required status checks on main, `pnpm audit` gate.
 
 ---
@@ -196,13 +197,13 @@ read oracle. Same build-box gating as H2.
 ## 🟢 LOW
 
 - **L1 — `POST /policies/deploy` writes an unverified `deployed` flag from the request body
-  `[my code]`** — `policy-service/src/server.ts:206-222`. *No client renders trust from it
-  today* (verified: UI shows "attached" only after a real passkey-signed on-chain attach via
+  `[my code]`** — `policy-service/src/server.ts:206-222`. _No client renders trust from it
+  today_ (verified: UI shows "attached" only after a real passkey-signed on-chain attach via
   `apps/web/lib/policy.ts:82-93`). Latent; harden before any consumer trusts it. **Fix:** verify
   the txHash on-chain before stamping `deployed`.
 
 - **L2 — Downstream services bind `0.0.0.0:4001-4004` with no middleware `[my code]`** —
-  `service-kit/src/index.ts:88`. *Downgraded to Low:* committed configs publish only `$PORT`,
+  `service-kit/src/index.ts:88`. _Downgraded to Low:_ committed configs publish only `$PORT`,
   so not internet-reachable via the public URL today; residual defense-in-depth + shared
   private-network exposure. **⚠ See V4 — composes with H2 when worker is co-located.** **Fix:**
   bind `127.0.0.1` for co-located services; only the gateway binds `0.0.0.0`.
@@ -245,6 +246,7 @@ read oracle. Same build-box gating as H2.
 ## Remediation order
 
 **Before any mainnet key is configured (blocking):**
+
 1. **C1** — scope the sponsor to Vellar wallet operations (the one place the on-chain gate does
    not cover the side effect; direct drain of real funds).
 2. **H1 / M2** — sponsor spend budget + lower fee bids + wallet-must-exist check for deploys.
@@ -252,11 +254,7 @@ read oracle. Same build-box gating as H2.
 4. **M4** — gate `verified_only` out of the mainnet policy builder until a mainnet registry
    exists (see V3 re-rating).
 
-**Before public testnet exposure (a real build box / public submit endpoint):**
-5. **H2 + H3** — repoUrl allowlist + private build logs.
-6. **M1** — authorize session read/revoke with the caller's own session id.
-7. **M6** — fail-closed boot + DB-aware health.
-8. **M8** — bump fast-uri.
+**Before public testnet exposure (a real build box / public submit endpoint):** 5. **H2 + H3** — repoUrl allowlist + private build logs. 6. **M1** — authorize session read/revoke with the caller's own session id. 7. **M6** — fail-closed boot + DB-aware health. 8. **M8** — bump fast-uri.
 
 **Can wait (hardening / latent):** M3, M7, M9, L1–L7, I1.
 
@@ -295,7 +293,7 @@ refutation rested on, so **the refutation stands and the fix and the refutation 
 > scripted P-256 keypair produces a perfectly valid self-authored deploy and a matching
 > `derive(keyId)` contractId. So a "recognized wallet" (a row in the wallets table, checked by
 > `WalletRepository.existsByContractId`) is a **metering and scoping primitive only** — it bounds
-> *which* contracts the funding paths will pay for, and lets budgets attribute spend to a wallet. It
+> _which_ contracts the funding paths will pay for, and lets budgets attribute spend to a wallet. It
 > is **never** an identity, trust, or ownership signal, and no future code may treat it as one
 > (e.g. to gate a sensitive action, render a "verified user" badge, or skip an on-chain check). The
 > only real authority remains the passkey signature validated on-chain by `__check_auth`.
@@ -348,7 +346,7 @@ are testnet-only.
 ### Revised mainnet-blocking order
 
 1. **Scope both funding paths at the route** (C1 + H1 + V2). Validate the tx is a Vellar wallet
-   op before the submitter selects sponsor *or* relayer; lower the sponsor fee bid to
+   op before the submitter selects sponsor _or_ relayer; lower the sponsor fee bid to
    simulation-derived.
 2. **Derivation gate on `/wallet/create`** (V1). Reject unless `derive(keyId) === contractId` —
    closes create as a third funding path and enforces the client-authoritative invariant.

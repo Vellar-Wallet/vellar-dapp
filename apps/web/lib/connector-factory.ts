@@ -119,8 +119,7 @@ export function getWalletRuntime(): Promise<WalletRuntime> {
         // and security-audit.md V3: this is what lets the admin passkey detach a
         // rejecting policy without its consent. policyAttachArgs pins the shape.
         const args = policyAttachArgs(policyContractId);
-        const store =
-          args.store === "Persistent" ? SignerStore.Persistent : SignerStore.Temporary;
+        const store = args.store === "Persistent" ? SignerStore.Persistent : SignerStore.Temporary;
         const tx = await kit.addPolicy(args.policyContractId, args.limits, store, args.expiration);
         const signed = (await kit.sign(tx)) ?? tx;
         const { hash } = await backend.submitTransaction({

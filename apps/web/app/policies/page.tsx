@@ -468,7 +468,9 @@ function ReviewCard({
             onClick={() => void runDetach(state.contractId)}
             style={{ marginTop: 10, fontSize: 12 }}
           >
-            {state.name === "detaching" ? "Approve in your passkey to remove…" : "Detach this policy"}
+            {state.name === "detaching"
+              ? "Approve in your passkey to remove…"
+              : "Detach this policy"}
           </button>
         </div>
       ) : state.name === "detached" ? (

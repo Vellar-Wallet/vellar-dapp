@@ -14,9 +14,7 @@ describe("withinCeiling (pure ceiling logic)", () => {
   });
 
   it("rejects when the XLM dimension would be exceeded (tighter dimension trips first)", () => {
-    expect(
-      withinCeiling({ priorStroops: 500_000_000n, priorCount: 1 }, 1n, limits),
-    ).toBe(false);
+    expect(withinCeiling({ priorStroops: 500_000_000n, priorCount: 1 }, 1n, limits)).toBe(false);
   });
 
   it("rejects when the COUNT dimension would be exceeded even if XLM has room", () => {

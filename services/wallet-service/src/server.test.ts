@@ -8,11 +8,7 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import {
-  createMemoryAuditLog,
-  createMemoryWalletRepository,
-  type AuditLog,
-} from "./repository";
+import { createMemoryAuditLog, createMemoryWalletRepository, type AuditLog } from "./repository";
 import { createUnconfiguredSubmitter, SubmissionError, type TransactionSubmitter } from "./relayer";
 import { buildServer } from "./server";
 import { deriveWalletContractId } from "./derivation";

@@ -36,7 +36,9 @@ describe("enforceFeeCap", () => {
 describe("consumeSponsorBudget (FIX 3, fails closed)", () => {
   it("no-ops when no budget is wired", async () => {
     await expect(consumeSponsorBudget("100", undefined, undefined)).resolves.toBeUndefined();
-    await expect(consumeSponsorBudget("100", { tryConsume: async () => ({ ok: true }) }, undefined)).resolves.toBeUndefined();
+    await expect(
+      consumeSponsorBudget("100", { tryConsume: async () => ({ ok: true }) }, undefined),
+    ).resolves.toBeUndefined();
   });
 
   it("consumes the sponsor line with the real fee and proceeds when allowed", async () => {

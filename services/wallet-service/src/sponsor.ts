@@ -69,7 +69,10 @@ export async function consumeSponsorBudget(
     allowed = false; // fail closed
   }
   if (!allowed) {
-    throw new SubmissionError("Sponsor spend budget reached; try again later.", "sponsor_budget_exceeded");
+    throw new SubmissionError(
+      "Sponsor spend budget reached; try again later.",
+      "sponsor_budget_exceeded",
+    );
   }
 }
 

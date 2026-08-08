@@ -35,9 +35,9 @@ describe("derivation gate (V1)", () => {
 
   it("rejects a contractId that does not equal derive(keyId)", () => {
     const wrong = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
-    expect(() =>
-      assertDerivedContractId(KEY_ID, wrong, { networkPassphrase: TESTNET }),
-    ).toThrow(DerivationMismatchError);
+    expect(() => assertDerivedContractId(KEY_ID, wrong, { networkPassphrase: TESTNET })).toThrow(
+      DerivationMismatchError,
+    );
   });
 
   it("fails loudly when the passphrase drifts (a testnet-derived id is rejected under mainnet)", () => {

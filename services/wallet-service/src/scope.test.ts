@@ -1,4 +1,11 @@
-import { Account, Address, Keypair, Operation, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
+import {
+  Account,
+  Address,
+  Keypair,
+  Operation,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import { extractAddressAuthSubjects, ScopeError, assertScopedToKnownWallets } from "./scope";
 
@@ -82,29 +89,31 @@ describe("assertScopedToKnownWallets", () => {
 
   it("passes when every address subject is a known wallet", async () => {
     const xdrStr = buildInvokeTx([KNOWN_WALLET]);
-    await expect(assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly)).resolves.toBeUndefined();
+    await expect(
+      assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects when any address subject is NOT a known wallet (covers both submitter branches)", async () => {
     const xdrStr = buildInvokeTx([OTHER_CONTRACT]);
-    await expect(
-      assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly),
-    ).rejects.toBeInstanceOf(ScopeError);
+    await expect(assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly)).rejects.toBeInstanceOf(
+      ScopeError,
+    );
   });
 
   it("rejects a tx mixing a known wallet with an unknown contract", async () => {
     const xdrStr = buildInvokeTx([KNOWN_WALLET, OTHER_CONTRACT]);
-    await expect(
-      assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly),
-    ).rejects.toBeInstanceOf(ScopeError);
+    await expect(assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly)).rejects.toBeInstanceOf(
+      ScopeError,
+    );
   });
 
   it("rejects a tx with NO address-credential subject at all (nothing to attribute the spend to)", async () => {
     // A source-account-auth invoke has no address subject; the relayer/sponsor
     // must not fund a tx we cannot attribute to a known wallet.
     const xdrStr = buildInvokeTx([KNOWN_WALLET], { sourceAccountCreds: true });
-    await expect(
-      assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly),
-    ).rejects.toBeInstanceOf(ScopeError);
+    await expect(assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly)).rejects.toBeInstanceOf(
+      ScopeError,
+    );
   });
 });
