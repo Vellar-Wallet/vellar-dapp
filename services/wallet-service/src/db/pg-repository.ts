@@ -46,6 +46,15 @@ export function createPgWalletRepository(db: Db): WalletRepository {
         createdAt: row.createdAt.toISOString(),
       };
     },
+
+    async existsByContractId(contractId, network) {
+      const rows = await db
+        .select({ keyId: wallets.keyId })
+        .from(wallets)
+        .where(and(eq(wallets.contractId, contractId), eq(wallets.network, network)))
+        .limit(1);
+      return rows.length > 0;
+    },
   };
 }
 

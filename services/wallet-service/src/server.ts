@@ -12,6 +12,7 @@ import {
   type WalletRepository,
 } from "./repository";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
+import { assertScopedToKnownWallets, ScopeError } from "./scope";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
 // passkeys by design (technical-doc.md §8 — no silent signing, no server key
@@ -47,6 +48,10 @@ export interface WalletServiceDeps {
   sessions?: SessionRepository;
   audit?: AuditLog;
   now?: () => Date;
+  /** Passphrase used to parse submitted XDR for funding-path scoping. Keyed off
+   * server config, NEVER the request body's network field (security-audit V5).
+   * When unset, submission scoping is disabled (dev/no-relayer). */
+  networkPassphrase?: string;
 }
 
 export function buildServer(deps: WalletServiceDeps): FastifyInstance {
@@ -131,6 +136,25 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
     const { signedXdr, network } = parsed.data;
+
+    // Scope BOTH funding paths (sponsor + relayer) at the route, before the
+    // submitter picks a branch (security-audit.md C1/H1/V2): only sponsor/relay
+    // a tx whose address-credential auth subjects are all wallets we created.
+    // The passphrase comes from server config, never the request body (V5).
+    if (deps.networkPassphrase) {
+      try {
+        await assertScopedToKnownWallets(signedXdr, deps.networkPassphrase, (contractId) =>
+          wallets.existsByContractId(contractId, network),
+        );
+      } catch (err) {
+        if (err instanceof ScopeError) {
+          request.log.warn({ code: err.code }, "rejected unscoped submission");
+          recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+          return reply.code(403).send({ error: err.code, message: err.message });
+        }
+        throw err;
+      }
+    }
 
     try {
       const { hash } = await submitter.submit(signedXdr);

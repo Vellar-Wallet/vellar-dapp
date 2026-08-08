@@ -1,5 +1,5 @@
 import { portFromEnv, startService, tryConnectDb } from "@vellar/service-kit";
-import { configFromEnv } from "./config";
+import { configFromEnv, DEFAULTS } from "./config";
 import { createUnconfiguredSubmitter } from "./relayer";
 import { buildServer, type WalletServiceDeps } from "./server";
 
@@ -19,13 +19,20 @@ if (config.sponsorSecretKey) {
       rpcUrl: config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl,
       networkPassphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
       secretKey: config.sponsorSecretKey,
+      // Per-call fee cap; env override for the rare legit heavy op (C1/H1).
+      maxFeeStroops: process.env.SPONSOR_MAX_FEE_STROOPS || undefined,
     }),
     submitter,
     config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
   );
 }
 
-const deps: WalletServiceDeps = { submitter };
+const deps: WalletServiceDeps = {
+  submitter,
+  // Scoping parses submitted XDR with the server's configured passphrase, never
+  // the request body's network field (security-audit V5).
+  networkPassphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
+};
 let closeDb: (() => Promise<void>) | undefined;
 
 if (config.databaseUrl) {

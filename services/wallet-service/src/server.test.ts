@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { createMemoryAuditLog, type AuditLog } from "./repository";
+import {
+  Account,
+  Address,
+  Keypair,
+  Operation,
+  TransactionBuilder,
+  xdr,
+} from "@stellar/stellar-sdk";
+import {
+  createMemoryAuditLog,
+  createMemoryWalletRepository,
+  type AuditLog,
+} from "./repository";
 import { createUnconfiguredSubmitter, SubmissionError, type TransactionSubmitter } from "./relayer";
 import { buildServer } from "./server";
 
@@ -179,6 +191,104 @@ describe("GET /wallet/session/:id", () => {
     const server = build(workingSubmitter());
     const res = await server.inject({ url: "/wallet/session/does-not-exist" });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("POST /wallet/submit funding-path scoping (C1/H1/V2)", () => {
+  const PASSPHRASE = "Test SDF Network ; September 2015";
+  const KNOWN_WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+  const OTHER_CONTRACT = "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA";
+
+  function buildInvokeTx(subject: string): string {
+    const source = Keypair.random();
+    const account = new Account(source.publicKey(), "0");
+    const addr = Address.fromString(subject);
+    const authEntry = new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: addr.toScAddress(),
+          nonce: xdr.Int64.fromString("0"),
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: addr.toScAddress(),
+            functionName: "transfer",
+            args: [],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+    const op = Operation.invokeHostFunction({
+      func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+        new xdr.InvokeContractArgs({
+          contractAddress: addr.toScAddress(),
+          functionName: "transfer",
+          args: [],
+        }),
+      ),
+      auth: [authEntry],
+    });
+    return new TransactionBuilder(account, { fee: "100", networkPassphrase: PASSPHRASE })
+      .addOperation(op)
+      .setTimeout(30)
+      .build()
+      .toXDR();
+  }
+
+  function buildScopedServer(submitter: TransactionSubmitter) {
+    const wallets = createMemoryWalletRepository();
+    app = buildServer({ submitter, wallets, networkPassphrase: PASSPHRASE });
+    return { server: app, wallets };
+  }
+
+  it("submits a tx whose only auth subject is a known wallet", async () => {
+    const submitter = workingSubmitter();
+    const { server, wallets } = buildScopedServer(submitter);
+    await wallets.insert({
+      keyId: "k",
+      contractId: KNOWN_WALLET,
+      network: "testnet",
+      createdAt: new Date().toISOString(),
+    });
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/submit",
+      payload: { signedXdr: buildInvokeTx(KNOWN_WALLET), network: "testnet" },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("rejects (403) a tx authorizing a contract the server does not know — before the submitter runs", async () => {
+    const submitter = workingSubmitter();
+    const { server } = buildScopedServer(submitter);
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/submit",
+      payload: { signedXdr: buildInvokeTx(OTHER_CONTRACT), network: "testnet" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("unknown_wallet_subject");
+    // The submitter (which would pick sponsor OR relayer) is never reached — so
+    // the tx cannot be smuggled through the relayer branch either.
+    expect(submitter.submit).not.toHaveBeenCalled();
+  });
+
+  it("rejects (403) a tx with no address-credential subject (nothing to attribute)", async () => {
+    const submitter = workingSubmitter();
+    const { server } = buildScopedServer(submitter);
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/submit",
+      payload: { signedXdr: "not-a-valid-xdr", network: "testnet" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("no_wallet_subject");
+    expect(submitter.submit).not.toHaveBeenCalled();
   });
 });
 

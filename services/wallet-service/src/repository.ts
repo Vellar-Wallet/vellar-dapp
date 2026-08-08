@@ -23,6 +23,10 @@ export interface WalletRepository {
   /** Rejects with DuplicateWalletError when the keyId is already mapped on that network. */
   insert(record: WalletRecord): Promise<void>;
   findByKeyId(keyId: string, network: Network): Promise<WalletRecord | undefined>;
+  /** True when the server has a wallet record for this contract on this network.
+   * Used to scope funding-path submissions to wallets the product created
+   * (security-audit.md C1/H1/V2). */
+  existsByContractId(contractId: string, network: Network): Promise<boolean>;
 }
 
 export interface SessionRecord {
@@ -64,6 +68,12 @@ export function createMemoryWalletRepository(): WalletRepository {
     },
     async findByKeyId(keyId, network) {
       return byKey.get(key(keyId, network));
+    },
+    async existsByContractId(contractId, network) {
+      for (const record of byKey.values()) {
+        if (record.contractId === contractId && record.network === network) return true;
+      }
+      return false;
     },
   };
 }

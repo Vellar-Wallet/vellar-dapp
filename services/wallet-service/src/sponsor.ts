@@ -19,6 +19,28 @@ export interface SponsorConfig {
   rpcUrl: string;
   networkPassphrase: string;
   secretKey: string;
+  /** Hard reject any tx whose simulation-derived fee exceeds this (stroops).
+   * Defaults to SPONSOR_DEFAULT_MAX_FEE_STROOPS. Bounds per-call sponsor loss
+   * (security-audit.md C1/H1): a genuine wallet op assesses well under 0.1 XLM;
+   * anything higher is anomalous and is not auto-sponsored. */
+  maxFeeStroops?: string;
+}
+
+// Default per-call sponsor fee cap: 0.1 XLM. Replaces the old hardcoded
+// 10,000,000-stroop (1 XLM) inclusion-fee ceiling — a 10x reduction. The bid is
+// still simulation-derived (prepareTransaction sets the real fee); this is the
+// safety cap above which we refuse to pay. Override via SPONSOR_MAX_FEE_STROOPS.
+export const SPONSOR_DEFAULT_MAX_FEE_STROOPS = "1000000";
+
+/** Throws SubmissionError("sponsor_fee_too_high") when the simulation-derived
+ * fee exceeds the cap. Pure so it can be unit-tested without a live RPC. */
+export function enforceFeeCap(feeStroops: string, maxStroops: string): void {
+  if (BigInt(feeStroops) > BigInt(maxStroops)) {
+    throw new SubmissionError(
+      `Sponsor fee ${feeStroops} stroops exceeds the ${maxStroops}-stroop cap; refusing to sponsor.`,
+      "sponsor_fee_too_high",
+    );
+  }
 }
 
 /** True when the tx is a Soroban invocation authorized by address credentials
@@ -41,6 +63,10 @@ export function needsSponsorRebuild(signedXdr: string, networkPassphrase: string
 export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmitter {
   const server = new rpc.Server(config.rpcUrl);
   const sponsor = Keypair.fromSecret(config.secretKey);
+  const maxFeeStroops = config.maxFeeStroops ?? SPONSOR_DEFAULT_MAX_FEE_STROOPS;
+  // Ceiling the pre-simulation bid at the cap too, so the builder can never
+  // offer more than we're willing to pay even before prepareTransaction runs.
+  const bidCeiling = maxFeeStroops;
 
   return {
     async submit(signedXdr) {
@@ -56,7 +82,7 @@ export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmit
       // Rebuild around the signed auth entries with the sponsor as fee source.
       const account = await server.getAccount(sponsor.publicKey());
       const rebuilt = new TransactionBuilder(account, {
-        fee: "10000000",
+        fee: bidCeiling,
         networkPassphrase: config.networkPassphrase,
       })
         .addOperation(
@@ -77,6 +103,10 @@ export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmit
           "sponsor_simulation_failed",
         );
       }
+
+      // prepareTransaction sets the true simulation-derived fee. Refuse to
+      // sponsor anything over the cap (security-audit.md C1/H1).
+      enforceFeeCap(prepared.fee, maxFeeStroops);
       prepared.sign(sponsor);
 
       const sent = await server.sendTransaction(prepared);
