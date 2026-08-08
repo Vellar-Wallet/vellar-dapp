@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth, registerMetrics, domainMetrics, recordOutcome } from "@vellar/service-kit";
+import {
+  registerHealth,
+  registerMetrics,
+  domainMetrics,
+  recordOutcome,
+  type SpendBudget,
+  type BudgetNetwork,
+} from "@vellar/service-kit";
 import type { PolicyDefinition } from "@vellar/types";
-import { PolicyDeployError, type PolicyDeployer } from "./deploy";
+import { DEPLOY_FEE, PolicyDeployError, type PolicyDeployer } from "./deploy";
 import { generatePolicy, templates, validateDefinition, type GeneratedPolicy } from "./templates";
 
 // Policy API (idea.md §11): validate → generate → (review) → deploy.
@@ -72,6 +79,12 @@ export interface PolicyServiceDeps {
   deployer?: PolicyDeployer;
   /** Readiness probe for DB-aware /health (FIX 7). */
   isReady?: () => boolean | Promise<boolean>;
+  /** Rolling-window spend budget for the "deploy" line (FIX 3). Consumed before
+   * a sponsor-funded deploy; a refusal returns 503. Unset = disabled. */
+  budget?: SpendBudget;
+  /** Network label for budget accounting — from server config, never a request
+   * body (V5). Required when budget is set. */
+  budgetNetwork?: BudgetNetwork;
 }
 
 export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
@@ -179,6 +192,32 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
         error: "not_deployable",
         reason: "this policy is enforced without a deployed contract instance",
       });
+    }
+
+    // Consume the sponsor-funded "deploy" budget line before spending (FIX 3).
+    // Fails CLOSED: a refusal or accounting error blocks the deploy. Network
+    // label from server config, never the request body (V5). DEPLOY_FEE is the
+    // per-deploy fee ceiling this call may cost the sponsor.
+    if (deps.budget && deps.budgetNetwork) {
+      let allowed: boolean;
+      try {
+        const r = await deps.budget.tryConsume({
+          line: "deploy",
+          network: deps.budgetNetwork,
+          stroops: BigInt(DEPLOY_FEE),
+        });
+        allowed = r.ok;
+      } catch (err) {
+        request.log.error(err, "deploy budget accounting failed; refusing");
+        allowed = false;
+      }
+      if (!allowed) {
+        recordOutcome(domainMetrics.policyDeployed, "policy-service", "failure");
+        return reply.code(503).send({
+          error: "deploy_budget_exceeded",
+          message: "Policy-deploy budget reached; try again later.",
+        });
+      }
     }
 
     let result: { contractId: string; txHash: string };

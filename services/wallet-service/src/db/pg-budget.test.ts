@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
+import { createPgSpendBudget, type PgBudgetConfig } from "@vellar/service-kit";
 import { connectDb, type DbHandle } from "./client";
-import { createPgSpendBudget } from "./pg-budget";
-import type { BudgetConfig } from "./pg-budget";
 
 // Integration tests against a real Postgres. Skipped unless TEST_DATABASE_URL
 // is set (CI provisions one; locally: docker compose up + TEST_DATABASE_URL).
@@ -14,7 +13,7 @@ describe.skipIf(!DATABASE_URL)("createPgSpendBudget (atomic rolling-window budge
   let handle: DbHandle;
   let db: DbHandle["db"];
 
-  const baseConfig: BudgetConfig = {
+  const baseConfig: PgBudgetConfig = {
     windowMs: 3_600_000, // 1h
     limits: {
       sponsor: { maxStroops: 500_000_000n, maxCount: 500 }, // 50 XLM / 500

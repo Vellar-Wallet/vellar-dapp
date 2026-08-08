@@ -210,6 +210,9 @@ importers:
 
   packages/service-kit:
     dependencies:
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       fastify:
         specifier: ^5.4.0
         version: 5.10.0

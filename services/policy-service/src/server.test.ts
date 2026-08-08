@@ -10,7 +10,7 @@ import {
   xlmToStroops,
 } from "./templates";
 import type { PolicyDeployer } from "./deploy";
-import { PolicyDeployError } from "./deploy";
+import { DEPLOY_FEE, PolicyDeployError } from "./deploy";
 import { buildServer } from "./server";
 
 const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
@@ -354,6 +354,64 @@ describe("POST /policies/:id/deploy-instance", () => {
     });
     expect(res.statusCode).toBe(502);
     expect(res.json().code).toBe("deploy_simulation_failed");
+  });
+
+  it("consumes the deploy budget with the deploy fee and proceeds when allowed", async () => {
+    const { deployer, deployInstance } = stubDeployer();
+    const tryConsume = vi.fn().mockResolvedValue({ ok: true });
+    app = buildServer({ deployer, budget: { tryConsume }, budgetNetwork: "testnet" });
+    const policy = await generateSpending(app);
+    const res = await app.inject({
+      method: "POST",
+      url: `/policies/${policy.id}/deploy-instance`,
+      payload: { wallet: C1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(tryConsume).toHaveBeenCalledWith({
+      line: "deploy",
+      network: "testnet",
+      stroops: BigInt(DEPLOY_FEE),
+    });
+    expect(deployInstance).toHaveBeenCalled();
+  });
+
+  it("returns 503 (deploy_budget_exceeded) and does NOT deploy when the budget refuses", async () => {
+    const { deployer, deployInstance } = stubDeployer();
+    app = buildServer({
+      deployer,
+      budget: { tryConsume: async () => ({ ok: false, reason: "budget_exceeded" }) },
+      budgetNetwork: "testnet",
+    });
+    const policy = await generateSpending(app);
+    const res = await app.inject({
+      method: "POST",
+      url: `/policies/${policy.id}/deploy-instance`,
+      payload: { wallet: C1 },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("deploy_budget_exceeded");
+    expect(deployInstance).not.toHaveBeenCalled();
+  });
+
+  it("fails closed: a budget accounting error refuses the deploy", async () => {
+    const { deployer, deployInstance } = stubDeployer();
+    app = buildServer({
+      deployer,
+      budget: {
+        tryConsume: async () => {
+          throw new Error("db down");
+        },
+      },
+      budgetNetwork: "testnet",
+    });
+    const policy = await generateSpending(app);
+    const res = await app.inject({
+      method: "POST",
+      url: `/policies/${policy.id}/deploy-instance`,
+      payload: { wallet: C1 },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(deployInstance).not.toHaveBeenCalled();
   });
 });
 

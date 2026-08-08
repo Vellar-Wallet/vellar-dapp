@@ -89,7 +89,7 @@ export interface PolicyDeployer {
 
 // Max fee for the deploy (stroops). Deploys upload no code (the wasm is already
 // installed) but do run the constructor; generous to avoid fee-bump churn.
-const DEPLOY_FEE = "10000000";
+export const DEPLOY_FEE = "10000000";
 // The relayer/testnet reject timebounds more than 60s out; we submit direct to
 // RPC here but keep the same ceiling for consistency (sponsor.ts).
 const TIMEOUT_SECONDS = 60;

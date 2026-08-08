@@ -82,7 +82,7 @@ deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allo
 const budgetNetwork = config.relayer?.networkPassphrase === DEFAULTS.networkPassphrase ? "testnet" : "mainnet";
 let budget: SpendBudget;
 if (dbHandle) {
-  const { createPgSpendBudget } = await import("./db/pg-budget");
+  const { createPgSpendBudget } = await import("@vellar/service-kit");
   budget = createPgSpendBudget(dbHandle.db, { windowMs: BUDGET_WINDOW_MS, limits: budgetLimits });
 } else {
   budget = createUnavailableBudget();

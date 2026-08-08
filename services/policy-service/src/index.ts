@@ -1,9 +1,33 @@
-import { portFromEnv, resolvePersistencePolicy, startService, tryConnectDb } from "@vellar/service-kit";
+import {
+  budgetLimitsFromEnv,
+  createPgSpendBudget,
+  createUnavailableBudget,
+  portFromEnv,
+  resolvePersistencePolicy,
+  startService,
+  tryConnectDb,
+  type SpendBudget,
+} from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
-import { configFromEnv } from "./config";
+import { configFromEnv, DEFAULTS } from "./config";
 import { createPolicyDeployer } from "./deploy";
 import { buildServer, type PolicyServiceDeps } from "./server";
 import { SPENDING_POLICY_WASM_HASH } from "./templates";
+
+// FIX 3 deploy budget: 20 XLM / 20 deploys per 1h window, env-overridable.
+const BUDGET_WINDOW_MS = Number(process.env.BUDGET_WINDOW_MS) || 3_600_000;
+const deployLimits = {
+  deploy: budgetLimitsFromEnv(
+    { maxXlmVar: "BUDGET_DEPLOY_MAX_XLM", maxCountVar: "BUDGET_DEPLOY_MAX_COUNT" },
+    { defaultMaxXlm: 20, defaultMaxCount: 20 },
+  ),
+  // Unused here but keeps the Record<line> shape the budget expects.
+  sponsor: budgetLimitsFromEnv(
+    { maxXlmVar: "BUDGET_SPONSOR_MAX_XLM", maxCountVar: "BUDGET_SPONSOR_MAX_COUNT" },
+    { defaultMaxXlm: 50, defaultMaxCount: 500 },
+  ),
+  create: budgetLimitsFromEnv({ maxCountVar: "BUDGET_CREATE_MAX_COUNT" }, { defaultMaxCount: 30 }),
+};
 
 const config = configFromEnv();
 const deps: PolicyServiceDeps = {};
@@ -52,6 +76,14 @@ if (policy.action === "fail") {
   process.exit(1);
 }
 deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allow-inmemory";
+
+// FIX 3 deploy budget: Postgres-backed when durable, else fail-closed stub.
+// Network label from server config, never a request body (V5).
+deps.budgetNetwork = config.networkPassphrase === DEFAULTS.networkPassphrase ? "testnet" : "mainnet";
+const budget: SpendBudget = dbHandle
+  ? createPgSpendBudget(dbHandle.db, { windowMs: BUDGET_WINDOW_MS, limits: deployLimits })
+  : createUnavailableBudget();
+deps.budget = budget;
 
 const app = buildServer(deps);
 if (closeDb) {
