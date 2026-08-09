@@ -1103,3 +1103,208 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) i
   **unaudited**
   `vellar-sdk` / `passkey-kit` (passkey ceremony, session store, address derivation this repo
   enforces against — and the V1→V2 credential upgrade that drives RA-1 lives in that unread kit).
+
+---
+
+## Closing state — carry this into the SDK audit
+
+Single source of truth for where the dapp repo stands. Every finding, its final status, the remaining
+mainnet blockers with owners, and the go/no-go conditions. As of merged `main` through PR #234
+(`security/session-client-seam`).
+
+### Status legend
+
+- **closed-by-test** — a defect fix with a passing test whose assertions were read to confirm they
+  prove the property (not just the name).
+- **closed-by-doc/config** — closed by documentation, a config/lockfile pin, or a product deferral —
+  the runtime behavior was NOT changed by a code fix (do not count as code-fixed).
+- **deferred** — a real prerequisite intentionally postponed until mainnet is scheduled.
+- **open** — not yet fixed (severity noted).
+
+### Every finding
+
+| ID          | Title (short)                                            | Sev  | Final status                                                                                      |
+| ----------- | -------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------- |
+| **C1**      | Sponsor open fee-payer                                   | Crit | closed-by-test (route scope, #229; V2-hardened #231)                                              |
+| **H1**      | Unauthenticated 1-XLM/call DoS                           | High | closed-by-test (scope + spend budget, #229/#231)                                                  |
+| **H2**      | repoUrl SSRF (host git clone)                            | High | closed-by-test (FIX 6 guard + DNS pin)                                                            |
+| **H3**      | Blind SSRF → read primitive via public build log         | High | closed-by-test (private logs + sanitized statusDetail)                                            |
+| **M1**      | Session enumeration + revocation                         | Med  | closed-by-test (bearer capability, #232; client #234)                                             |
+| **M2**      | deploy-instance no spend cap                             | Med  | closed-by-test (deploy budget line)                                                               |
+| **M3**      | Spending-limit tumbling window allows 2×                 | Med  | closed-by-doc (tumbling documented; tests pin 2×)                                                 |
+| **M4**      | verified-recipient bricks w/o registry                   | Med  | deferred (product-gated + V3 recovery; no mainnet reg)                                            |
+| **M5**      | Attestation registry single-key oracle                   | Med  | **deferred** (boot guard only; multisig attestor TBD)                                             |
+| **M6**      | DB fallback fails open + health lies                     | Med  | closed-by-test (readiness) + RA-4 (boot inversion)                                                |
+| **M7**      | No reaper for stranded `building` rows                   | Med  | closed-by-test (reaper + dedup + queue cap)                                                       |
+| **M8**      | Stale fast-uri override                                  | Med  | closed-by-config (lockfile pin; no test)                                                          |
+| **M9**      | Deploy from main, no CI gate                             | Med  | closed-by-config PARTIAL (audit gate + autoDeploy:false; branch-protection is dashboard — see V6) |
+| **L1**      | /policies/deploy unverified `deployed` flag              | Low  | closed-by-test (on-chain attach decode, #230)                                                     |
+| **L2**      | Downstream 0.0.0.0 bind                                  | Low  | closed-by-config (loopback bind) + **V6 dashboard**                                               |
+| **L3**      | No web-app-origin allowlist on pair                      | Low  | closed-by-test (fail-closed allowlist, #230)                                                      |
+| **L4**      | Device signing trusts attacker rpcUrl for expiry         | Low  | closed-by-test (trusted RPC anchor + cap, #230)                                                   |
+| **L5**      | normalizeOrigin trailing-dot FQDNs                       | Low  | closed-by-test (#230)                                                                             |
+| **L6/L6b**  | Cleanup one-tx + unpaginated Horizon / "safe" copy       | Low  | closed-by-test (split + pagination) + copy (#230)                                                 |
+| **L7**      | 14 high dep advisories                                   | Low  | closed-by-config (overrides; audit gate)                                                          |
+| **I1**      | Markdown injection in bot comment                        | Info | open (accepted — no code exec; escape recommended)                                                |
+| **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                           |
+| **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                     |
+| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                   |
+| **V4**      | H2+L2 don't compose into spend (refuted)                 | —    | n/a (analysis; reachability tracked under H2/L2)                                                  |
+| **V5**      | `network` is a label, not routing input                  | —    | enforced (guards key off config; RA-11-B closed last gap)                                         |
+| **V6**      | Two infra facts gated on dashboard                       | —    | **open — OWNER: operator** (see blockers below)                                                   |
+| **RA-1**    | Scope gate V1-only; kit signs V2                         | High | closed-by-test (V2/delegate match, #231)                                                          |
+| **RA-2**    | Spend-budget INSERT not atomic                           | High | closed-by-test (advisory lock; real-PG concurrency)                                               |
+| **RA-3**    | M1 open + stale doc                                      | Med  | closed-by-test (server #232 + client #234); L-1/L-2/L-5 residuals Low, accepted                   |
+| **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                           |
+| **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                   |
+| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion); L-3 delegation edge **open** (Low)                             |
+| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | open (latent; no reachable path)                                                                  |
+| **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                           |
+| **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                       |
+| **RA-10**   | Network classification from defaulted passphrase (class) | Med  | closed-by-test (explicit STELLAR_NETWORK ×3 svcs, #233)                                           |
+| **RA-11-A** | Session client orphaned by M1                            | High | closed-by-test (seam-crossing, #234)                                                              |
+| **RA-11-B** | Create budget metered on request body (V5)               | High | closed-by-test (config-keyed; all tryConsume audited)                                             |
+| **RA-11-C** | Cleanup wizard drops split chunks                        | Med  | closed-by-test (multi-chunk e2e, #234)                                                            |
+| **RA-11-D** | Verification log→statusDetail orphan (#229)              | Low  | closed-by-test (SDK type + UI, #234)                                                              |
+| **RA-11-E** | /policies/deploy client is external vellar-sdk           | Low  | **open — OWNER: SDK audit** (unverifiable in-repo)                                                |
+
+### Remaining mainnet blockers (with owners)
+
+1. **M5 — multisig / smart-account attestor** — _OWNER: contracts + backend._ Today only a boot guard
+   refuses single-key-on-mainnet (`ALLOW_SINGLE_KEY_ATTESTOR` escape hatch). A real threshold attestor
+   must exist before any mainnet attestation registry goes live. Deferred by design.
+2. **V3 detach UI** — _OWNER: web._ The standalone-signer detach recovery exists in code + is invariant-
+   tested (RA-6), but there is no wired UI to trigger `kit.remove(SignerKey.Policy)`. Needed before
+   `verified_only` policies are offered on mainnet.
+3. **V6 fact #1 — port exposure (L2 final severity)** — _OWNER: operator (dashboard)._ Confirm the
+   platform edge firewalls the internal 4001–4004 listeners. Repo binds loopback + publishes only
+   `$PORT`; whether the platform blocks the rest is a dashboard fact, not provable here.
+4. **V6 fact #2 — autoDeploy / branch protection (M9 final severity)** — _OWNER: operator (dashboard)._
+   Confirm `autoDeploy` is OFF and GitHub branch protection is ON. `render.yaml` sets
+   `autoDeploy:false` and CI has the audit gate, but the platform toggle + branch protection are
+   dashboard settings.
+5. **RA-11-E — external SDK `/policies/deploy` handling** — _OWNER: SDK audit._ The `vellar-sdk` client
+   for `/policies/deploy` (which gained 422/503 modes under L1) is not in this repo. Confirm it handles
+   `422 no_instance`/`attach_mismatch` and `503 attach_unconfirmed` rather than assuming 2xx. Diff it
+   against the Seam Contract section below.
+6. **Dependency audit of `vellar-sdk` / `passkey-kit`** — _OWNER: SDK audit._ The load-bearing caveat:
+   the passkey ceremony, session store, and the address derivation this repo enforces against all live
+   in an unread dependency, as does the V1→V2 credential upgrade that drove RA-1. No mainnet go until
+   that kit is itself audited.
+
+### Go / no-go
+
+**NO-GO for mainnet.** The Critical and all funding-path/session Highs found across the audits are
+fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the two deferred
+prerequisites (M5, V3), the two operator-owned V6 dashboard facts, the external-SDK confirmation
+(RA-11-E), and — conditioning every verdict — the unaudited `vellar-sdk`/`passkey-kit`. Testnet posture
+is sound today. The residual open items are Low/Info (I1, RA-7, RA-6/L-3, RA-3/L-1/L-2/L-5) and are
+acceptable-with-documentation, not go/no-go gates.
+
+---
+
+## Seam contract — the backend HTTP API the external `vellar-sdk` consumes
+
+RA-11 happened because server route contracts changed and nobody checked the consumers. The
+`vellar-sdk` is a consumer we **cannot see from this repo**, so the contract is written down HERE. This
+is (a) an input to the SDK audit, and (b) the artifact to diff the next time a route changes. Extracted
+from the four services' `server.ts` + their zod schemas on `main` through #234; **re-verify against the
+code on every route change** and bump the "as of" commit.
+
+### Gateway rules (apply to EVERY route below)
+
+`api-gateway` proxies **1:1, no path rewrite** (`/wallet/*`→wallet, `/policies/*`→policy,
+`/verification/*`→verification, `/lifecycle/*`→lifecycle). Reach a route exactly as written. Cross-
+cutting behavior a client must satisfy on every call:
+
+- **`415 unsupported_media_type`** — every POST/PUT/PATCH MUST send `Content-Type: application/json`
+  (fires before proxying; GET exempt). `{ error, reason }`.
+- **`413 payload_too_large`** — body > `MAX_BODY_BYTES` (default 1 MiB). `{ error, reason }`.
+- **`429`** — per-IP rate limit (default 120/60s) with `Retry-After`. Distinct from verification's own
+  `429 queue_full`. `/health` exempt.
+- **CORS** — configured origins only; methods `GET, POST, DELETE`.
+- **Envelope**: validation errors carry `{ error, details }` (raw zod issues); others `{ error, message }`
+  or bare `{ error }`. **Clients MUST key on the `error` slug, not the message.**
+
+### wallet-service `/wallet/*`
+
+_403 scope/derivation checks fire only when `networkPassphrase` is server-configured; create/deploy 503s
+only when `budget`+`budgetNetwork` are set. In dev/no-relayer they cannot fire — an SDK must handle them
+when present but not assume they always exist._
+
+| Route                            | Request                                                                    | Success                                                                               | Error modes (slug → when)                                                                                                                                                                                                                                                                |
+| -------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **POST /wallet/create**          | body `{ keyId, contractId, network:testnet\|mainnet, signedTx }` (all req) | `201 { contractId, sessionId, txHash }`                                               | `400 invalid_body`; `403 contract_id_mismatch` (contractId ≠ derive(keyId) — **slug is `contract_id_mismatch`, NOT `derivation_mismatch`**; client bug, don't retry); `409 wallet_exists` (→ use /connect); `503 create_budget_exceeded` (retry later); `502 <relayer code>` (transient) |
+| **POST /wallet/connect**         | body `{ keyId, network }` (both req)                                       | `200 { contractId, sessionId }`                                                       | `400 invalid_body`; **`404 wallet_not_found` — NORMAL "no wallet yet" signal; the reference client returns `undefined`, does NOT throw**                                                                                                                                                 |
+| **POST /wallet/submit**          | body `{ signedXdr, network }` (both req)                                   | `200 { hash }`                                                                        | `400 invalid_body`; `403 unscoped_transaction` / `no_wallet_subject` / `unknown_wallet_subject` (C1/H1 scope; client bug); `503 persistence_unavailable` (retry shortly); `502 <relayer code>` (transient)                                                                               |
+| **GET /wallet/session**          | **HEADER `Authorization: Bearer <sessionId>`**; no body                    | `200 SessionRecord` `{ id, contractId, network, createdAt, lastActiveAt, expiresAt }` | `401 unauthorized` (missing/malformed/unknown/**expired** — indistinguishable by design). A successful call **slides the 7-day TTL**.                                                                                                                                                    |
+| **GET /wallet/sessions**         | **HEADER Bearer**; query `?contractId=&network=`                           | `200 { sessions: SessionRecord[] }`                                                   | `400 invalid_query` (**slug is `invalid_query`, not `invalid_body`**); `401 unauthorized` (no live bearer OR bearer's contractId/network ≠ query — no cross-account enum)                                                                                                                |
+| **POST /wallet/sessions/revoke** | **HEADER Bearer**; body `{ targetSessionId }` (req)                        | `204` (empty)                                                                         | `401 unauthorized` (no live bearer; checked before body); `400 invalid_body`; **`404 session_not_found` — target unknown OR different account (cross-account revoke reads as not-found); the client MUST THROW (swallowing 404 as success was the RA-11-A bug)**                         |
+
+### policy-service `/policies/*`
+
+_`deployer` gates /simulate + /deploy-instance (503 `deploy_unavailable`). `verifyAttach` gates the L1
+check on /deploy. `budget`+`budgetNetwork` gate the deploy 503._
+
+| Route                                   | Request                                                    | Success                                                                                                            | Error modes                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **GET /policies/templates**             | none                                                       | `200` **bare array** `[{ type, title, description, enforcement }]` (**NOT wrapped**)                               | none                                                                                                                                                                                                                                                                                                                     |
+| **POST /policies/validate**             | raw `request.body` (unvalidated)                           | `200 { valid, errors: string[] }` — **invalid content still returns 200 with `valid:false`; never 4xx on content** | none                                                                                                                                                                                                                                                                                                                     |
+| **POST /policies/generate**             | body `{ definition, network }` (both req)                  | `201 { policy: PolicyRecord }`                                                                                     | `400 invalid_body`; `422 invalid_policy` `{ error, errors }` (**field is `errors` array, not `message`**)                                                                                                                                                                                                                |
+| **POST /policies/:id/simulate**         | path `:id`; body `{ wallet: C-address /^C[A-Z2-7]{55}$/ }` | `200 { ok, minResourceFee?, error? }`                                                                              | `503 deploy_unavailable` (first); `400 invalid_body`; `404 policy_not_found`; `422 not_deployable`                                                                                                                                                                                                                       |
+| **POST /policies/:id/deploy-instance**  | path `:id`; body `{ wallet: C-address }`                   | `200 { policy, contractId }` (**idempotent**: existing instance returned w/o new spend)                            | `503 deploy_unavailable`; `400 invalid_body`; `404 policy_not_found`; `422 not_deployable`; `503 deploy_budget_exceeded` (retry later); `502 deploy_failed` `{ error, code }` (**field is `code`, not `message`**)                                                                                                       |
+| **POST /policies/deploy** ⚠ **RA-11-E** | body `{ policyId, txHash, contractId? }`                   | `200 { policy: PolicyRecord }`                                                                                     | `400 invalid_body`; `404 policy_not_found`; `422 no_instance` (call /deploy-instance first); **`503 attach_unconfirmed` — RETRYABLE, chain unreachable/tx pending, NOT a failure, record NOT stamped**; **`422 attach_mismatch` — a lie, do NOT retry, record NOT stamped**. Network/passphrase from server config (V5). |
+| **GET /policies/:id**                   | path `:id`                                                 | `200 { policy: PolicyRecord }`                                                                                     | `404 policy_not_found`                                                                                                                                                                                                                                                                                                   |
+
+`PolicyRecord` = `{ id, createdAt, status: "generated"|"instance_deployed"|"deployed", definition,
+policyHash, manifest:{template,enforcement,network}, instance?:{contractId,txHash,wallet,deployedAt},
+deployment?:{contractId?,txHash,deployedAt} }`.
+
+### verification-service `/verification/*`
+
+_**H3/#229**: the internal `log` field is stripped by `toPublic` and NEVER returned; public records
+carry sanitized `statusDetail?` instead. `sourceArchiveRef` and `lockfileHash` are also stripped._
+
+| Route                                    | Request                                                                                                                                                                       | Success                                                                                   | Error modes                                                                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **POST /verification/submit**            | body `{ contractId(C-addr), sourceType:repo\|upload, toolchainVersion, buildFlags?, lockfileHash? }` + `repoUrl`+`commitHash` **iff repo**, `sourceArchiveRef` **iff upload** | `201 { record: PublicVerificationRecord }` (status `"submitted"`)                         | `400 invalid_body`; `429 queue_full` (M7, ≥ maxActive; retry later; distinct from gateway 429); `409 verification_in_progress` (one active per contract) |
+| **GET /verification/:contractId**        | path `:contractId` (C-addr)                                                                                                                                                   | `200 { contractId, records: PublicVerificationRecord[] }` (empty [] if none, **not 404**) | `400 invalid_contract_id` `{ error }` (**no `details`**)                                                                                                 |
+| **GET /verification/:contractId/status** | path `:contractId` (C-addr)                                                                                                                                                   | `200 { contractId, status, recordId?, updatedAt? }`; unknown → `status:"unverified"`      | `400 invalid_contract_id`                                                                                                                                |
+
+`PublicVerificationRecord` = `{ id, contractId, sourceType, repoUrl?, commitHash?, toolchainVersion,
+buildFlags?, outputHash?, deployedHash?, status, createdAt, updatedAt, statusDetail? }`. `status` ∈
+`unverified|submitted|building|verified|failed|dead_letter`.
+
+### lifecycle-service `/lifecycle/*`
+
+_No auth header on any route. `CleanupStep` = `{ title, description, xdr, hash }`. `CleanupPlan` =
+`{ accountId, destination, blockers:[{type,description,actionRequired}], estimatedTransactions, mergeReady }`._
+
+| Route                       | Request                           | Success                                                                        | Error modes                                                                                                                                                                                                                  |
+| --------------------------- | --------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **POST /lifecycle/inspect** | body `{ accountId }`              | `200 { account: HorizonAccount }`                                              | `400 invalid_body`; `400 not_classic_account` `{ error, message }` (not a G-address); `404 account_not_found`                                                                                                                |
+| **POST /lifecycle/plan**    | body `{ accountId, destination }` | `200 { plan: CleanupPlan }`                                                    | `400 invalid_body`; `400 not_classic_account` `{ error, message }`; `400 invalid_destination` `{ error, message }` (bad G-addr OR == accountId); `404 account_not_found`                                                     |
+| **POST /lifecycle/execute** | body `{ accountId, destination }` | `200 { steps: CleanupStep[], plan }` (may be MULTIPLE steps — split; walk all) | `400 invalid_body`; `400 not_classic_account` **bare `{ error }` (no message)**; `400 invalid_destination` **bare `{ error }`**; `404 account_not_found`                                                                     |
+| **POST /lifecycle/merge**   | body `{ accountId, destination }` | `200 { step: CleanupStep }`                                                    | `400 invalid_body`; `400 not_classic_account` **bare `{ error }`**; `400 invalid_destination` **bare `{ error }`**; `404 account_not_found`; **`409 not_merge_ready` `{ error, plan }` — body carries the full CleanupPlan** |
+
+### SDK-diff gotchas (the things most likely to mismatch)
+
+1. **`contract_id_mismatch`**, not `derivation_mismatch` — the create-derivation-gate slug. Verified at
+   `derivation.ts:47`. Single most likely SDK error-handling mismatch.
+2. **Conditional errors**: 403 scope/derivation + create/deploy 503s only exist when server config is
+   present. Handle-when-present, don't assume-always.
+3. **Inconsistent envelopes**: `/policies/templates` returns a **bare array**; everything else wraps in
+   `{ policy }`. `/policies/validate` **never 4xx's on content** (200 `{valid:false}`).
+4. **Same slug, different envelope**: `/plan` + `/inspect` give `{error,message}` for classic/dest 400s,
+   but `/execute` + `/merge` give **bare `{error}`** — an SDK reading `message` gets `undefined` there.
+5. **`invalid_query`** (not `invalid_body`) for `GET /wallet/sessions`; **`invalid_contract_id`** (no
+   `details`) for verification path params.
+6. **404 semantics differ**: `/wallet/connect` 404 = normal "no wallet" → return `undefined`;
+   `/wallet/sessions/revoke` 404 → **MUST throw** (the RA-11-A silent-success bug).
+7. **`log` is gone** from all verification responses; `statusDetail` is the only failure-detail field.
+8. **Retryable vs terminal on `/policies/deploy`**: `503 attach_unconfirmed` = retry (pending);
+   `422 attach_mismatch` = terminal (a lie). Different handling, same route.
+9. **Session bearer** travels only in the `Authorization` header / revoke body — never a URL. `401
+unauthorized` is intentionally identical for missing/unknown/expired/wrong-account.
+10. **Gateway 415** — every mutation must send `Content-Type: application/json` or it never reaches the
+    service (415 before the handler).
