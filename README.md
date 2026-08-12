@@ -14,7 +14,13 @@ The SDK that powers Vellar is published separately as
 
 ## Layout
 
-Monorepo (pnpm + Turborepo): `apps/` (web, extension, docs) · `packages/` (shared SDKs/UI/types) · `services/` (backend) · `contracts/` (Soroban) · `infra/`.
+Monorepo (pnpm + Turborepo): `apps/web` + `apps/extension` (the two workspace apps; `apps/docs` is pre-written content for a future docs site, not a runnable app yet) · `packages/` (shared UI/types/passkey/provider/policy/verification/lifecycle SDKs + service-kit — the core wallet client SDK itself now lives outside this repo, see below) · `services/` (backend) · `contracts/` (Soroban) · `infra/`.
+
+Both `apps/web` and `apps/extension` depend directly on the published
+[`vellar-sdk`](https://github.com/Vellar-Wallet/vellar-sdk) npm package for
+wallet/session/payment/x402 logic, the same as any third-party integrator
+would — there is no in-repo `packages/wallet-sdk` (retired 2026-07-25 to stop
+two hand-synced copies from drifting; see `docs/decisions.md`).
 
 ## Getting started
 
@@ -48,7 +54,7 @@ pnpm typecheck
    ```
 
    Ports: web `:3000`, gateway `:4000`, wallet `:4001`, lifecycle `:4002`,
-   policy `:4003`, Postgres `:5433`, Redis `:6380`.
+   policy `:4003`, verification `:4004`, Postgres `:5433`, Redis `:6380`.
 
 3. **Verify:** `curl localhost:4000/health` and open `http://localhost:3000`.
 
