@@ -4,13 +4,26 @@
   "private": true,
   "description": "dApp origin permissions, extension connection records, revocation state",
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts"
-  },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "dev": "NODE_ENV=development STELLAR_NETWORK=testnet tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@vellar/service-kit": "workspace:*",
+    "@vellar/types": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.4.0",
+    "pg": "^8.22.0"
+  },
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

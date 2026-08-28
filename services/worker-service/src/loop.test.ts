@@ -167,3 +167,27 @@ describe("runWorkerTick", () => {
     expect(metrics.verificationResult).not.toHaveBeenCalled();
   });
 });
+
+describe("startWorkerLoop & drain", () => {
+  it("drains in-flight verification jobs before completing shutdown", async () => {
+    const store = createMemoryJobStore();
+    const built = await stubBuildExecutor().build(job(C1));
+    const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
+    store.submit("r1", job(C1));
+
+    const { startWorkerLoop } = await import("./loop");
+    const loop = startWorkerLoop({
+      store,
+      executor: stubBuildExecutor(),
+      resolver,
+      idleDelayMs: 100,
+      busyDelayMs: 10,
+    });
+
+    const drained = await loop.drain(5000);
+    expect(drained).toBe(true);
+    expect(loop.getInFlightCount()).toBe(0);
+    expect(store.get("r1")?.status).toBe("verified");
+  });
+});
+

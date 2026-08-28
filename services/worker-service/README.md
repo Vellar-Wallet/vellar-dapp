@@ -147,6 +147,14 @@ are env-tunable (see below). **Signed job payloads are intentionally not
 implemented** — there is no untrusted queue between the service and the worker
 (the shared Postgres is the trust boundary); see docs/decisions.md.
 
+## Graceful Shutdown & Job Draining
+
+When `worker-service` receives `SIGINT` or `SIGTERM` (e.g. during deployments or service restarts):
+
+1. It immediately stops polling for and claiming new verification jobs from the queue.
+2. It waits for all active in-flight verification jobs to complete their build execution, status persistence, and optional on-chain attestation mirroring.
+3. If in-flight jobs do not complete within the configurable drain timeout (`10000ms`), the process logs a warning and exits cleanly.
+
 ## Env
 
 | Var                       | Purpose                                                        | Default |
@@ -159,3 +167,4 @@ implemented** — there is no untrusted queue between the service and the worker
 | `VERIFY_BUILD_MEMORY`     | container memory cap (docker `--memory`)                       | 2g      |
 | `VERIFY_BUILD_CPUS`       | container CPU cap (docker `--cpus`)                            | 2       |
 | `VERIFY_BUILD_PIDS_LIMIT` | max processes in the container                                 | 512     |
+

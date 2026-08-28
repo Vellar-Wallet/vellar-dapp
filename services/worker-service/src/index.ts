@@ -155,8 +155,13 @@ const reapTimer = setInterval(runReaper, config.reapIntervalMs);
 void runReaper();
 
 const shutdown = async () => {
-  log.info("shutting down…");
-  loop.stop();
+  log.info("shutting down, draining in-flight jobs…");
+  const drained = await loop.drain(10000);
+  if (!drained) {
+    log.error("drain timeout exceeded, forcing exit");
+  } else {
+    log.info("all in-flight jobs drained successfully");
+  }
   if (sweepTimer) clearInterval(sweepTimer);
   clearInterval(reapTimer);
   await metricsApp.close();
