@@ -13,6 +13,10 @@ import { extractTraceContext, withTraceSpan } from "@vellar/service-kit";
 export interface WorkerMetrics {
   verificationResult(outcome: "verified" | "failed", turnaroundSeconds?: number): void;
   workerFailure(): void;
+  /** Backpressure: reports the current queue depth of pending/active jobs. */
+  queueDepth?(depth: number): void;
+  /** Backpressure: reports processing lag in seconds between submission and pickup. */
+  processingLag?(lagSeconds: number): void;
 }
 
 const noopMetrics: WorkerMetrics = { verificationResult: () => {}, workerFailure: () => {} };
@@ -21,6 +25,8 @@ export interface WorkerDeps extends RunVerificationDeps {
   store: VerificationJobStore;
   /** Max jobs to claim per tick. */
   batchSize?: number;
+  /** Concurrency limit for simultaneous transaction processing (backpressure control). Default 1. */
+  concurrencyLimit?: number;
   log?: { info: (msg: string) => void; error: (msg: string, err?: unknown) => void };
   metrics?: WorkerMetrics;
   /** Optional on-chain attestation mirror. Called after each outcome is
@@ -32,18 +38,35 @@ export interface WorkerDeps extends RunVerificationDeps {
 const silentLog = { info: () => {}, error: () => {} };
 
 /**
- * Processes one batch of claimed jobs. Returns how many jobs were handled so a
- * caller can decide whether to poll again immediately (queue busy) or back off
- * (idle). A single job failing (unexpected throw) is logged and does not abort
- * the rest of the batch — the record is left "building" and re-claimable after
- * a timeout in production (retryable per idea.md §13).
+ * Processes one batch of claimed jobs with backpressure concurrency controls.
+ * Respects concurrencyLimit so bursts of transactions cannot overwhelm downstream
+ * Stellar RPC calls. Queue excess work rather than dropping or overwhelming downstream.
  */
 export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
   const log = deps.log ?? silentLog;
   const metrics = deps.metrics ?? noopMetrics;
-  const jobs = await deps.store.claimSubmitted(deps.batchSize ?? 1);
-  for (const job of jobs) {
+
+  if (metrics.queueDepth) {
     try {
+      const active = await deps.store.countActive();
+      metrics.queueDepth(active);
+    } catch {
+      // metric reporting is best effort
+    }
+  }
+
+  const concurrency = Math.max(1, deps.concurrencyLimit ?? 1);
+  const claimLimit = deps.batchSize ?? concurrency;
+  const jobs = await deps.store.claimSubmitted(claimLimit);
+
+  let cursor = 0;
+  const processJob = async (job: (typeof jobs)[0]) => {
+    try {
+      if (job.submittedAtMs !== undefined && metrics.processingLag) {
+        const lagSeconds = Math.max(0, (Date.now() - job.submittedAtMs) / 1000);
+        metrics.processingLag(lagSeconds);
+      }
+
       const traceCtx = extractTraceContext({
         "x-trace-id": (job as unknown as { traceId?: string }).traceId,
       });
@@ -63,16 +86,40 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
       const turnaround =
         job.submittedAtMs !== undefined ? (Date.now() - job.submittedAtMs) / 1000 : undefined;
       metrics.verificationResult(outcome.status, turnaround);
-      log.info(`verification ${job.recordId} → ${outcome.status} (${job.contractId})`);
+      const corrTag = job.correlationId ? ` [correlationId=${job.correlationId}]` : "";
+      log.info(`verification ${job.recordId} → ${outcome.status} (${job.contractId})${corrTag}`);
       // Mirror the outcome on-chain (best-effort; never throws).
       if (deps.attestor) await deps.attestor.reportOutcome(job.contractId, outcome);
     } catch (err) {
       // runVerification only throws on truly unexpected errors; leave the record
       // "building" so it can be retried, and keep processing the batch.
       metrics.workerFailure();
-      log.error(`verification ${job.recordId} errored unexpectedly`, err);
+      const corrTag = job.correlationId ? ` [correlationId=${job.correlationId}]` : "";
+      log.error(`verification ${job.recordId} errored unexpectedly${corrTag}`, err);
+    }
+  };
+
+  const workerCount = Math.min(concurrency, jobs.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < jobs.length) {
+      const nextIndex = cursor++;
+      const job = jobs[nextIndex];
+      if (!job) break;
+      await processJob(job);
+    }
+  });
+
+  await Promise.all(workers);
+
+  if (metrics.queueDepth) {
+    try {
+      const activeAfter = await deps.store.countActive();
+      metrics.queueDepth(activeAfter);
+    } catch {
+      // metric reporting is best effort
     }
   }
+
   return jobs.length;
 }
 

@@ -9,8 +9,22 @@ export {
   domainMetrics,
   recordOutcome,
   __resetMetricsForTest,
+  METRIC_NAMING_CONVENTION,
+  validateMetricName,
+  assertMetricName,
+  lintMetricNames,
   type Outcome,
+  type MetricValidationResult,
 } from "./metrics";
+
+export {
+  CORRELATION_ID_HEADER,
+  REQUEST_ID_HEADER,
+  extractCorrelationId,
+  ensureCorrelationId,
+  registerCorrelationId,
+  type CorrelationHeaders,
+} from "./correlation";
 
 export {
   resolvePersistencePolicy,

@@ -1,0 +1,28 @@
+[package]
+name = "verified-registry"
+version = "0.1.0"
+authors = ["VELA"]
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = "27.0.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "27.0.0", features = ["testutils"] }
+ed25519-dalek = "=2.2.0"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

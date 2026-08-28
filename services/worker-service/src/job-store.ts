@@ -12,6 +12,8 @@ export interface ClaimedJob extends VerificationJobInput {
   /** When the record was first submitted (epoch ms) — for turnaround timing.
    * Optional so stores that don't track it still satisfy the contract. */
   submittedAtMs?: number;
+  /** Cross-service correlation ID for end-to-end tracing (Issue #299). */
+  correlationId?: string;
 }
 
 export interface ReapResult {

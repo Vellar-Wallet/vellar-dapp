@@ -61,18 +61,35 @@ export function xlmToStroops(xlm: string): bigint {
   return BigInt(whole) * STROOPS_PER_XLM + BigInt(fracPadded);
 }
 
+const uniqueItems = (arr: string[]) => new Set(arr).size === arr.length;
+
 const address = z.string().regex(/^[GC][A-Z2-7]{55}$/, "must be a Stellar address (G… or C…)");
 const contractAddress = z.string().regex(/^C[A-Z2-7]{55}$/, "must be a contract address (C…)");
-const positiveDecimal = z
+
+/**
+ * Strict positive XLM decimal amount (idea.md §6.2).
+ * Enforces Stellar stroop precision (max 7 decimal places) and positive value (>= 1 stroop = 0.0000001 XLM).
+ */
+const positiveXlmAmount = z
   .string()
-  .regex(/^\d+(\.\d+)?$/)
-  .refine((v) => Number(v) > 0, {
-    message: "must be a positive amount",
-  });
+  .regex(/^\d+(\.\d{1,7})?$/, "must be a valid decimal amount with at most 7 decimal places")
+  .refine(
+    (v) => {
+      try {
+        return xlmToStroops(v) > 0n;
+      } catch {
+        return false;
+      }
+    },
+    { message: "amount must be at least 1 stroop (0.0000001 XLM)" },
+  );
 
 const base = z.object({
   version: z.literal("1"),
-  owners: z.array(address).min(1),
+  owners: z
+    .array(address)
+    .min(1, "must have at least one owner")
+    .refine(uniqueItems, { message: "duplicate owners are not allowed" }),
 });
 
 export type Enforcement =
@@ -111,15 +128,49 @@ export interface PolicyTemplate {
   enforcement: Enforcement;
 }
 
+/**
+ * Schema validation rules for spending limits (idea.md §6.2):
+ * - At least one of dailyXlm or perTxXlm must be provided
+ * - Amounts must have <= 7 decimals and >= 1 stroop
+ * - If both are set, perTxXlm must not exceed dailyXlm
+ */
+const spendingLimitsSchema = z
+  .object({
+    dailyXlm: positiveXlmAmount.optional(),
+    perTxXlm: positiveXlmAmount.optional(),
+  })
+  .strict()
+  .refine((v) => v.dailyXlm !== undefined || v.perTxXlm !== undefined, {
+    message: "set dailyXlm and/or perTxXlm",
+  })
+  .refine(
+    (v) => {
+      if (v.dailyXlm !== undefined && v.perTxXlm !== undefined) {
+        return xlmToStroops(v.perTxXlm) <= xlmToStroops(v.dailyXlm);
+      }
+      return true;
+    },
+    { message: "perTxXlm cannot exceed dailyXlm" },
+  );
+
+/**
+ * Policy templates registry with strict field-level schema validation (idea.md §6.2).
+ * Every template strictly validates input fields, range limits, unique arrays, and rejects unexpected properties.
+ */
 export const templates: PolicyTemplate[] = [
   {
     type: "single_owner",
     title: "Single owner",
     description: "One key controls the account (the default smart-wallet state).",
-    schema: base.extend({
-      type: z.literal("single_owner"),
-      owners: z.array(address).length(1),
-    }),
+    schema: base
+      .extend({
+        type: z.literal("single_owner"),
+        owners: z
+          .array(address)
+          .length(1, "single_owner policy requires exactly one owner")
+          .refine(uniqueItems, { message: "duplicate owners are not allowed" }),
+      })
+      .strict(),
     enforcement: { kind: "none" },
   },
   {
@@ -129,9 +180,16 @@ export const templates: PolicyTemplate[] = [
     schema: base
       .extend({
         type: z.literal("multisig_threshold"),
-        owners: z.array(address).min(2),
-        threshold: z.number().int().min(2),
+        owners: z
+          .array(address)
+          .min(2, "multisig_threshold policy requires at least two owners")
+          .refine(uniqueItems, { message: "duplicate owners are not allowed" }),
+        threshold: z
+          .number()
+          .int("threshold must be an integer")
+          .min(2, "threshold must be at least 2"),
       })
+      .strict()
       .refine((v) => v.threshold <= v.owners.length, {
         message: "threshold cannot exceed the number of owners",
       }),
@@ -141,48 +199,58 @@ export const templates: PolicyTemplate[] = [
     type: "spending_limit",
     title: "Spending limit",
     description: "Cap total XLM a signer can move per fixed period.",
-    schema: base.extend({
-      type: z.literal("spending_limit"),
-      spendingLimits: z
-        .object({
-          dailyXlm: positiveDecimal.optional(),
-          perTxXlm: positiveDecimal.optional(),
-        })
-        .refine((v) => v.dailyXlm !== undefined || v.perTxXlm !== undefined, {
-          message: "set dailyXlm and/or perTxXlm",
-        }),
-    }),
+    schema: base
+      .extend({
+        type: z.literal("spending_limit"),
+        spendingLimits: spendingLimitsSchema,
+      })
+      .strict(),
     enforcement: { kind: "policy-contract", wasmHash: SPENDING_POLICY_WASM_HASH },
   },
   {
     type: "contract_allowlist",
     title: "Contract allowlist",
     description: "Restrict a signer to interacting only with approved contracts.",
-    schema: base.extend({
-      type: z.literal("contract_allowlist"),
-      allowlistedContracts: z.array(contractAddress).min(1),
-    }),
+    schema: base
+      .extend({
+        type: z.literal("contract_allowlist"),
+        allowlistedContracts: z
+          .array(contractAddress)
+          .min(1, "must allowlist at least one contract")
+          .refine(uniqueItems, { message: "duplicate allowlisted contracts are not allowed" }),
+      })
+      .strict(),
     enforcement: { kind: "signer-limits" },
   },
   {
     type: "verified_only",
     title: "Verified contracts only",
     description: "Restrict a signer to contracts with verified source.",
-    schema: base.extend({
-      type: z.literal("verified_only"),
-    }),
+    schema: base
+      .extend({
+        type: z.literal("verified_only"),
+      })
+      .strict(),
     enforcement: { kind: "policy-contract", wasmHash: VERIFIED_RECIPIENT_WASM_HASH },
   },
   {
     type: "timelock",
     title: "Time-lock",
     description: "Delay sensitive admin actions by a configurable period.",
-    schema: base.extend({
-      type: z.literal("timelock"),
-      timelocks: z.object({
-        adminActionDelaySeconds: z.number().int().positive(),
-      }),
-    }),
+    schema: base
+      .extend({
+        type: z.literal("timelock"),
+        timelocks: z
+          .object({
+            adminActionDelaySeconds: z
+              .number()
+              .int("delay must be an integer")
+              .min(1, "delay must be at least 1 second")
+              .max(31_536_000, "delay cannot exceed 31,536,000 seconds (365 days)"),
+          })
+          .strict(),
+      })
+      .strict(),
     enforcement: { kind: "custom-contract-pending" },
   },
 ];

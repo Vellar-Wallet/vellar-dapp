@@ -73,6 +73,43 @@ describe("validateDefinition", () => {
     }
   });
 
+  it("accepts boundary values across all templates", () => {
+    for (const definition of [
+      // Minimum 1 stroop (0.0000001 XLM)
+      {
+        version: "1",
+        type: "spending_limit",
+        owners: [C1],
+        spendingLimits: { dailyXlm: "0.0000001", perTxXlm: "0.0000001" },
+      },
+      // perTxXlm exactly equals dailyXlm
+      {
+        version: "1",
+        type: "spending_limit",
+        owners: [C1],
+        spendingLimits: { dailyXlm: "100", perTxXlm: "100" },
+      },
+      // threshold exactly equals owners count
+      { version: "1", type: "multisig_threshold", owners: [G1, G2], threshold: 2 },
+      // timelock boundary: minimum delay of 1 second
+      {
+        version: "1",
+        type: "timelock",
+        owners: [C1],
+        timelocks: { adminActionDelaySeconds: 1 },
+      },
+      // timelock boundary: maximum delay of 365 days (31536000 seconds)
+      {
+        version: "1",
+        type: "timelock",
+        owners: [C1],
+        timelocks: { adminActionDelaySeconds: 31_536_000 },
+      },
+    ]) {
+      expect(validateDefinition(definition)).toEqual({ valid: true, errors: [] });
+    }
+  });
+
   it.each([
     ["unknown type", { version: "1", type: "yolo", owners: [G1] }, /unknown policy type/],
     [
@@ -81,19 +118,59 @@ describe("validateDefinition", () => {
       /threshold cannot exceed/,
     ],
     [
+      "threshold below 2",
+      { version: "1", type: "multisig_threshold", owners: [G1, G2], threshold: 1 },
+      /threshold must be at least 2/,
+    ],
+    [
+      "non-integer threshold",
+      { version: "1", type: "multisig_threshold", owners: [G1, G2], threshold: 2.5 },
+      /threshold must be an integer/,
+    ],
+    [
+      "duplicate owners in multisig",
+      { version: "1", type: "multisig_threshold", owners: [G1, G1], threshold: 2 },
+      /duplicate owners are not allowed/,
+    ],
+    [
       "single owner with two owners",
       { version: "1", type: "single_owner", owners: [G1, G2] },
-      /owners/,
+      /single_owner policy requires exactly one owner/,
     ],
     [
       "spending limit with no limits",
       { version: "1", type: "spending_limit", owners: [C1], spendingLimits: {} },
-      /dailyXlm/,
+      /set dailyXlm and\/or perTxXlm/,
     ],
     [
       "zero spending limit",
       { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "0" } },
-      /positive/,
+      /at least 1 stroop/,
+    ],
+    [
+      "all zeroes decimal spending limit",
+      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "0.0000000" } },
+      /at least 1 stroop/,
+    ],
+    [
+      "sub-stroop precision exceeding 7 decimal places",
+      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "0.00000001" } },
+      /at most 7 decimal places/,
+    ],
+    [
+      "negative spending limit",
+      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "-5" } },
+      /valid decimal amount/,
+    ],
+    [
+      "non-numeric spending limit",
+      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "invalid" } },
+      /valid decimal amount/,
+    ],
+    [
+      "perTxXlm exceeds dailyXlm",
+      { version: "1", type: "spending_limit", owners: [C1], spendingLimits: { dailyXlm: "50", perTxXlm: "100" } },
+      /perTxXlm cannot exceed dailyXlm/,
     ],
     [
       "allowlist with G address",
@@ -101,9 +178,39 @@ describe("validateDefinition", () => {
       /contract address/,
     ],
     [
+      "allowlist with duplicate contracts",
+      { version: "1", type: "contract_allowlist", owners: [C1], allowlistedContracts: [C1, C1] },
+      /duplicate allowlisted contracts are not allowed/,
+    ],
+    [
+      "timelock with 0 delay",
+      { version: "1", type: "timelock", owners: [C1], timelocks: { adminActionDelaySeconds: 0 } },
+      /delay must be at least 1 second/,
+    ],
+    [
+      "timelock with negative delay",
+      { version: "1", type: "timelock", owners: [C1], timelocks: { adminActionDelaySeconds: -10 } },
+      /delay must be at least 1 second/,
+    ],
+    [
+      "timelock exceeding 365 days",
+      { version: "1", type: "timelock", owners: [C1], timelocks: { adminActionDelaySeconds: 31_536_001 } },
+      /delay cannot exceed 31,536,000 seconds/,
+    ],
+    [
+      "timelock with decimal delay",
+      { version: "1", type: "timelock", owners: [C1], timelocks: { adminActionDelaySeconds: 3600.5 } },
+      /delay must be an integer/,
+    ],
+    [
       "bad owner address",
       { version: "1", type: "single_owner", owners: ["nope"] },
       /Stellar address/,
+    ],
+    [
+      "unrecognized field rejected by strict schema",
+      { version: "1", type: "single_owner", owners: [C1], unexpectedField: "malicious" },
+      /Unrecognized key/,
     ],
   ])("rejects %s", (_label, definition, message) => {
     const result = validateDefinition(definition);
@@ -599,3 +706,107 @@ describe("POST /policies/:id/simulate", () => {
     expect(res.statusCode).toBe(422);
   });
 });
+
+describe("CSRF protection for admin endpoints (Issue #311)", () => {
+  it("generates a valid CSRF token from the token endpoint", async () => {
+    const server = build();
+    const res = await server.inject({ method: "GET", url: "/admin/csrf-token" });
+    expect(res.statusCode).toBe(200);
+    const { csrfToken } = res.json();
+    expect(csrfToken).toBeDefined();
+    expect(typeof csrfToken).toBe("string");
+    expect(csrfToken.split(".")).toHaveLength(3);
+  });
+
+  it("rejects state-changing admin request when CSRF token is missing (403)", async () => {
+    const server = build();
+    const res = await server.inject({
+      method: "POST",
+      url: "/admin/policies/generate",
+      payload: { definition: spendingPolicy, network: "testnet" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("csrf_token_missing");
+  });
+
+  it("rejects state-changing admin request when CSRF token is invalid/tampered (403)", async () => {
+    const server = build();
+    const res = await server.inject({
+      method: "POST",
+      url: "/admin/policies/generate",
+      headers: { "x-csrf-token": "bad.token.signature" },
+      payload: { definition: spendingPolicy, network: "testnet" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("csrf_token_invalid");
+  });
+
+  it("rejects state-changing admin request when CSRF token is expired (403)", async () => {
+    const secret = "test-custom-secret";
+    // Build server with 1ms TTL
+    const app = buildServer({ csrfSecret: secret, csrfTtlMs: 1 });
+    const tokenRes = await app.inject({ method: "GET", url: "/admin/csrf-token" });
+    const { csrfToken } = tokenRes.json();
+
+    // Sleep 10ms so token expires
+    await new Promise((r) => setTimeout(r, 10));
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/admin/policies/generate",
+      headers: { "x-csrf-token": csrfToken },
+      payload: { definition: spendingPolicy, network: "testnet" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("csrf_token_invalid");
+    expect(res.json().reason).toBe("expired");
+    await app.close();
+  });
+
+  it("accepts state-changing admin request with a valid CSRF token (201)", async () => {
+    const server = build();
+    const tokenRes = await server.inject({ method: "GET", url: "/admin/csrf-token" });
+    const { csrfToken } = tokenRes.json();
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/admin/policies/generate",
+      headers: { "x-csrf-token": csrfToken },
+      payload: { definition: spendingPolicy, network: "testnet" },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().policy).toBeDefined();
+    expect(res.json().policy.status).toBe("generated");
+  });
+
+  it("permits safe read requests without requiring a CSRF token", async () => {
+    const server = build();
+    const res = await server.inject({ method: "GET", url: "/policies/templates" });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("enforces CSRF across all mutation endpoints when enableCsrf is true", async () => {
+    const app = buildServer({ enableCsrf: true });
+    // Without token -> 403
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/policies/generate",
+      payload: { definition: spendingPolicy, network: "testnet" },
+    });
+    expect(blocked.statusCode).toBe(403);
+
+    // With token -> 201
+    const tokenRes = await app.inject({ method: "GET", url: "/csrf-token" });
+    const { csrfToken } = tokenRes.json();
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: "/policies/generate",
+      headers: { "x-csrf-token": csrfToken },
+      payload: { definition: spendingPolicy, network: "testnet" },
+    });
+    expect(allowed.statusCode).toBe(201);
+    await app.close();
+  });
+});
+

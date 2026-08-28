@@ -35,6 +35,8 @@ export interface GatewayOptions {
   maxBodyBytes?: number;
   /** Per-request timeout in ms (connection-level). Default 30_000. */
   requestTimeoutMs?: number;
+  /** Custom logger instance or options (e.g. stream for capturing logs in tests). */
+  logger?: unknown;
 }
 
 function numEnv(name: string, fallback: number): number {
@@ -61,11 +63,26 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   const rateLimitWindowMs = options.rateLimitWindowMs ?? numEnv("RATE_LIMIT_WINDOW_MS", 60_000);
 
   const app = Fastify({
-    logger: true,
+    logger: options.logger !== undefined ? (options.logger as never) : true,
+    disableRequestLogging: true,
     // Cap the request body so a giant payload can't tie up a downstream service.
     bodyLimit: maxBodyBytes,
     // Drop slow/stalled connections rather than letting them hold resources.
     connectionTimeout: requestTimeoutMs,
+  });
+
+  // Structured request logging middleware (idea.md §13, docs/observability.md):
+  // Emits structured JSON containing method, path, status, and duration for every request.
+  app.addHook("onResponse", async (request, reply) => {
+    request.log.info(
+      {
+        method: request.method,
+        path: request.url,
+        status: reply.statusCode,
+        duration: reply.elapsedTime,
+      },
+      "request completed",
+    );
   });
 
   // Security headers. CSP is disabled: this is a JSON API, not an HTML origin,

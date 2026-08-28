@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { AccountReader, HorizonAccount } from "./horizon";
 import { buildCleanupPlan } from "./planner";
-import { buildServer } from "./server";
+import { buildServer, type LifecycleServiceDeps } from "./server";
 
 const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
 const G2 = "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3";
@@ -25,9 +25,9 @@ afterEach(async () => {
   app = undefined;
 });
 
-function build(result: HorizonAccount | undefined) {
+function build(result: HorizonAccount | undefined, deps: Partial<LifecycleServiceDeps> = {}) {
   const reader: AccountReader = { getAccount: vi.fn().mockResolvedValue(result) };
-  app = buildServer({ reader });
+  app = buildServer({ reader, ...deps });
   return app;
 }
 
@@ -234,6 +234,54 @@ describe("POST /lifecycle/execute", () => {
     ]);
     expect(tx.signatures).toHaveLength(0); // UNSIGNED — user signs externally
     expect(tx.hash().toString("hex")).toBe(step.hash);
+  });
+
+  it("logs a structured entry per built step with account id and outcome", async () => {
+    const info = vi.fn();
+    const server = build(
+      account({
+        balances: [
+          { assetType: "native", balance: "5.0" },
+          { assetType: "credit_alphanum4", assetCode: "USDC", assetIssuer: G2, balance: "12.5" },
+        ],
+      }),
+      { logger: { info } },
+    );
+    const res = await server.inject({
+      method: "POST",
+      url: "/lifecycle/execute",
+      payload: { accountId: G1, destination: G2 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(info).toHaveBeenCalledWith(
+      {
+        event: "cleanup.step.built",
+        accountId: G1,
+        destination: G2,
+        outcome: "built",
+        stepIndex: 1,
+        stepCount: 1,
+        title: "Clean up the account",
+        hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+      "cleanup.step.built",
+    );
+  });
+
+  it("logs a no_steps outcome when the plan has nothing to clean", async () => {
+    const info = vi.fn();
+    const server = build(account(), { logger: { info } });
+    const res = await server.inject({
+      method: "POST",
+      url: "/lifecycle/execute",
+      payload: { accountId: G1, destination: G2 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().steps).toEqual([]);
+    expect(info).toHaveBeenCalledWith(
+      { event: "cleanup.plan.executed", accountId: G1, destination: G2, outcome: "no_steps" },
+      "cleanup.plan.executed",
+    );
   });
 });
 

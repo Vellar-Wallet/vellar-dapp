@@ -56,13 +56,13 @@ if (mode === "stub") {
 // Map loop outcomes onto the shared Prometheus metrics (idea.md §13).
 const metrics: WorkerMetrics = {
   verificationResult(outcome, turnaroundSeconds) {
-    domainMetrics.verification.inc({
+    domainMetrics.workerVerification.inc({
       service: "worker-service",
       outcome: outcome === "verified" ? "success" : "failure",
       network: "unknown",
     });
     if (turnaroundSeconds !== undefined) {
-      domainMetrics.verificationTurnaround.observe(
+      domainMetrics.workerVerificationTurnaround.observe(
         { service: "worker-service", outcome },
         turnaroundSeconds,
       );
@@ -71,6 +71,12 @@ const metrics: WorkerMetrics = {
   workerFailure() {
     // §13 alerting: verification worker failures.
     domainMetrics.rpcErrors.inc({ service: "worker-service", upstream: "build" });
+  },
+  queueDepth(depth) {
+    domainMetrics.workerQueueDepth.set({ service: "worker-service" }, depth);
+  },
+  processingLag(lagSeconds) {
+    domainMetrics.workerProcessingLagSeconds.set({ service: "worker-service" }, lagSeconds);
   },
 };
 
@@ -128,6 +134,7 @@ const loop = startWorkerLoop({
   store,
   executor,
   resolver,
+  concurrencyLimit: config.concurrencyLimit,
   idleDelayMs: config.pollIdleMs,
   log,
   metrics,

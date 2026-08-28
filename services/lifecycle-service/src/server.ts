@@ -1,6 +1,12 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth, registerMetrics, domainMetrics, recordOutcome } from "@vellar/service-kit";
+import {
+  logEvent,
+  registerHealth,
+  registerMetrics,
+  domainMetrics,
+  recordOutcome,
+} from "@vellar/service-kit";
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
 import { buildCleanupPlan, isClassicAccountId } from "./planner";
@@ -21,6 +27,9 @@ const planBodySchema = z.object({
 export interface LifecycleServiceDeps {
   reader: AccountReader;
   networkPassphrase?: string;
+  /** Injectable logger (tests). Defaults to the request-scoped logger so
+   * cleanup events stay correlated with the request that produced them. */
+  logger?: Pick<FastifyBaseLogger, "info">;
 }
 
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
@@ -101,10 +110,33 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
     const account = await deps.reader.getAccount(accountId);
     if (!account) return reply.code(404).send({ error: "account_not_found" });
 
-    return reply.send({
-      steps: buildCleanupSteps(account, destination, passphrase),
-      plan: buildCleanupPlan(account, destination),
-    });
+    const steps = buildCleanupSteps(account, destination, passphrase);
+    const plan = buildCleanupPlan(account, destination);
+
+    // Structured audit trail (issue #304): one entry per step built, so
+    // operators can see exactly what a cleanup plan execution produced.
+    const log = deps.logger ?? request.log;
+    if (steps.length === 0) {
+      logEvent(log, "cleanup.plan.executed", {
+        accountId,
+        destination,
+        outcome: "no_steps",
+      });
+    } else {
+      steps.forEach((step, index) => {
+        logEvent(log, "cleanup.step.built", {
+          accountId,
+          destination,
+          outcome: "built",
+          stepIndex: index + 1,
+          stepCount: steps.length,
+          title: step.title,
+          hash: step.hash,
+        });
+      });
+    }
+
+    return reply.send({ steps, plan });
   });
 
   // MergePreflightValidator (idea.md §6.4): re-inspects and refuses to build

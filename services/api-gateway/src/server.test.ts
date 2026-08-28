@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import type { AddressInfo } from "node:net";
+import { Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "./server";
@@ -205,3 +206,50 @@ describe("api-gateway security controls", () => {
     }
   });
 });
+
+describe("api-gateway structured request logging", () => {
+  it("emits valid JSON logs with method, path, status, and duration for each entry", async () => {
+    const rawLines: string[] = [];
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        rawLines.push(chunk.toString());
+        callback();
+      },
+    });
+
+    const logApp = buildServer({
+      logger: { level: "info", stream },
+    });
+    await logApp.ready();
+
+    try {
+      const res = await logApp.inject({ method: "GET", url: "/health" });
+      expect(res.statusCode).toBe(200);
+
+      // Verify that log lines are emitted and can be parsed as valid JSON
+      expect(rawLines.length).toBeGreaterThan(0);
+
+      let foundRequestEntry = false;
+      for (const line of rawLines) {
+        // Must be parseable JSON
+        const parsed = JSON.parse(line.trim());
+        expect(typeof parsed).toBe("object");
+
+        if (parsed.path === "/health") {
+          foundRequestEntry = true;
+          // Verify required fields: method, path, status, and duration
+          expect(parsed.method).toBe("GET");
+          expect(parsed.path).toBe("/health");
+          expect(parsed.status).toBe(200);
+          expect(typeof parsed.duration).toBe("number");
+          expect(parsed.duration).toBeGreaterThanOrEqual(0);
+        }
+      }
+
+      expect(foundRequestEntry).toBe(true);
+    } finally {
+      await logApp.close();
+    }
+  });
+});
+

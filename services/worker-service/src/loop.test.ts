@@ -166,4 +166,74 @@ describe("runWorkerTick", () => {
     expect(metrics.workerFailure).toHaveBeenCalledTimes(1);
     expect(metrics.verificationResult).not.toHaveBeenCalled();
   });
+
+  it("respects concurrency limit under load without dropping work", async () => {
+    const store = createMemoryJobStore();
+    for (let i = 1; i <= 5; i++) {
+      store.submit(`job-${i}`, job(C1));
+    }
+
+    let activeCount = 0;
+    let peakConcurrent = 0;
+
+    const executor: BuildExecutor = {
+      async build(input) {
+        activeCount++;
+        peakConcurrent = Math.max(peakConcurrent, activeCount);
+        // Simulate async processing time under load
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        activeCount--;
+        return stubBuildExecutor().build(input);
+      },
+    };
+
+    const built = await stubBuildExecutor().build(job(C1));
+    const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
+
+    const handled = await runWorkerTick({
+      store,
+      executor,
+      resolver,
+      batchSize: 5,
+      concurrencyLimit: 2,
+    });
+
+    expect(handled).toBe(5);
+    // Concurrency limit of 2 was strictly respected under load
+    expect(peakConcurrent).toBeLessThanOrEqual(2);
+
+    // All jobs completed without being dropped
+    for (let i = 1; i <= 5; i++) {
+      expect(store.get(`job-${i}`)?.status).toBe("verified");
+    }
+  });
+
+  it("reports queue depth and processing lag metrics", async () => {
+    const store = createMemoryJobStore();
+    const submissionTime = Date.now() - 4000; // 4 seconds ago
+    store.submit("lagged-job", job(C1), submissionTime);
+
+    const built = await stubBuildExecutor().build(job(C1));
+    const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
+
+    const metrics: WorkerMetrics = {
+      verificationResult: vi.fn(),
+      workerFailure: vi.fn(),
+      queueDepth: vi.fn(),
+      processingLag: vi.fn(),
+    };
+
+    await runWorkerTick({
+      store,
+      executor: stubBuildExecutor(),
+      resolver,
+      metrics,
+    });
+
+    expect(metrics.queueDepth).toHaveBeenCalled();
+    expect(metrics.processingLag).toHaveBeenCalled();
+    const lagArg = (metrics.processingLag as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(lagArg).toBeGreaterThanOrEqual(3.5);
+  });
 });
+

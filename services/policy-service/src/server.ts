@@ -20,6 +20,7 @@ import {
   verifyAttachTx,
   type TxLookup,
 } from "./verify-attach";
+import { createCsrfPreHandler, generateCsrfToken } from "./csrf";
 
 // Policy API (idea.md §11): validate → generate → (review) → deploy.
 // Generated policies persist for review/deploy (idea.md §9 policies table —
@@ -103,6 +104,12 @@ export interface PolicyServiceDeps {
   network?: BudgetNetwork;
   /** Passphrase used to decode the attach tx envelope. Defaults to testnet. */
   networkPassphrase?: string;
+  /** Secret used to sign and verify CSRF tokens. Default used when unset. */
+  csrfSecret?: string;
+  /** Token TTL in milliseconds. Defaults to 3600_000 (1 hour). */
+  csrfTtlMs?: number;
+  /** When true, enforces CSRF token validation on all state-changing endpoints. */
+  enableCsrf?: boolean;
 }
 
 export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
@@ -112,10 +119,33 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
   const verifyAttach = deps.verifyAttach;
   const network = deps.network ?? "testnet";
   const networkPassphrase = deps.networkPassphrase ?? "Test SDF Network ; September 2015";
+  const csrfSecret =
+    deps.csrfSecret ?? process.env.CSRF_SECRET ?? "vellar-policy-admin-csrf-default-secret";
 
   const app = Fastify({ logger: true });
   registerHealth(app, "policy-service", { isReady: deps.isReady });
   registerMetrics(app, "policy-service");
+
+  const csrfPreHandler = createCsrfPreHandler({
+    secret: csrfSecret,
+    ttlMs: deps.csrfTtlMs,
+  });
+
+  // Enforce CSRF token validation on state-changing admin routes (/admin/*) or all mutations if enableCsrf is true
+  app.addHook("preHandler", async (request, reply) => {
+    const url = (request.routeOptions?.url ?? request.url).split("?")[0] ?? "";
+    if (url.startsWith("/admin") || url.startsWith("/policies/admin") || deps.enableCsrf) {
+      await csrfPreHandler(request, reply);
+    }
+  });
+
+  // CSRF token endpoints (Issue #311)
+  const getCsrfTokenHandler = async () => ({
+    csrfToken: generateCsrfToken(csrfSecret),
+  });
+  app.get("/admin/csrf-token", getCsrfTokenHandler);
+  app.get("/policies/admin/csrf-token", getCsrfTokenHandler);
+  app.get("/csrf-token", getCsrfTokenHandler);
 
   app.get("/policies/templates", async () =>
     templates.map(({ type, title, description, enforcement }) => ({
@@ -334,6 +364,96 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     const { id } = request.params as { id: string };
     const record = await policies.find(id);
     if (!record) return reply.code(404).send({ error: "policy_not_found" });
+    return reply.send({ policy: record });
+  });
+
+  // Dedicated admin surface routes (Issue #311).
+  // These mutate state and enforce CSRF protection via the preHandler hook.
+  app.post("/admin/policies/generate", async (request, reply) => {
+    const parsed = generateBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+    const validation = validateDefinition(parsed.data.definition);
+    if (!validation.valid) {
+      return reply.code(422).send({ error: "invalid_policy", errors: validation.errors });
+    }
+
+    const generated = generatePolicy(
+      parsed.data.definition as PolicyDefinition,
+      parsed.data.network,
+    );
+    const record: PolicyRecord = {
+      id: randomUUID(),
+      createdAt: now().toISOString(),
+      status: "generated",
+      ...generated,
+    };
+    await policies.insert(record);
+    return reply.code(201).send({ policy: record });
+  });
+
+  app.post("/admin/policies/:id/deploy-instance", async (request, reply) => {
+    if (!deployer) {
+      return reply.code(503).send({ error: "deploy_unavailable", reason: "no sponsor configured" });
+    }
+    const { id } = request.params as { id: string };
+    const parsed = deployInstanceBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    const record = await policies.find(id);
+    if (!record) return reply.code(404).send({ error: "policy_not_found" });
+    if (record.instance) {
+      return reply.send({ policy: record, contractId: record.instance.contractId });
+    }
+
+    const enforcement = record.manifest.enforcement;
+    if (enforcement.kind !== "policy-contract" || !enforcement.constructorArgs) {
+      return reply.code(422).send({
+        error: "not_deployable",
+        reason: "this policy is enforced without a deployed contract instance",
+      });
+    }
+
+    let result: { contractId: string; txHash: string };
+    try {
+      result = await deployer.deployInstance({
+        wallet: parsed.data.wallet,
+        constructorArgs: enforcement.constructorArgs,
+      });
+    } catch (err) {
+      if (err instanceof PolicyDeployError) {
+        request.log.error({ err, policyId: id }, "policy instance deploy failed");
+        recordOutcome(domainMetrics.policyDeployed, "policy-service", "failure");
+        return reply.code(502).send({ error: "deploy_failed", code: err.code });
+      }
+      throw err;
+    }
+
+    record.status = "instance_deployed";
+    record.instance = { ...result, wallet: parsed.data.wallet, deployedAt: now().toISOString() };
+    await policies.update(record);
+    recordOutcome(domainMetrics.policyDeployed, "policy-service", "success");
+    return reply.send({ policy: record, contractId: result.contractId });
+  });
+
+  app.post("/admin/policies/deploy", async (request, reply) => {
+    const parsed = deployBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+    const record = await policies.find(parsed.data.policyId);
+    if (!record) return reply.code(404).send({ error: "policy_not_found" });
+
+    record.status = "deployed";
+    record.deployment = {
+      contractId: parsed.data.contractId,
+      txHash: parsed.data.txHash,
+      deployedAt: now().toISOString(),
+    };
+    await policies.update(record);
     return reply.send({ policy: record });
   });
 

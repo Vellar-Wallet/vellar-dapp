@@ -1,0 +1,14 @@
+{
+  "name": "merge-eligibility-reasons",
+  "version": "1.0.0",
+  "description": "Mock route module for merge eligibility checks with reason codes",
+  "private": true,
+  "scripts": {
+    "test": "node --loader tsx ./test.ts",
+    "test:check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.9.2"
+  }
+}
