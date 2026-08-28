@@ -6,6 +6,8 @@ import {
   registerMetrics,
   domainMetrics,
   recordOutcome,
+  extractTraceContext,
+  withTraceSpan,
   type SpendBudget,
   type BudgetNetwork,
 } from "@vellar/service-kit";
@@ -240,11 +242,20 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     }
 
     let result: { contractId: string; txHash: string };
+    const traceCtx = extractTraceContext(request.headers as Record<string, string | undefined>);
     try {
-      result = await deployer.deployInstance({
-        wallet: parsed.data.wallet,
-        constructorArgs: enforcement.constructorArgs,
-      });
+      result = await withTraceSpan(
+        "policy-service",
+        "policy.deploy-instance",
+        traceCtx,
+        async () => {
+          return await deployer.deployInstance({
+            wallet: parsed.data.wallet,
+            constructorArgs: enforcement.constructorArgs,
+          });
+        },
+        { policyId: id, wallet: parsed.data.wallet },
+      );
     } catch (err) {
       if (err instanceof PolicyDeployError) {
         request.log.error({ err, policyId: id }, "policy instance deploy failed");

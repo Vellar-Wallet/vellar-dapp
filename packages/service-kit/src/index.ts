@@ -39,6 +39,17 @@ export {
 
 export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
 
+export {
+  extractTraceContext,
+  injectTraceContext,
+  withTraceSpan,
+  TraceCollector,
+  type TraceSpan,
+  type TraceContext,
+  type TraceHeaderMap,
+} from "./tracing";
+
+
 export interface HealthOptions {
   /** Optional readiness probe. When it returns false (or throws), /health
    * responds 503 so the orchestrator stops routing traffic — used to surface a

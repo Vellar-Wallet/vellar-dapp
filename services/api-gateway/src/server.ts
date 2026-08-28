@@ -3,7 +3,12 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import proxy from "@fastify/http-proxy";
 import rateLimit from "@fastify/rate-limit";
-import { registerHealth, registerMetrics } from "@vellar/service-kit";
+import {
+  registerHealth,
+  registerMetrics,
+  extractTraceContext,
+  injectTraceContext,
+} from "@vellar/service-kit";
 
 // Gateway (technical-doc.md §6.3, §8; idea.md §12): the single public entry
 // point, so the cross-cutting security controls live HERE (defense at the
@@ -90,6 +95,13 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   app.addHook("onRequest", async (request, reply) => {
     const method = request.method.toUpperCase();
     const isMutation = method === "POST" || method === "PUT" || method === "PATCH";
+
+    // Distributed tracing context propagation (#301)
+    const traceCtx = extractTraceContext(request.headers as Record<string, string | undefined>);
+    const traceHeaders = injectTraceContext(traceCtx);
+    for (const [key, value] of Object.entries(traceHeaders)) {
+      request.headers[key] = value;
+    }
 
     // Body-size cap (413) — reject before the body is streamed upstream.
     const declaredLen = Number(request.headers["content-length"] ?? 0);

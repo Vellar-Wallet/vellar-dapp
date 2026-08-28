@@ -58,6 +58,18 @@ field for search. Durable audit trail (who/what/when for sensitive actions)
 stays in the `activity_logs` Postgres table — logs are for operational search,
 the audit table is the record of truth.
 
+## Distributed Tracing (#301)
+
+End-to-end trace visibility across service boundaries during policy generation and deployment flows is captured using OpenTelemetry-compatible trace spans via `@vellar/service-kit`:
+
+### Trace Propagation Flow
+1. **API Gateway (`api-gateway`)**: Injects or extracts `x-trace-id`, `x-span-id`, and W3C `traceparent` headers on incoming HTTP requests and proxies them to downstream services.
+2. **Policy Service (`policy-service`)**: Extracts trace context from headers and wraps policy generation and deployment operations in `withTraceSpan("policy-service", "policy.deploy-instance", traceCtx)`. Propagates `traceId` with queued verification and deployment jobs.
+3. **Worker Service (`worker-service`)**: Extracts `traceId` from claimed deployment jobs and executes verification in `withTraceSpan("worker-service", "policy.execute", traceCtx)`.
+
+Trace spans are recorded in `TraceCollector` and exportable to OpenTelemetry APM backends (Jaeger, Zipkin, Datadog).
+
+
 ## Recommended alert rules (§13 Alerting)
 
 Wire these in your monitoring system against the metrics above. Thresholds are

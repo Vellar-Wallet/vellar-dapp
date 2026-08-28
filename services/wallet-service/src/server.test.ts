@@ -686,6 +686,90 @@ describe("session capability does NOT drift into general auth (RA-3 scope)", () 
   });
 });
 
+describe("sensitive wallet action audit logging (#313)", () => {
+  const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
+
+  it("records audit log entries with actor, action, and timestamp for all sensitive wallet actions", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    // 1. policy.updated
+    const policyRes = await server.inject({
+      method: "POST",
+      url: "/wallet/policy/update",
+      headers: bearer(createSessionId),
+      payload: { policyId: "pol-123", rules: { maxSpend: "100" } },
+    });
+    expect(policyRes.statusCode).toBe(200);
+
+    // 2. account.merged
+    const mergeRes = await server.inject({
+      method: "POST",
+      url: "/wallet/account/merge",
+      headers: bearer(createSessionId),
+      payload: { destinationContractId: "CDESTINATION" },
+    });
+    expect(mergeRes.statusCode).toBe(200);
+
+    // 3. key.rotated
+    const rotateRes = await server.inject({
+      method: "POST",
+      url: "/wallet/key/rotate",
+      headers: bearer(createSessionId),
+      payload: { oldKeyId: "key-old", newKeyId: "key-new" },
+    });
+    expect(rotateRes.statusCode).toBe(200);
+
+    // 4. threshold.updated
+    const thresholdRes = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 2 },
+    });
+    expect(thresholdRes.statusCode).toBe(200);
+
+    // 5. signer.added & signer.removed
+    const addSignerRes = await server.inject({
+      method: "POST",
+      url: "/wallet/signer/manage",
+      headers: bearer(createSessionId),
+      payload: { action: "add", signerKey: "GNEWKEY", weight: 1 },
+    });
+    expect(addSignerRes.statusCode).toBe(200);
+
+    const removeSignerRes = await server.inject({
+      method: "POST",
+      url: "/wallet/signer/manage",
+      headers: bearer(createSessionId),
+      payload: { action: "remove", signerKey: "GNEWKEY" },
+    });
+    expect(removeSignerRes.statusCode).toBe(200);
+
+    // Verify audit logs
+    const auditLogsRes = await server.inject({
+      url: "/wallet/audit-logs",
+      headers: bearer(createSessionId),
+    });
+    expect(auditLogsRes.statusCode).toBe(200);
+    const logs = auditLogsRes.json().auditLogs;
+
+    const eventTypes = logs.map((l: { type: string }) => l.type);
+    expect(eventTypes).toContain("policy.updated");
+    expect(eventTypes).toContain("account.merged");
+    expect(eventTypes).toContain("key.rotated");
+    expect(eventTypes).toContain("threshold.updated");
+    expect(eventTypes).toContain("signer.added");
+    expect(eventTypes).toContain("signer.removed");
+
+    for (const log of logs) {
+      expect(log.actor).toBe("CCONTRACT");
+      expect(log.at).toBeDefined();
+    }
+  });
+});
+
 describe("GET /health", () => {
   it("responds ok", async () => {
     const server = build(workingSubmitter());
