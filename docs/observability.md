@@ -58,6 +58,20 @@ field for search. Durable audit trail (who/what/when for sensitive actions)
 stays in the `activity_logs` Postgres table — logs are for operational search,
 the audit table is the record of truth.
 
+### Structured events
+
+The following events are emitted via `logEvent()` for operational search and
+analytics:
+
+| Event Name | Emitted By | Trigger | Properties |
+|---|---|---|---|
+| `policy.deployed` | policy-service | Successful policy template deployment (POST /policies/deploy) | `policyId` (string), `templateType` (string, e.g. "spending_limit"), `walletId` (string, Soroban address), `deployedAt` (ISO 8601 timestamp) |
+
+Example log line (JSON):
+```json
+{"level":"info","time":"2026-08-29T10:30:00.000Z","event":"policy.deployed","policyId":"550e8400-e29b-41d4-a716-446655440000","templateType":"spending_limit","walletId":"CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67","deployedAt":"2026-08-29T10:30:00.000Z"}
+```
+
 ## Recommended alert rules (§13 Alerting)
 
 Wire these in your monitoring system against the metrics above. Thresholds are
