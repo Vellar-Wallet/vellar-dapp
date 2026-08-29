@@ -1,4 +1,4 @@
-import { normalizeOrigin } from "@vellar/provider-sdk";
+import { normalizeOrigin } from "@vellar/permission-service";
 
 // L3: the allowlist of web-app origins permitted to `pair` the extension.
 //
