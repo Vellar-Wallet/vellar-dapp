@@ -6,6 +6,7 @@ import { configFromEnv, executorFromConfig } from "./config";
 import { createRpcArtifactResolver } from "./resolver";
 import { createPgJobStore } from "./pg-job-store";
 import { startWorkerLoop, type WorkerMetrics } from "./loop";
+import { runCleanup } from "./cleanup";
 import { createAttestor, type Attestor } from "./attestor";
 import { assertAttestorSafeForNetwork } from "./attestor-guard";
 import { createRegistrySubmitter } from "./registry-submitter";
@@ -154,11 +155,35 @@ const runReaper = async () => {
 const reapTimer = setInterval(runReaper, config.reapIntervalMs);
 void runReaper();
 
+// ETL cleanup (issue #345): archive terminal rows older than the retention
+// threshold and remove them from the live table, preventing unbounded growth.
+// Runs on its own daily interval (configurable). The first pass is intentionally
+// deferred by one full interval so the process is fully started before hitting
+// the DB with a potentially large batch.
+const runCleanupJob = async () => {
+  try {
+    const result = await runCleanup(db, {
+      retentionDays: config.cleanupRetentionDays,
+      batchSize: config.cleanupBatchSize,
+      archiveEnabled: config.cleanupArchiveEnabled,
+    });
+    if (result.deleted > 0) {
+      log.info(
+        `cleanup: archived ${result.archived}, deleted ${result.deleted} stale verification_records (retentionDays=${config.cleanupRetentionDays}, archiveEnabled=${config.cleanupArchiveEnabled})`,
+      );
+    }
+  } catch (err) {
+    log.error("cleanup sweep failed", err);
+  }
+};
+const cleanupTimer = setInterval(runCleanupJob, config.cleanupIntervalMs);
+
 const shutdown = async () => {
   log.info("shutting down…");
   loop.stop();
   if (sweepTimer) clearInterval(sweepTimer);
   clearInterval(reapTimer);
+  clearInterval(cleanupTimer);
   await metricsApp.close();
   await pool.end();
   process.exit(0);

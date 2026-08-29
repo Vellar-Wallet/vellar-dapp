@@ -147,15 +147,102 @@ are env-tunable (see below). **Signed job payloads are intentionally not
 implemented** — there is no untrusted queue between the service and the worker
 (the shared Postgres is the trust boundary); see docs/decisions.md.
 
+## ETL cleanup job (issue #345)
+
+`verification_records` accumulates rows for every submitted contract verification.
+Without a cleanup process the table grows without bound. The worker runs a
+scheduled cleanup job that moves stale **terminal** rows (`verified`, `failed`,
+`dead_letter`) to an archive table and then removes them from the live table,
+keeping the working set small without losing history.
+
+### What "eligible" means
+
+A row is eligible when **both** conditions hold:
+
+1. Its `status` is a terminal value — `verified`, `failed`, or `dead_letter`.
+   Active rows (`submitted`, `building`) are never touched.
+2. Its `updated_at` is older than the retention threshold
+   (`CLEANUP_RETENTION_DAYS`, default **90 days**). `updated_at` is used (not
+   `created_at`) so a row that spent a long time queued and only recently
+   completed gets a full retention window from when it actually finished.
+
+### Schedule
+
+The job runs on a **daily** interval (`CLEANUP_INTERVAL_MS`, default
+`86400000` ms = 24 h), triggered by a `setInterval` in `index.ts` alongside the
+reaper and attestation sweep timers. The first pass is deferred by one full
+interval after process start so startup is not burdened.
+
+### Archive-then-delete (safe default)
+
+By default (`CLEANUP_ARCHIVE_ENABLED` ≠ `"0"`) each eligible row is **copied to
+`verification_records_archive`** before being removed from the live table. The
+archive table has an identical schema plus an `archived_at` timestamp recording
+when the cleanup job moved the row. The INSERT uses `ON CONFLICT DO NOTHING`, so
+re-running the job after an interrupted batch copies nothing twice and always
+completes the delete safely.
+
+Set `CLEANUP_ARCHIVE_ENABLED=0` to hard-delete with no archival. Only do this
+when you have an explicit reason to forgo the audit trail (e.g. a regulatory
+requirement not to retain data).
+
+### Batch processing
+
+Rows are processed in batches of `CLEANUP_BATCH_SIZE` (default **500**) per
+run. A single run never attempts to select or delete an unbounded row set. If
+more rows are eligible than the batch size allows, each subsequent scheduled run
+processes the next batch. For a one-off manual drain (e.g. first deployment),
+use the `runCleanupUntilEmpty` helper or run the process repeatedly.
+
+### Manual trigger / dry-run
+
+There is no HTTP endpoint for the cleanup job — it runs automatically on the
+`setInterval` schedule. To trigger it manually:
+
+```sh
+# Run one cleanup pass immediately (uses the same env as the worker):
+DATABASE_URL=postgres://vela:vela@localhost:5433/vela \
+CLEANUP_RETENTION_DAYS=90 \
+CLEANUP_BATCH_SIZE=500 \
+node --input-type=module <<'EOF'
+import pg from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { runCleanupUntilEmpty } from "./src/cleanup.ts";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle(pool);
+const result = await runCleanupUntilEmpty(db, {
+  retentionDays: Number(process.env.CLEANUP_RETENTION_DAYS ?? 90),
+  batchSize: Number(process.env.CLEANUP_BATCH_SIZE ?? 500),
+  archiveEnabled: process.env.CLEANUP_ARCHIVE_ENABLED !== "0",
+});
+console.log("cleanup complete:", result);
+await pool.end();
+EOF
+```
+
+For a **dry-run** (count only, no changes) add `archiveEnabled: false` and
+comment out the `deleteByIds` call, or simply query the eligible count directly:
+
+```sql
+SELECT count(*)
+FROM verification_records
+WHERE status IN ('verified', 'failed', 'dead_letter')
+  AND updated_at <= now() - interval '90 days';
+```
+
 ## Env
 
-| Var                       | Purpose                                                        | Default |
-| ------------------------- | -------------------------------------------------------------- | ------- |
-| `DATABASE_URL`            | shared verification store (REQUIRED — worker exits without it) | —       |
-| `VERIFY_BUILD_IMAGE`      | toolchain image → real Docker builds; unset → stub             | unset   |
-| `STELLAR_RPC_URL`         | RPC for reading the deployed wasm hash                         | testnet |
-| `VERIFY_POLL_IDLE_MS`     | poll interval when the queue is idle                           | 5000    |
-| `VERIFY_BUILD_TIMEOUT_S`  | kill a build after this many seconds                           | 600     |
-| `VERIFY_BUILD_MEMORY`     | container memory cap (docker `--memory`)                       | 2g      |
-| `VERIFY_BUILD_CPUS`       | container CPU cap (docker `--cpus`)                            | 2       |
-| `VERIFY_BUILD_PIDS_LIMIT` | max processes in the container                                 | 512     |
+| Var                        | Purpose                                                                              | Default      |
+| -------------------------- | ------------------------------------------------------------------------------------ | ------------ |
+| `DATABASE_URL`             | shared verification store (REQUIRED — worker exits without it)                       | —            |
+| `VERIFY_BUILD_IMAGE`       | toolchain image → real Docker builds; unset → stub                                   | unset        |
+| `STELLAR_RPC_URL`          | RPC for reading the deployed wasm hash                                               | testnet      |
+| `VERIFY_POLL_IDLE_MS`      | poll interval when the queue is idle                                                 | 5000         |
+| `VERIFY_BUILD_TIMEOUT_S`   | kill a build after this many seconds                                                 | 600          |
+| `VERIFY_BUILD_MEMORY`      | container memory cap (docker `--memory`)                                             | 2g           |
+| `VERIFY_BUILD_CPUS`        | container CPU cap (docker `--cpus`)                                                  | 2            |
+| `VERIFY_BUILD_PIDS_LIMIT`  | max processes in the container                                                       | 512          |
+| `CLEANUP_RETENTION_DAYS`   | terminal rows older than this (days, from `updated_at`) are eligible for cleanup     | `90`         |
+| `CLEANUP_BATCH_SIZE`       | max rows per cleanup run (keeps transactions small, safe to interrupt)               | `500`        |
+| `CLEANUP_INTERVAL_MS`      | how often the cleanup job runs (ms)                                                  | `86400000` (24 h) |
+| `CLEANUP_ARCHIVE_ENABLED`  | set to `0` to hard-delete without archiving; any other value (or unset) = archive   | enabled      |
