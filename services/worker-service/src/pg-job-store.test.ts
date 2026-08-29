@@ -130,3 +130,196 @@ describe.skipIf(!DATABASE_URL)("createPgJobStore — reaper + queue controls (M7
     expect(await store.hasActiveForContract("C3")).toBe(false);
   });
 });
+
+// ── Import-validation unit tests (issue #346) ───────────────────────────────────
+// These tests do NOT require a real Postgres — they test the validation logic
+// and the logger callback using a fake DB-shape object.
+
+describe("createPgJobStore — import-validation (issue #346)", () => {
+  const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
+  const C2 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+  function validRecord(id: string): VerificationRecordInternal {
+    return {
+      id,
+      contractId: C1,
+      sourceType: "repo",
+      repoUrl: "https://github.com/x/y",
+      commitHash: "abc1234",
+      toolchainVersion: "1.94.0",
+      status: "submitted",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  /**
+   * Fake DB-shaped object that implements just enough of the drizzle interface
+   * for createPgJobStore's claimSubmitted to work. We control the rows returned
+   * to test import-validation behavior in isolation.
+   */
+  function makeFakeDb(rows: Array<{ id: string; record: unknown }>) {
+    return {
+      update: () => ({
+        set: () => ({
+          where: () => ({
+            returning: () =>
+              Promise.resolve(rows),
+          }),
+        }),
+      }),
+    } as unknown as NodePgDatabase;
+  }
+
+  it("accepts a valid record and maps it to ClaimedJob", async () => {
+    const fakeDb = makeFakeDb([{ id: "rec-1", record: validRecord("rec-1") }]);
+    const store = createPgJobStore(fakeDb);
+
+    const claimed = await store.claimSubmitted(10);
+
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0].recordId).toBe("rec-1");
+    expect(claimed[0].contractId).toBe(C1);
+  });
+
+  it("rejects a record with malformed contractId and logs the reason", async () => {
+    const fakeDb = makeFakeDb([
+      {
+        id: "rec-bad",
+        record: { ...validRecord("rec-bad"), contractId: "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM" },
+      },
+    ]);
+
+    let logged = false;
+    let loggedReason = "";
+    const store = createPgJobStore(fakeDb, {
+      log: {
+        warn: (msg: string) => {
+          logged = true;
+          loggedReason = msg;
+        },
+        error: () => {},
+      },
+    });
+
+    const claimed = await store.claimSubmitted(10);
+
+    expect(claimed).toHaveLength(0); // rejected
+    expect(logged).toBe(true);
+    expect(loggedReason).toContain("import-validation");
+    expect(loggedReason).toContain("rec-bad");
+    expect(loggedReason).toContain("contractId");
+  });
+
+  it("rejects missing required fields and logs the reason", async () => {
+    const fakeDb = makeFakeDb([
+      { id: "rec-broken", record: { ...validRecord("rec-broken"), toolchainVersion: "" } },
+    ]);
+
+    let loggedReason = "";
+    const store = createPgJobStore(fakeDb, {
+      log: {
+        warn: (msg: string) => {
+          loggedReason = msg;
+        },
+        error: () => {},
+      },
+    });
+
+    const claimed = await store.claimSubmitted(10);
+
+    expect(claimed).toHaveLength(0);
+    expect(loggedReason).toContain("toolchainVersion");
+  });
+
+  it("processes a mixed batch: valid records are claimed, invalid ones are skipped+logged", async () => {
+    const fakeDb = makeFakeDb([
+      { id: "rec-1", record: validRecord("rec-1") }, // valid
+      {
+        id: "rec-2",
+        record: { ...validRecord("rec-2"), contractId: "INVALID" },
+      }, // bad contract
+      { id: "rec-3", record: validRecord("rec-3") }, // valid
+      {
+        id: "rec-4",
+        record: { ...validRecord("rec-4"), status: "pending" },
+      }, // bad status enum
+    ]);
+
+    let rejections: string[] = [];
+    const store = createPgJobStore(fakeDb, {
+      log: {
+        warn: (msg: string) => {
+          rejections.push(msg);
+        },
+        error: () => {},
+      },
+    });
+
+    const claimed = await store.claimSubmitted(10);
+
+    // Only the two valid records were claimed.
+    expect(claimed).toHaveLength(2);
+    expect(claimed.map((c) => c.recordId)).toEqual(["rec-1", "rec-3"]);
+
+    // Two rejections were logged, one for each invalid record.
+    expect(rejections).toHaveLength(2);
+    expect(rejections[0]).toContain("rec-2");
+    expect(rejections[0]).toContain("contractId");
+    expect(rejections[1]).toContain("rec-4");
+    expect(rejections[1]).toContain("status");
+  });
+
+  it("converts createdAt to submittedAtMs correctly", async () => {
+    const createdAt = "2026-06-15T10:30:00.000Z";
+    const expectedMs = Date.parse(createdAt);
+    const fakeDb = makeFakeDb([
+      { id: "rec-1", record: { ...validRecord("rec-1"), createdAt } },
+    ]);
+
+    const store = createPgJobStore(fakeDb);
+    const claimed = await store.claimSubmitted(1);
+
+    expect(claimed[0].submittedAtMs).toBe(expectedMs);
+  });
+
+  it("handles optional fields correctly when present", async () => {
+    const fakeDb = makeFakeDb([
+      {
+        id: "rec-1",
+        record: {
+          ...validRecord("rec-1"),
+          lockfileHash: "deadbeef",
+          outputHash: "a".repeat(64),
+          deployedHash: "b".repeat(64),
+          buildFlags: ["--release", "--opt-level=z"],
+        },
+      },
+    ]);
+
+    const store = createPgJobStore(fakeDb);
+    const claimed = await store.claimSubmitted(1);
+
+    expect(claimed[0].buildFlags).toEqual(["--release", "--opt-level=z"]);
+  });
+
+  it("skips unknown extra jsonb fields (forward-compatible)", async () => {
+    const fakeDb = makeFakeDb([
+      {
+        id: "rec-1",
+        record: {
+          ...validRecord("rec-1"),
+          _futureField: "ignored",
+          attempts: 1,
+        },
+      },
+    ]);
+
+    const store = createPgJobStore(fakeDb);
+    const claimed = await store.claimSubmitted(1);
+
+    // Should succeed — unknown fields don't cause rejection.
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0].recordId).toBe("rec-1");
+  });
+});
