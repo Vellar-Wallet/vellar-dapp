@@ -9,6 +9,82 @@ build inputs. It shares only the `verification_records` Postgres table with
 compares the rebuilt wasm hash to the **on-chain** deployed hash, and writes
 `verified` / `failed`.
 
+## Import validation (issue #346)
+
+Every record claimed from the shared `verification_records` table is validated
+before it reaches the build pipeline. This guards against:
+
+- **Malformed rows** written by a bad migration, external tooling, or any future
+  ingestion path that bypassed the HTTP-layer Zod checks
+- **Data corruption** from the database layer
+- **Incomplete rows** missing required fields (contractId, toolchainVersion, etc.)
+- **Wrong-type values** in the jsonb (e.g. a number where a string is expected)
+- **Invalid contract addresses** (must be a Soroban `C…` address, not a classic
+  G-address or any other format)
+- **Malformed timestamps** or timestamp invariants (updatedAt must be ≥ createdAt)
+- **Cross-field logic errors** (e.g. sourceType="repo" but repoUrl is missing)
+
+When a record fails validation, the worker:
+
+1. **Does NOT persist it** — it is not mapped to a `ClaimedJob` or handed to the
+   build executor
+2. **Logs the rejection** with a clear, field-specific reason via `log.warn()`,
+   e.g.:
+   ```
+   import-validation: rejected claimed record id=rec-bad — contractId: must be a deployed Soroban contract address (C…); toolchainVersion: must be a non-empty string
+   ```
+3. **Leaves the row in 'building' state** in the database — the M7 reaper will
+   reclaim or dead-letter it after the timeout, giving operators a window to
+   inspect and fix the malformed row
+
+Valid records in the same batch continue processing normally — one bad record
+does not fail the entire claim.
+
+### Validation schema
+
+All validation rules are defined in `src/import-validation.ts` using Zod ^4.0.0
+(the same version used in `verification-service`). The rules cover:
+
+| Field | Required | Type | Rules |
+|---|---|---|---|
+| `id` | ✅ | string | non-empty |
+| `contractId` | ✅ | string | matches `/^C[A-Z2-7]{55}$/` (Soroban C… address) |
+| `sourceType` | ✅ | string | must be `"repo"` or `"upload"` |
+| `repoUrl` | ❌ | string | required if sourceType="repo", must be a valid URL |
+| `commitHash` | ❌ | string | required if sourceType="repo", matches `/^[0-9a-fA-F]{7,40}$/` (git sha) |
+| `sourceArchiveRef` | ❌ | string | required if sourceType="upload", non-empty |
+| `toolchainVersion` | ✅ | string | non-empty |
+| `buildFlags` | ❌ | array | each element is a string |
+| `lockfileHash` | ❌ | string | non-empty if present |
+| `outputHash` | ❌ | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256) |
+| `deployedHash` | ❌ | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256) |
+| `status` | ✅ | string | one of: `"unverified"`, `"submitted"`, `"building"`, `"verified"`, `"failed"`, `"dead_letter"` |
+| `createdAt` | ✅ | string | valid ISO 8601 timestamp |
+| `updatedAt` | ✅ | string | valid ISO 8601 timestamp, must be ≥ createdAt |
+| `log` | ❌ | string | optional; the build log appears only on terminal records |
+| `statusDetail` | ❌ | string | optional; public sanitized detail appears only on terminal records |
+
+Unknown extra fields in the jsonb are silently ignored (forward-compatible with
+future schema extensions).
+
+### Finding rejected records in logs
+
+Rejected records are logged as warnings. Search your logs (e.g. Datadog,
+CloudWatch, or local `docker compose logs`) for:
+
+```
+import-validation: rejected claimed record id=
+```
+
+The message includes the record ID and a semicolon-delimited list of every
+failing field and why, so you can identify and fix the malformed row:
+
+```
+import-validation: rejected claimed record id=abc-123 — contractId: must be a deployed Soroban contract address (C…); toolchainVersion: must be a non-empty string
+```
+
+Once fixed, the row will be reclaimed and processed normally on the next poll.
+
 ## Two build modes (the 1A seam — see docs/decisions.md)
 
 The build step is a pluggable `BuildExecutor`, chosen at startup from env:
