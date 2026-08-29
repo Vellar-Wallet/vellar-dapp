@@ -128,6 +128,64 @@ fn duplicate_add_rejected() {
     assert_contract_err(result, RegistryError::AlreadyVerified);
 }
 
+// ----- is_verified read-only -----
+
+#[test]
+fn is_verified_known_hash_returns_true() {
+    let fx = setup();
+    let h = make_hash(&fx.env, 0xa0);
+    fx.registry.add(&h);
+    assert!(fx.registry.is_verified(&h));
+}
+
+#[test]
+fn is_verified_unknown_hash_returns_false() {
+    let fx = setup();
+    let h = make_hash(&fx.env, 0xb0);
+    assert!(!fx.registry.is_verified(&h));
+}
+
+#[test]
+fn is_verified_after_revoke_returns_false() {
+    let fx = setup();
+    let h = make_hash(&fx.env, 0xc0);
+    fx.registry.add(&h);
+    assert!(fx.registry.is_verified(&h));
+
+    fx.registry.remove(&h);
+    assert!(!fx.registry.is_verified(&h));
+}
+
+// ----- get_entry read-only -----
+
+#[test]
+fn get_entry_returns_entry_for_verified_hash() {
+    let fx = setup();
+    let h = make_hash(&fx.env, 0xd0);
+    fx.registry.add(&h);
+
+    let entry = fx.registry.get_entry(&h);
+    assert!(entry.is_some());
+    let entry = entry.unwrap();
+    assert_eq!(entry.attested_by, fx._admin);
+}
+
+#[test]
+fn get_entry_returns_none_for_unknown_hash() {
+    let fx = setup();
+    let h = make_hash(&fx.env, 0xd1);
+    assert!(fx.registry.get_entry(&h).is_none());
+}
+
+#[test]
+fn get_entry_returns_none_after_removal() {
+    let fx = setup();
+    let h = make_hash(&fx.env, 0xd2);
+    fx.registry.add(&h);
+    fx.registry.remove(&h);
+    assert!(fx.registry.get_entry(&h).is_none());
+}
+
 // ----- Remove unknown entry rejected -----
 
 #[test]
