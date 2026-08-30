@@ -10,7 +10,14 @@
 #   smart-account/*     — reserved (we use passkey-kit's deployed wallet wasm)
 [workspace]
 resolver = "2"
-members = ["policy-templates/spending-limit", "policy-templates/token-spending-limit"]
+members = [
+    "policy-templates/spending-limit",
+    "policy-templates/token-spending-limit",
+    "policy-templates/recipient-list",
+    "policy-templates/recipient-history",
+    "policy-templates/rule-composer",
+    "policy-templates/passkey-escalation",
+]
 
 [workspace.package]
 version = "0.1.0"
