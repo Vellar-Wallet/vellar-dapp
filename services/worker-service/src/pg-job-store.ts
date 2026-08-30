@@ -4,6 +4,7 @@ import { verificationRecords } from "@vellar/verification-service/db-schema";
 import type { VerificationRecordInternal } from "@vellar/verification-service/server";
 import { calculateBackoffDelay } from "./backoff";
 import type { ClaimedJob, ReapResult, VerificationJobStore } from "./job-store";
+import { validateImportedRecord, toClaimedJob } from "./import-validation";
 
 // Postgres-backed job store, sharing the verification_records table (and its
 // schema) with verification-service — the row IS the job. Claiming is atomic:
@@ -12,7 +13,20 @@ import type { ClaimedJob, ReapResult, VerificationJobStore } from "./job-store";
 // row-level lock the UPDATE takes serializes concurrent claims). This is the
 // retryable, horizontally-scalable pipeline idea.md §13 calls for.
 
-export function createPgJobStore(db: NodePgDatabase): VerificationJobStore {
+export interface PgJobStoreOptions {
+  /** Injectable logger — defaults to console.  Used to report import-validation
+   * rejections (issue #346) so operators can track and fix malformed rows. */
+  log?: {
+    warn: (msg: string) => void;
+    error: (msg: string, err?: unknown) => void;
+  };
+}
+
+export function createPgJobStore(db: NodePgDatabase, options: PgJobStoreOptions = {}): VerificationJobStore {
+  const log = options.log ?? {
+    warn:  (msg: string)            => console.warn(`[worker-service] ${msg}`),
+    error: (msg: string, err?: unknown) => console.error(`[worker-service] ${msg}`, err ?? ""),
+  };
   return {
     async claimSubmitted(limit) {
       // Select-and-claim in one statement. FOR UPDATE SKIP LOCKED lets multiple
@@ -37,21 +51,31 @@ export function createPgJobStore(db: NodePgDatabase): VerificationJobStore {
         .where(inArray(verificationRecords.id, claimIds))
         .returning({ id: verificationRecords.id, record: verificationRecords.record });
 
-      return rows.map((row): ClaimedJob => {
-        const r = row.record as VerificationRecordInternal;
+      const claimed: ClaimedJob[] = [];
+      for (const row of rows) {
+        // Issue #346: validate the raw jsonb before handing it to the pipeline.
+        // A malformed row (bad migration, external tool, or any ingestion path
+        // that bypassed the HTTP-layer schema check) must be rejected here — not
+        // passed to runVerification where errors would be opaque build failures
+        // or silent wrong-hash comparisons.
+        const validation = validateImportedRecord(row.record);
+        if (!validation.ok) {
+          // The row is already flipped to "building" by the UPDATE above.  We
+          // leave it there intentionally: the reaper will reclaim it after the
+          // timeout, giving an operator a window to inspect and fix the row
+          // before it is retried or dead-lettered.  This is consistent with how
+          // the loop handles truly unexpected runtime errors (loop.ts).
+          log.warn(
+            `import-validation: rejected claimed record id=${row.id} — ${validation.reason}`,
+          );
+          continue;
+        }
+
+        const r = validation.record;
         const submittedAtMs = Date.parse(r.createdAt);
-        return {
-          recordId: r.id,
-          contractId: r.contractId,
-          sourceType: r.sourceType,
-          repoUrl: r.repoUrl,
-          commitHash: r.commitHash,
-          sourceArchiveRef: r.sourceArchiveRef,
-          toolchainVersion: r.toolchainVersion,
-          buildFlags: r.buildFlags,
-          submittedAtMs: Number.isFinite(submittedAtMs) ? submittedAtMs : undefined,
-        };
-      });
+        claimed.push(toClaimedJob(r, Number.isFinite(submittedAtMs) ? submittedAtMs : undefined));
+      }
+      return claimed;
     },
 
     async complete(recordId, result) {

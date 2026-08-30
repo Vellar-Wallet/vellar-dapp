@@ -395,6 +395,15 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
       deployedAt: now().toISOString(),
     };
     await policies.update(record);
+    
+    // Issue #347: emit analytics event for successful policy template deployment
+    logEvent(request.log, "policy.deployed", {
+      policyId: record.id,
+      templateType: record.definition.type,
+      walletId: record.instance?.wallet,
+      deployedAt: record.deployment.deployedAt,
+    });
+    
     return reply.send({ policy: record });
   });
 

@@ -23,7 +23,8 @@
     "@vellar/types": "workspace:*",
     "@vellar/verification-service": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "zod": "^4.0.0"
   },
   "exports": {
     ".": "./src/index.ts"
