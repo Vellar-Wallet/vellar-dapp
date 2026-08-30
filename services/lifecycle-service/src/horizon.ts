@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { retryWithBackoff } from "@vellar/service-kit";
 
 // Horizon account reader seam (technical-doc.md §6.3 Lifecycle Service:
 // account inspection). Classic (G...) accounts only — cleanup/merge is a
@@ -50,6 +51,14 @@ export interface HorizonReaderOptions {
   /** Safety cap on offer pages followed, so a misbehaving `next` can't loop
    * forever (200 offers/page ⇒ 50 pages = 10k offers, far past any real account). */
   maxOfferPages?: number;
+  /** Retry options for transient Horizon failures (5xx, network errors).
+   * 404s and validation errors are never retried. Defaults: 3 attempts,
+   * 200 ms base delay, 5 s ceiling. Pass `{ maxAttempts: 1 }` to disable. */
+  retryOptions?: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+  };
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -98,19 +107,42 @@ export function createHorizonAccountReader(
   const doFetch = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxOfferPages = options.maxOfferPages ?? DEFAULT_MAX_OFFER_PAGES;
+  const retryOpts = {
+    maxAttempts: options.retryOptions?.maxAttempts ?? 3,
+    baseDelayMs: options.retryOptions?.baseDelayMs ?? 200,
+    maxDelayMs: options.retryOptions?.maxDelayMs ?? 5_000,
+  };
 
-  /** Fetch JSON with a timeout; caller validates the shape. */
+  /** Fetch JSON with a timeout; caller validates the shape.
+   * 5xx responses and network errors are retried with exponential back-off.
+   * 404s are returned immediately (the account does not exist — not transient). */
   async function fetchJson(url: string, label: string): Promise<{ status: number; body: unknown }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await doFetch(url, { signal: controller.signal });
-      if (res.status === 404) return { status: 404, body: undefined };
-      if (!res.ok) throw new Error(`Horizon ${label} failed (${res.status})`);
-      return { status: res.status, body: await res.json() };
-    } finally {
-      clearTimeout(timer);
-    }
+    return retryWithBackoff(
+      async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await doFetch(url, { signal: controller.signal });
+          if (res.status === 404) return { status: 404, body: undefined };
+          if (!res.ok) throw new Error(`Horizon ${label} failed (${res.status})`);
+          return { status: res.status, body: await res.json() };
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+      {
+        ...retryOpts,
+        // 404 responses never come back as errors — they're returned as a
+        // { status: 404 } value, so isRetryable only sees genuine throw-paths
+        // (non-ok status, network error, abort). Non-retriable: 400-level
+        // responses that signal a permanent client mistake. Retry everything
+        // else (5xx, AbortError / network error).
+        isRetryable: (err) => {
+          if (err instanceof Error && err.name === "AbortError") return false;
+          return true;
+        },
+      },
+    );
   }
 
   async function fetchAllOffers(accountId: string): Promise<HorizonOffer[]> {

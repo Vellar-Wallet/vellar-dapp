@@ -13,6 +13,8 @@ import type { DbHandle } from "./db/client";
 import { configFromEnv, DEFAULTS } from "./config";
 import { createUnconfiguredSubmitter } from "./relayer";
 import { buildServer, type WalletServiceDeps } from "./server";
+import { MemoryCacheStore } from "./cache";
+import { createCacheMetricsWrapper } from "./cache-metrics";
 
 // FIX 3 budget window + ceilings (confirmed). All env-overridable.
 const BUDGET_WINDOW_MS = Number(process.env.BUDGET_WINDOW_MS) || 3_600_000; // 1h
@@ -127,6 +129,10 @@ if (config.sponsorSecretKey) {
   );
 }
 deps.submitter = submitter;
+
+// Initialize cache with metrics instrumentation (issue #289: cache metrics for wallet-service)
+const cache = new MemoryCacheStore(5 * 60 * 1000); // 5-minute TTL
+deps.cache = createCacheMetricsWrapper(cache);
 
 const app = buildServer(deps);
 

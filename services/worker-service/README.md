@@ -199,6 +199,42 @@ the verifier hashes the optimized bytes; re-optimizing on upload would change th
 hash. Our spending-limit contract verifies byte-for-byte this way
 (`0f6b858d…`, tx `6f83e098…`).
 
+## RPC timeout and fallback (issue #330)
+
+Resolving the deployed wasm hash reads from the configured Soroban RPC
+endpoint (`STELLAR_RPC_URL`) via `getContractData` — a third-party dependency
+outside this service's control. That call is bounded by `VERIFY_RPC_TIMEOUT_MS`
+(default 10s); previously it had **no timeout at all**, so a hung RPC endpoint
+could stall a worker job indefinitely.
+
+A timeout is treated as **transient, not a verdict**: it does NOT produce a
+terminal `failed` outcome (a contract that is perfectly valid must never be
+permanently marked unverifiable just because one RPC call was slow). Instead
+the job is left in `building` and picked up again on the worker's normal
+retry path (`VERIFY_MAX_ATTEMPTS`, same reclaim/backoff/dead-letter mechanism
+an unexpected error already uses) — see `runWorkerTick` in `src/loop.ts`.
+
+This is deliberately different from a genuine RPC error (`rpc_error`, e.g. a
+malformed response) or a real not-found (`not_found`) — both of those DO
+still return a terminal `failed` outcome, since retrying them would not
+change the answer.
+
+## Reaper jitter (issue #331)
+
+The reaper (M7, above — reclaims stranded `building` rows) previously ran on
+a fixed `setInterval(runReaper, reapIntervalMs)`. In a horizontally-scaled
+deploy, every replica boots within the same short window (most obviously
+right after a rolling deploy) and would then sweep at the same wall-clock
+moments forever after — a routine reclaim query turning into a synchronized
+spike against Postgres on every tick.
+
+The reaper now reschedules itself with `setTimeout` after each run, drawing a
+fresh randomized delay via `jitteredDelayMs(reapIntervalMs, reapJitterMs)`
+(`src/jitter.ts`) each time — `reapJitterMs` is an ABSOLUTE ± bound (not a
+percentage), default 30s against the 5-min default interval. Set
+`VERIFY_REAP_JITTER_MS=0` to disable jitter and restore the old fixed-interval
+behavior exactly.
+
 ## Honest limitations (Phase 7 hardening)
 
 - **Third-party contracts** are verifiable only when the author built with a
@@ -223,102 +259,58 @@ are env-tunable (see below). **Signed job payloads are intentionally not
 implemented** — there is no untrusted queue between the service and the worker
 (the shared Postgres is the trust boundary); see docs/decisions.md.
 
-## ETL cleanup job (issue #345)
+## Consumer group topology (issue #354)
 
-`verification_records` accumulates rows for every submitted contract verification.
-Without a cleanup process the table grows without bound. The worker runs a
-scheduled cleanup job that moves stale **terminal** rows (`verified`, `failed`,
-`dead_letter`) to an archive table and then removes them from the live table,
-keeping the working set small without losing history.
+The worker-service now uses **domain-specific consumer groups** for queue processing.
+Each consumer group:
 
-### What "eligible" means
+- Has its own dedicated job store, so groups never compete for the same queue
+- Scales independently via configurable concurrency
+- Runs in isolated worker loops with independent polling
+- Shares common execution machinery (Executor, Resolver)
 
-A row is eligible when **both** conditions hold:
+### Current groups
 
-1. Its `status` is a terminal value — `verified`, `failed`, or `dead_letter`.
-   Active rows (`submitted`, `building`) are never touched.
-2. Its `updated_at` is older than the retention threshold
-   (`CLEANUP_RETENTION_DAYS`, default **90 days**). `updated_at` is used (not
-   `created_at`) so a row that spent a long time queued and only recently
-   completed gets a full retention window from when it actually finished.
+**Verification group** (`verification`):
+- Processes contract verification jobs from the `verification_records` table
+- Handles artifact download, WASM verification, attestation submission
+- Concurrency controlled by `WORKER_CONCURRENCY` (default: 1)
+- Each worker instance polls and claims its own batch
 
-### Schedule
+### Scaling a consumer group
 
-The job runs on a **daily** interval (`CLEANUP_INTERVAL_MS`, default
-`86400000` ms = 24 h), triggered by a `setInterval` in `index.ts` alongside the
-reaper and attestation sweep timers. The first pass is deferred by one full
-interval after process start so startup is not burdened.
-
-### Archive-then-delete (safe default)
-
-By default (`CLEANUP_ARCHIVE_ENABLED` ≠ `"0"`) each eligible row is **copied to
-`verification_records_archive`** before being removed from the live table. The
-archive table has an identical schema plus an `archived_at` timestamp recording
-when the cleanup job moved the row. The INSERT uses `ON CONFLICT DO NOTHING`, so
-re-running the job after an interrupted batch copies nothing twice and always
-completes the delete safely.
-
-Set `CLEANUP_ARCHIVE_ENABLED=0` to hard-delete with no archival. Only do this
-when you have an explicit reason to forgo the audit trail (e.g. a regulatory
-requirement not to retain data).
-
-### Batch processing
-
-Rows are processed in batches of `CLEANUP_BATCH_SIZE` (default **500**) per
-run. A single run never attempts to select or delete an unbounded row set. If
-more rows are eligible than the batch size allows, each subsequent scheduled run
-processes the next batch. For a one-off manual drain (e.g. first deployment),
-use the `runCleanupUntilEmpty` helper or run the process repeatedly.
-
-### Manual trigger / dry-run
-
-There is no HTTP endpoint for the cleanup job — it runs automatically on the
-`setInterval` schedule. To trigger it manually:
+To run more parallel verification workers, increase concurrency:
 
 ```sh
-# Run one cleanup pass immediately (uses the same env as the worker):
-DATABASE_URL=postgres://vela:vela@localhost:5433/vela \
-CLEANUP_RETENTION_DAYS=90 \
-CLEANUP_BATCH_SIZE=500 \
-node --input-type=module <<'EOF'
-import pg from "pg";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { runCleanupUntilEmpty } from "./src/cleanup.ts";
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-const db = drizzle(pool);
-const result = await runCleanupUntilEmpty(db, {
-  retentionDays: Number(process.env.CLEANUP_RETENTION_DAYS ?? 90),
-  batchSize: Number(process.env.CLEANUP_BATCH_SIZE ?? 500),
-  archiveEnabled: process.env.CLEANUP_ARCHIVE_ENABLED !== "0",
-});
-console.log("cleanup complete:", result);
-await pool.end();
-EOF
+WORKER_CONCURRENCY=4 pnpm --filter @vellar/worker-service start
 ```
 
-For a **dry-run** (count only, no changes) add `archiveEnabled: false` and
-comment out the `deleteByIds` call, or simply query the eligible count directly:
+This spawns 4 independent worker loops, each claiming and processing verification
+jobs concurrently. With a batch size of N, total throughput = concurrency × N.
 
-```sql
-SELECT count(*)
-FROM verification_records
-WHERE status IN ('verified', 'failed', 'dead_letter')
-  AND updated_at <= now() - interval '90 days';
-```
+### Adding new consumer groups
+
+Future domains (e.g., transaction processing) can be added by:
+
+1. Defining a new store interface (e.g., `TransactionJobStore`)
+2. Adding a factory function in `consumer-groups.ts` (e.g., `createTransactionGroup`)
+3. Starting the group in `index.ts` with its own store and concurrency settings
+
+The architecture ensures groups remain isolated — a verification worker will never
+process transaction jobs and vice versa.
 
 ## Env
 
-| Var                        | Purpose                                                                              | Default      |
-| -------------------------- | ------------------------------------------------------------------------------------ | ------------ |
-| `DATABASE_URL`             | shared verification store (REQUIRED — worker exits without it)                       | —            |
-| `VERIFY_BUILD_IMAGE`       | toolchain image → real Docker builds; unset → stub                                   | unset        |
-| `STELLAR_RPC_URL`          | RPC for reading the deployed wasm hash                                               | testnet      |
-| `VERIFY_POLL_IDLE_MS`      | poll interval when the queue is idle                                                 | 5000         |
-| `VERIFY_BUILD_TIMEOUT_S`   | kill a build after this many seconds                                                 | 600          |
-| `VERIFY_BUILD_MEMORY`      | container memory cap (docker `--memory`)                                             | 2g           |
-| `VERIFY_BUILD_CPUS`        | container CPU cap (docker `--cpus`)                                                  | 2            |
-| `VERIFY_BUILD_PIDS_LIMIT`  | max processes in the container                                                       | 512          |
-| `CLEANUP_RETENTION_DAYS`   | terminal rows older than this (days, from `updated_at`) are eligible for cleanup     | `90`         |
-| `CLEANUP_BATCH_SIZE`       | max rows per cleanup run (keeps transactions small, safe to interrupt)               | `500`        |
-| `CLEANUP_INTERVAL_MS`      | how often the cleanup job runs (ms)                                                  | `86400000` (24 h) |
-| `CLEANUP_ARCHIVE_ENABLED`  | set to `0` to hard-delete without archiving; any other value (or unset) = archive   | enabled      |
+| Var                       | Purpose                                                        | Default |
+| ------------------------- | -------------------------------------------------------------- | ------- |
+| `DATABASE_URL`            | shared verification store (REQUIRED — worker exits without it) | —       |
+| `VERIFY_BUILD_IMAGE`      | toolchain image → real Docker builds; unset → stub             | unset   |
+| `STELLAR_RPC_URL`         | RPC for reading the deployed wasm hash                         | testnet |
+| `VERIFY_RPC_TIMEOUT_MS`   | cap on the RPC round-trip; a timeout is retried, not failed     | 10000   |
+| `VERIFY_POLL_IDLE_MS`     | poll interval when the queue is idle                           | 5000    |
+| `VERIFY_BUILD_TIMEOUT_S`  | kill a build after this many seconds                           | 600     |
+| `VERIFY_BUILD_MEMORY`     | container memory cap (docker `--memory`)                       | 2g      |
+| `VERIFY_BUILD_CPUS`       | container CPU cap (docker `--cpus`)                            | 2       |
+| `VERIFY_BUILD_PIDS_LIMIT` | max processes in the container                                 | 512     |
+| `WORKER_CONCURRENCY`      | parallel worker loops in the verification consumer group       | 1       |
+| `VERIFY_REAP_JITTER_MS`   | ± randomized jitter on the reaper interval (0 disables it)     | 30000   |

@@ -6,7 +6,7 @@ import {
   TransactionBuilder,
   type xdr,
 } from "@stellar/stellar-sdk";
-import type { SpendBudget, BudgetNetwork } from "@vellar/service-kit";
+import { retryWithBackoff, type SpendBudget, type BudgetNetwork } from "@vellar/service-kit";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 
 // Direct-RPC fee sponsorship (docs/decisions.md 2026-07-16 P27-V2 finding):
@@ -155,17 +155,42 @@ export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmit
         );
       }
 
-      const deadline = Date.now() + 60_000;
-      for (;;) {
-        const status = await server.getTransaction(sent.hash);
-        if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) return { hash: sent.hash };
-        if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
-          throw new SubmissionError(`Transaction failed on-chain: ${sent.hash}`, "tx_failed");
-        }
-        if (Date.now() > deadline) {
-          throw new SubmissionError(`Transaction still pending: ${sent.hash}`, "tx_timeout");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Poll for confirmation with exponential back-off + jitter. The first
+      // check fires after ~200 ms; subsequent ones after ~400 ms, ~800 ms …
+      // capped at 2 s. The 60-second AbortSignal deadline replaces the old
+      // manual `deadline = Date.now() + 60_000` check. Using retryWithBackoff
+      // (service-kit) keeps the timing consistent with other services.
+      const signal = AbortSignal.timeout(60_000);
+      try {
+        await retryWithBackoff(
+          async () => {
+            const status = await server.getTransaction(sent.hash);
+            if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) return;
+            if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
+              throw Object.assign(
+                new SubmissionError(`Transaction failed on-chain: ${sent.hash}`, "tx_failed"),
+                { retryable: false },
+              );
+            }
+            // PENDING / NOT_FOUND — transient, keep polling.
+            throw Object.assign(new Error("tx_pending"), { retryable: true });
+          },
+          {
+            maxAttempts: 20,
+            baseDelayMs: 200,
+            maxDelayMs: 2_000,
+            signal,
+            isRetryable: (err) => {
+              if (err instanceof SubmissionError) return false;
+              return true;
+            },
+          },
+        );
+        return { hash: sent.hash };
+      } catch (err) {
+        if (err instanceof SubmissionError) throw err;
+        // MaxRetriesExceededError / AbortError → deadline exceeded.
+        throw new SubmissionError(`Transaction still pending: ${sent.hash}`, "tx_timeout");
       }
     },
   };

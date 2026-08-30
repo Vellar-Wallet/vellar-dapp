@@ -1,0 +1,14 @@
+{
+  "name": "cleanup-plan-steps",
+  "version": "1.0.0",
+  "description": "Mock route module for cleanup plans with blocker resolution steps",
+  "private": true,
+  "scripts": {
+    "test": "node --loader tsx ./test.ts",
+    "test:check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.9.2"
+  }
+}

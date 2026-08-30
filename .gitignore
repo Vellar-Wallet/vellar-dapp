@@ -53,6 +53,7 @@ landing-page.md
 landing-page/
 .vercel
 .env*
+!.env.staging.example
 
 # Throwaway x402 validation spike (references live testnet + linked SDK; not product code)
 scripts/x402-spike/

@@ -67,11 +67,14 @@ cleanup transaction is shown before signing.
 
 ## Backend hardening
 
-CORS is locked to the configured web-app origin. Critical actions
-(wallet.created, wallet.connected, tx.submitted, session.revoked) are recorded
-to an audit log. Rate limiting, CSRF, replay protection, and a formal security
-review — including the smart-contract audit checklist — are tracked hardening
-work before any production/mainnet use.
+- **CORS**: Locked to the configured web-app origin.
+- **Audit Logging**: Critical actions (`wallet.created`, `wallet.connected`, `tx.submitted`, `session.revoked`, `worker.job_enqueued`) are recorded to an audit log with correlation IDs.
+- **CSRF Protection (technical-doc.md cross-reference / Issue #311)**:
+  - All state-changing admin routes on `policy-service` (`/admin/policies/*` and mutating routes when `enableCsrf` is set) enforce anti-CSRF token verification.
+  - **Token Scheme**: Time-bounded HMAC-SHA256 tokens (`<nonce>.<timestampMs>.<signature>`) issued via `GET /admin/csrf-token`.
+  - **Verification**: Mutating requests (`POST`, `PUT`, `PATCH`, `DELETE`) must supply `x-csrf-token`. The server verifies signature integrity using constant-time comparison (`crypto.timingSafeEqual`) and checks expiration against a configurable TTL.
+  - **Rejection**: Requests missing the header or carrying invalid/expired tokens are rejected with HTTP 403 Forbidden (`csrf_token_missing` or `csrf_token_invalid`).
+  - Read-only endpoints (`GET`, `HEAD`, `OPTIONS`) remain unblocked to allow seamless discovery and safe queries.
 
 ## Current limitations (be honest)
 
@@ -79,4 +82,3 @@ work before any production/mainnet use.
   mainnet.
 - Server-side permission records are not yet mirrored (the extension-local store
   is authoritative today).
-- Full rate-limiting / CSRF / replay protection is pending the hardening phase.

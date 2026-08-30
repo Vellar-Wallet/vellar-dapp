@@ -3,10 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetMetricsForTest,
   domainMetrics,
+  lintMetricNames,
   logEvent,
+  metricsRegistry,
   recordOutcome,
   registerHealth,
   registerMetrics,
+  validateMetricName,
 } from "./index";
 
 beforeEach(() => __resetMetricsForTest());
@@ -83,8 +86,8 @@ describe("domain metrics", () => {
       12.5,
     );
     const res = await app.inject({ method: "GET", url: "/metrics" });
-    expect(res.body).toContain("vela_verification_turnaround_seconds_bucket");
-    expect(res.body).toMatch(/vela_verification_turnaround_seconds_sum\{[^}]*\}\s+12\.5/);
+    expect(res.body).toContain("vela_worker_verification_turnaround_seconds_bucket");
+    expect(res.body).toMatch(/vela_worker_verification_turnaround_seconds_sum\{[^}]*\}\s+12\.5/);
     await app.close();
   });
 
@@ -94,6 +97,42 @@ describe("domain metrics", () => {
     const res = await app.inject({ method: "GET", url: "/metrics" });
     expect(res.body).toMatch(/vela_rpc_errors_total\{[^}]*upstream="relayer"[^}]*\}\s+1/);
     await app.close();
+  });
+
+  it("worker queue depth and processing lag gauges track backpressure state", async () => {
+    const app = await appWithMetrics();
+    domainMetrics.workerQueueDepth.set({ service: "worker-service" }, 42);
+    domainMetrics.workerProcessingLagSeconds.set({ service: "worker-service" }, 3.5);
+
+    const res = await app.inject({ method: "GET", url: "/metrics" });
+    expect(res.body).toMatch(/vela_worker_queue_depth\{[^}]*service="worker-service"[^}]*\}\s+42/);
+    expect(res.body).toMatch(
+      /vela_worker_processing_lag_seconds\{[^}]*service="worker-service"[^}]*\}\s+3\.5/,
+    );
+    await app.close();
+  });
+});
+
+describe("metrics naming convention (Issue #300)", () => {
+  it("validates metric names following vela_<subsystem>_<name>_<unit_or_type>", () => {
+    expect(validateMetricName("vela_wallet_created_total").valid).toBe(true);
+    expect(validateMetricName("vela_http_request_duration_seconds").valid).toBe(true);
+    expect(validateMetricName("vela_worker_queue_depth").valid).toBe(true);
+    expect(validateMetricName("vela_policy_poison_messages_total").valid).toBe(true);
+    expect(validateMetricName("vela_worker_processing_lag_seconds").valid).toBe(true);
+
+    // Invalid prefix
+    expect(validateMetricName("custom_metric_total").valid).toBe(false);
+    // Invalid suffix
+    expect(validateMetricName("vela_wallet_count_unknown").valid).toBe(false);
+    // Missing name or subsystem
+    expect(validateMetricName("vela_total").valid).toBe(false);
+  });
+
+  it("lintMetricNames verifies all registered application metrics pass the convention", () => {
+    const { valid, violations } = lintMetricNames(metricsRegistry());
+    expect(violations).toEqual([]);
+    expect(valid).toBe(true);
   });
 });
 

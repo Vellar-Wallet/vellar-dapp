@@ -1,0 +1,14 @@
+{
+  "name": "wallet-reconnect",
+  "version": "1.0.0",
+  "description": "Mock route module for wallet reconnection with key ID lookup",
+  "private": true,
+  "scripts": {
+    "test": "node --loader tsx ./test.ts",
+    "test:check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.9.2"
+  }
+}
