@@ -6,13 +6,16 @@ import { AppShell } from "@/components/app-shell";
 import { getWalletRuntime } from "@/lib/connector-factory";
 import { useWalletSession } from "@/lib/wallet-context";
 import {
+  checkEscalation,
   deployPolicy,
   enforcementLabel,
+  ENFORCEMENT_DESCRIPTIONS,
   generatePolicy,
   listTemplates,
   simulatePolicyDeploy,
   stroopsToXlm,
   validatePolicy,
+  type EscalationReason,
   type GeneratedPolicy,
   type PolicyTemplateInfo,
 } from "@/lib/policy";
@@ -164,6 +167,9 @@ function ConfigureForm({
   const [dailyXlm, setDailyXlm] = useState("");
   const [perTxXlm, setPerTxXlm] = useState("");
   const [allowlist, setAllowlist] = useState("");
+  const [perTxCapXlm, setPerTxCapXlm] = useState("");
+  const [allowedRecipients, setAllowedRecipients] = useState("");
+  const [deniedRecipients, setDeniedRecipients] = useState("");
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -195,6 +201,29 @@ function ConfigureForm({
           type: "contract_allowlist",
           owners: [owner],
           allowlistedContracts: allowlist.split(/[\s,]+/).filter(Boolean),
+        };
+      case "per_tx_cap":
+        return {
+          version: "1",
+          type: "per_tx_cap",
+          owners: [owner],
+          perTxCapXlm,
+        };
+      case "recipient_allowlist":
+        return {
+          version: "1",
+          type: "recipient_allowlist",
+          owners: [owner],
+          allowedRecipients: allowedRecipients.split(/[\s,]+/).filter(Boolean),
+          ...(deniedRecipients
+            ? { deniedRecipients: deniedRecipients.split(/[\s,]+/).filter(Boolean) }
+            : {}),
+        };
+      case "never_sent_before":
+        return {
+          version: "1",
+          type: "never_sent_before",
+          owners: [owner],
         };
       default:
         return { version: "1", type: template.type, owners: [owner] };
@@ -286,6 +315,48 @@ function ConfigureForm({
         </label>
       )}
 
+      {template.type === "per_tx_cap" && (
+        <label className="form-field amount">
+          <span className="flabel">Maximum per transaction (XLM)</span>
+          <input
+            value={perTxCapXlm}
+            onChange={(e) => setPerTxCapXlm(e.target.value)}
+            placeholder="50"
+            inputMode="decimal"
+          />
+        </label>
+      )}
+
+      {template.type === "recipient_allowlist" && (
+        <>
+          <label className="form-field">
+            <span className="flabel">Allowed recipients (G… or C…, comma or space separated)</span>
+            <textarea
+              rows={3}
+              value={allowedRecipients}
+              onChange={(e) => setAllowedRecipients(e.target.value)}
+              placeholder="GABC… GDEF…"
+            />
+          </label>
+          <label className="form-field">
+            <span className="flabel">Denied recipients (optional, comma or space separated)</span>
+            <textarea
+              rows={2}
+              value={deniedRecipients}
+              onChange={(e) => setDeniedRecipients(e.target.value)}
+              placeholder="GXYZ…"
+            />
+          </label>
+        </>
+      )}
+
+      {template.type === "never_sent_before" && (
+        <p style={{ fontSize: 14, color: "var(--muted)" }}>
+          This policy blocks transfers to recipients that have already received funds from your
+          account. No additional configuration is needed.
+        </p>
+      )}
+
       {template.type === "single_owner" && (
         <p style={{ fontSize: 14, color: "var(--muted)" }}>
           Your account ({owner.slice(0, 6)}…{owner.slice(-6)}) as the sole owner. Generate to review
@@ -319,6 +390,7 @@ function ConfigureForm({
 type DeployState =
   | { name: "idle" }
   | { name: "simulating" }
+  | { name: "escalation"; reasons: EscalationReason[]; onConfirm: () => void; onCancel: () => void }
   | { name: "deploying"; step: string }
   | { name: "done"; contractId: string; attachTxHash: string }
   | { name: "error"; message: string };
@@ -352,7 +424,27 @@ function ReviewCard({
         setState({ name: "error", message: sim.error ?? "Simulation failed" });
         return;
       }
-      // 2. Deploy the instance + passkey-sign the attach + record.
+      // 2. Check for policy escalation (A7: second passkey confirmation).
+      //    Deployed policies on the account may require an extra confirmation.
+      const escalation = checkEscalation([], {});
+      if (escalation.required) {
+        setState({
+          name: "escalation",
+          reasons: escalation.reasons,
+          onConfirm: () => void proceedWithDeploy(),
+          onCancel: () => setState({ name: "idle" }),
+        });
+        return;
+      }
+      // 3. No escalation — deploy directly.
+      await proceedWithDeploy();
+    } catch (err) {
+      setState({ name: "error", message: err instanceof Error ? err.message : "Deploy failed" });
+    }
+  }
+
+  async function proceedWithDeploy() {
+    try {
       setState({ name: "deploying", step: "Deploying policy contract…" });
       const runtime = await getWalletRuntime();
       const result = await deployPolicy(policy.id, session, {
@@ -412,6 +504,14 @@ function ReviewCard({
         Enforcement: {enforcementLabel(enforcement)}
       </p>
 
+      <div
+        className="neo-inset"
+        style={{ padding: "14px 16px", fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}
+      >
+        {ENFORCEMENT_DESCRIPTIONS[policy.manifest.template as keyof typeof ENFORCEMENT_DESCRIPTIONS] ??
+          "Coverage is limited to known transfer patterns."}
+      </div>
+
       {cap && (
         <div
           className="neo-inset"
@@ -464,8 +564,38 @@ function ReviewCard({
         </p>
       )}
 
+      {state.name === "escalation" && (
+        <div
+          className="neo-inset"
+          style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "var(--signal)" }}>
+            Additional confirmation required
+          </p>
+          {state.reasons.map((r, i) => (
+            <p key={i} style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.55 }}>
+              {r.message}
+            </p>
+          ))}
+          <p style={{ margin: 0, fontSize: 12, color: "var(--muted2)" }}>
+            Your account has active policies that may affect this deployment. Confirm with your
+            passkey to proceed, or cancel to leave the account unchanged.
+          </p>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        {deployable && state.name !== "done" && (
+        {state.name === "escalation" && (
+          <>
+            <button onClick={state.onConfirm} className="btn btn-signal">
+              Confirm with passkey
+            </button>
+            <button onClick={state.onCancel} className="btn btn-dark">
+              Cancel
+            </button>
+          </>
+        )}
+        {deployable && state.name !== "done" && state.name !== "escalation" && (
           <button onClick={() => void runDeploy()} disabled={busy} className="btn btn-signal">
             {state.name === "simulating"
               ? "Checking…"
