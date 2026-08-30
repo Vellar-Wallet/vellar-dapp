@@ -189,6 +189,21 @@ const workerQueueDepth = new Gauge({
 });
 assertMetricName("vela_worker_queue_depth");
 
+// Referenced by domainMetrics/metrics.test.ts but not previously defined
+// anywhere in this file (a real pre-existing bug — importing this module
+// throws `workerProcessingLagSeconds is not defined` at module load time).
+// Also fixed independently in PR #381 (#326/#327); restoring here too since
+// this branch is based directly on upstream/dev, which doesn't have that
+// fix yet. Matches workerQueueDepth's sibling shape exactly, per
+// metrics.test.ts's existing expectations.
+const workerProcessingLagSeconds = new Gauge({
+  name: "vela_worker_processing_lag_seconds",
+  help: "Time between a verification job being enqueued and picked up for processing",
+  labelNames: ["service"] as const,
+  registers: [registry],
+});
+assertMetricName("vela_worker_processing_lag_seconds");
+
 const walletPasskeyAuthRateLimited = outcomeCounter(
   "vela_wallet_passkey_auth_rate_limited_total",
   "Rate-limited passkey auth (connect) attempts",
