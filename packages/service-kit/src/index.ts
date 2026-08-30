@@ -56,6 +56,16 @@ export {
 export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
 
 export {
+  createCircuitBreaker,
+  circuitBreakerLimitsFromEnv,
+  CircuitOpenError,
+  type CircuitBreaker,
+  type CircuitBreakerOptions,
+  type CircuitBreakerLimits,
+  type CircuitState,
+} from "./circuit-breaker";
+
+export {
   retryWithBackoff,
   MaxRetriesExceededError,
   RetryAbortedError,

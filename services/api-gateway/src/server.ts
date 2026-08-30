@@ -2,7 +2,14 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import { registerHealth, registerMetrics } from "@vellar/service-kit";
+import {
+  circuitBreakerLimitsFromEnv,
+  CircuitOpenError,
+  createCircuitBreaker,
+  domainMetrics,
+  registerHealth,
+  registerMetrics,
+} from "@vellar/service-kit";
 import { registerProxyRoute } from "./register-proxy-route";
 
 // Gateway (technical-doc.md §6.3, §8; idea.md §12): the single public entry
@@ -30,6 +37,12 @@ export interface GatewayOptions {
   maxBodyBytes?: number;
   /** Per-request timeout in ms (connection-level). Default 30_000. */
   requestTimeoutMs?: number;
+  /** Consecutive connection-level failures to verification-service before
+   * the breaker opens. Default 5; env VERIFICATION_CB_FAILURE_THRESHOLD. */
+  verificationCircuitFailureThreshold?: number;
+  /** Cooldown (ms) before a half-open trial is allowed once open. Default
+   * 30_000; env VERIFICATION_CB_COOLDOWN_MS. */
+  verificationCircuitCooldownMs?: number;
   /** Custom logger instance or options (e.g. stream for capturing logs in tests). */
   logger?: unknown;
 }
@@ -168,7 +181,72 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     options.verificationServiceUrl ??
     process.env.VERIFICATION_SERVICE_URL ??
     "http://localhost:4004";
-  registerProxyRoute(app, { upstream: verificationServiceUrl, prefix: "/verification" });
+
+  // Circuit breaker (#326): api-gateway has no protection against a
+  // verification-service outage cascading into slow gateway responses —
+  // every caller would otherwise wait out the same timeout against the same
+  // broken dependency. Opens after `failureThreshold` consecutive failed
+  // proxy attempts; while open, requests fail fast with 503 instead of
+  // reaching the (assumed-still-down) upstream at all.
+  const verificationBreakerLimits = circuitBreakerLimitsFromEnv(
+    {
+      failureThresholdVar: "VERIFICATION_CB_FAILURE_THRESHOLD",
+      cooldownMsVar: "VERIFICATION_CB_COOLDOWN_MS",
+    },
+    { defaultFailureThreshold: 5, defaultCooldownMs: 30_000 },
+  );
+  const verificationBreaker = createCircuitBreaker({
+    failureThreshold:
+      options.verificationCircuitFailureThreshold ?? verificationBreakerLimits.failureThreshold,
+    cooldownMs: options.verificationCircuitCooldownMs ?? verificationBreakerLimits.cooldownMs,
+    onStateChange: (from, to) => {
+      app.log.warn({ breaker: "verification-service", from, to }, "circuit breaker state change");
+      domainMetrics.circuitBreakerStateChanges.inc({
+        service: "api-gateway",
+        breaker: "verification-service",
+        from,
+        to,
+      });
+    },
+  });
+
+  registerProxyRoute(app, {
+    upstream: verificationServiceUrl,
+    prefix: "/verification",
+    // Runs before the proxy forwards the request — fast-fails while the
+    // breaker is open, so an outage doesn't tie up a connection waiting on
+    // a downstream that's already known to be unhealthy.
+    preHandler: async (request, reply) => {
+      try {
+        verificationBreaker.beforeCall();
+      } catch (err) {
+        if (err instanceof CircuitOpenError) {
+          return reply.code(503).send({
+            error: "verification_service_unavailable",
+            reason: "circuit breaker open — verification-service is failing",
+            retryAfterMs: err.retryAfterMs,
+          });
+        }
+        throw err;
+      }
+    },
+    replyOptions: {
+      // A response — even an upstream error status — means the TCP/HTTP
+      // round-trip to verification-service itself succeeded; only a
+      // genuine connection-level failure (ECONNREFUSED, timeout) counts
+      // against the breaker. An upstream 4xx/5xx is the verification
+      // service correctly reporting a domain-level outcome, not the
+      // service being unreachable.
+      onResponse: (_request, reply, res) => {
+        verificationBreaker.recordOutcome("success");
+        reply.send(res.stream);
+      },
+      onError: (reply, error) => {
+        verificationBreaker.recordOutcome("failure");
+        reply.send(error.error);
+      },
+    },
+  });
 
   return app;
 }

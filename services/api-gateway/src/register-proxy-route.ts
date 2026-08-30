@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import proxy from "@fastify/http-proxy";
 
+type ProxyPreHandler = NonNullable<Parameters<typeof proxy>[1]>["preHandler"];
+type ProxyReplyOptions = NonNullable<Parameters<typeof proxy>[1]>["replyOptions"];
+
 // Shared route registration helper (issue #355).
 //
 // Every downstream service is proxied with the same three-field config:
@@ -24,6 +27,19 @@ export interface ProxyRouteOptions {
    * universal case where the gateway prefix and the backend prefix are the same.
    */
   rewritePrefix?: string;
+  /**
+   * Runs before the proxy forwards the request — the per-route extension
+   * point this helper's own docstring anticipated ("circuit breakers, or
+   * observability", #326). Return a reply to short-circuit (e.g. fast-fail
+   * while a circuit breaker is open) without reaching the upstream at all.
+   */
+  preHandler?: ProxyPreHandler;
+  /**
+   * Passed straight through to `@fastify/http-proxy`'s `replyOptions` —
+   * `onResponse`/`onError` hooks for observing the real outcome of each
+   * proxied call (e.g. recording it against a circuit breaker, #326).
+   */
+  replyOptions?: ProxyReplyOptions;
 }
 
 /**
@@ -40,6 +56,6 @@ export interface ProxyRouteOptions {
  * ```
  */
 export function registerProxyRoute(app: FastifyInstance, options: ProxyRouteOptions): void {
-  const { upstream, prefix, rewritePrefix = prefix } = options;
-  app.register(proxy, { upstream, prefix, rewritePrefix });
+  const { upstream, prefix, rewritePrefix = prefix, preHandler, replyOptions } = options;
+  app.register(proxy, { upstream, prefix, rewritePrefix, preHandler, replyOptions });
 }
