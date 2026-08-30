@@ -42,6 +42,8 @@ deps.deployer = config.sponsorSecretKey
         rpcUrl: config.rpcUrl,
         networkPassphrase: config.networkPassphrase,
         sponsorSecretKey: config.sponsorSecretKey,
+        rpcTimeoutMs: config.deployRpcTimeoutMs,
+        pollTimeoutMs: config.deployPollTimeoutMs,
       },
       SPENDING_POLICY_WASM_HASH,
     )

@@ -196,6 +196,11 @@ assertMetricName("vela_worker_queue_depth");
 // this branch is based directly on upstream/dev, which doesn't have that
 // fix yet. Matches workerQueueDepth's sibling shape exactly, per
 // metrics.test.ts's existing expectations.
+// anywhere in this file (a real bug on dev — importing this module would
+// throw `workerProcessingLagSeconds is not defined` at module load time).
+// Restored here matching workerQueueDepth's sibling shape exactly, per the
+// existing test's expectations (metrics.test.ts: `.set({ service }, 3.5)`,
+// exposition-format assertion against `vela_worker_processing_lag_seconds`).
 const workerProcessingLagSeconds = new Gauge({
   name: "vela_worker_processing_lag_seconds",
   help: "Time between a verification job being enqueued and picked up for processing",
@@ -208,6 +213,17 @@ const walletPasskeyAuthRateLimited = outcomeCounter(
   "vela_wallet_passkey_auth_rate_limited_total",
   "Rate-limited passkey auth (connect) attempts",
 );
+
+/** Circuit breaker state changes (#326) — labeled by the downstream call
+ * being protected (e.g. "verification-service") and the transition's
+ * endpoints, so an alert can fire specifically on `to="open"`. */
+const circuitBreakerStateChanges = new Counter({
+  name: "vela_circuit_breaker_state_changes_total",
+  help: "Circuit breaker state transitions",
+  labelNames: ["service", "breaker", "from", "to"] as const,
+  registers: [registry],
+});
+assertMetricName("vela_circuit_breaker_state_changes_total");
 
 export const domainMetrics = {
   walletCreated,
@@ -228,6 +244,7 @@ export const domainMetrics = {
   verificationTurnaround: workerVerificationTurnaround,
   workerQueueDepth,
   workerProcessingLagSeconds,
+  circuitBreakerStateChanges,
 } as const;
 
 export type Outcome = "success" | "failure";

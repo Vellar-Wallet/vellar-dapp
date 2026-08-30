@@ -38,11 +38,76 @@ export class PolicyDeployError extends Error {
   }
 }
 
+/** Sentinel error thrown internally by `withTimeoutError`'s own race timer.
+ * Never escapes this module — `withTimeoutError` always translates it into
+ * a `PolicyDeployError` with code `"deploy_rpc_timeout"` before rethrowing.
+ *
+ * This is a deliberate, self-implemented timeout rather than a reliance on
+ * `rpc.Server`'s constructor `timeout` option: as of `@stellar/stellar-sdk`
+ * 16.0.1, that option is silently dropped — `RpcServer`'s constructor calls
+ * `createHttpClient(opts.headers)`, which accepts only `headers` and never
+ * receives `opts.timeout` at all (confirmed by reading `rpc/axios.js`; the
+ * option is present in the TS types but has no effect on the underlying
+ * fetch client). Verified experimentally too: a `getAccount()` call against
+ * a deliberately non-responding local server hung well past the configured
+ * `timeout`, which is what surfaced this. Do not remove this wrapper under
+ * the assumption `rpc.Server`'s own option covers it — re-check this
+ * comment against the installed SDK version before doing so (#327).
+ */
+class RpcTimeoutSentinel extends Error {}
+
+/** Races `fn()` against a `timeoutMs` timer implemented in this module
+ * (see `RpcTimeoutSentinel`'s comment for why `rpc.Server`'s own `timeout`
+ * option isn't relied on) — a real per-call timeout budget for every RPC
+ * call in the deploy path, per #327. On timeout, throws a
+ * `PolicyDeployError` with code `"deploy_rpc_timeout"`. Every other failure
+ * from `fn` passes through to `onOtherError` unchanged, so this never masks
+ * a real RPC/contract failure as a timeout. */
+async function withTimeoutError<T>(
+  step: string,
+  timeoutMs: number,
+  fn: () => Promise<T>,
+  onOtherError: (err: unknown) => never,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new RpcTimeoutSentinel(step)), timeoutMs);
+  });
+  try {
+    return await Promise.race([fn(), timeout]);
+  } catch (err) {
+    if (err instanceof RpcTimeoutSentinel) {
+      throw new PolicyDeployError(
+        `Policy deploy RPC call timed out: ${step}`,
+        "deploy_rpc_timeout",
+      );
+    }
+    onOtherError(err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface PolicyDeployConfig {
   rpcUrl: string;
   networkPassphrase: string;
   /** Testnet fee-sponsor secret — deploys and funds the instance. */
   sponsorSecretKey: string;
+  /** Per-HTTP-request timeout (ms) for every RPC call in the deploy path
+   * (getAccount, simulateTransaction, prepareTransaction, sendTransaction).
+   * Passed straight to `rpc.Server`'s own `timeout` option (#327). A network
+   * stall on any one of these calls fails with `PolicyDeployError` code
+   * `"deploy_rpc_timeout"` instead of hanging indefinitely. */
+  rpcTimeoutMs: number;
+  /** Overall budget (ms) for `deployInstance`'s post-submission polling
+   * loop (#327) — distinct from `rpcTimeoutMs`, which bounds each
+   * individual HTTP call rather than the loop as a whole. */
+  pollTimeoutMs: number;
+  /** Test-only escape hatch: `rpc.Server` refuses a non-`https://` URL
+   * unless this is set, even for `127.0.0.1` — real deployments always use
+   * a real `https://` RPC endpoint, so this should never be set outside
+   * tests exercising the RPC layer against a local fake server. */
+  allowHttp?: boolean;
 }
 
 export interface DeployPolicyInstanceInput {
@@ -98,22 +163,26 @@ export function createPolicyDeployer(
   config: PolicyDeployConfig,
   wasmHashHex: string,
 ): PolicyDeployer {
-  const server = new rpc.Server(config.rpcUrl);
+  // #327: config.rpcTimeoutMs is enforced by withTimeoutError below, not by
+  // rpc.Server itself — see RpcTimeoutSentinel's comment for why.
+  const server = new rpc.Server(config.rpcUrl, { allowHttp: config.allowHttp });
   const sponsor = Keypair.fromSecret(config.sponsorSecretKey);
   const wasmHash = Buffer.from(wasmHashHex, "hex");
 
   // Builds the (unsigned) deploy tx for the given input. Shared by simulate
   // and deploy so both exercise the exact same createContract + constructor.
   async function buildDeployTx(input: DeployPolicyInstanceInput): Promise<Transaction> {
-    let source;
-    try {
-      source = await server.getAccount(sponsor.publicKey());
-    } catch (err) {
-      throw new PolicyDeployError(
-        `Sponsor account load failed: ${err instanceof Error ? err.message : String(err)}`,
-        "sponsor_load_failed",
-      );
-    }
+    const source = await withTimeoutError(
+      "getAccount",
+      config.rpcTimeoutMs,
+      () => server.getAccount(sponsor.publicKey()),
+      (err) => {
+        throw new PolicyDeployError(
+          `Sponsor account load failed: ${err instanceof Error ? err.message : String(err)}`,
+          "sponsor_load_failed",
+        );
+      },
+    );
 
     const constructorArgs = constructorScVals(input);
 
@@ -141,7 +210,17 @@ export function createPolicyDeployer(
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
-      const sim = await server.simulateTransaction(built);
+      const sim = await withTimeoutError(
+        "simulateTransaction",
+        config.rpcTimeoutMs,
+        () => server.simulateTransaction(built),
+        (err) => {
+          throw new PolicyDeployError(
+            `Policy deploy simulation RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+            "deploy_simulation_rpc_failed",
+          );
+        },
+      );
       if (rpc.Api.isSimulationError(sim)) {
         return { ok: false, error: sim.error };
       }
@@ -151,19 +230,31 @@ export function createPolicyDeployer(
     async deployInstance(input) {
       const built = await buildDeployTx(input);
 
-      let prepared: Transaction;
-      try {
-        prepared = (await server.prepareTransaction(built)) as Transaction;
-      } catch (err) {
-        // Constructor guards (invalid limit/window) surface here, before submit.
-        throw new PolicyDeployError(
-          `Policy deploy simulation failed: ${err instanceof Error ? err.message : String(err)}`,
-          "deploy_simulation_failed",
-        );
-      }
+      const prepared = (await withTimeoutError(
+        "prepareTransaction",
+        config.rpcTimeoutMs,
+        () => server.prepareTransaction(built),
+        (err) => {
+          // Constructor guards (invalid limit/window) surface here, before submit.
+          throw new PolicyDeployError(
+            `Policy deploy simulation failed: ${err instanceof Error ? err.message : String(err)}`,
+            "deploy_simulation_failed",
+          );
+        },
+      )) as Transaction;
       prepared.sign(sponsor);
 
-      const sent = await server.sendTransaction(prepared);
+      const sent = await withTimeoutError(
+        "sendTransaction",
+        config.rpcTimeoutMs,
+        () => server.sendTransaction(prepared),
+        (err) => {
+          throw new PolicyDeployError(
+            `Policy deploy submission RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+            "deploy_submit_rpc_failed",
+          );
+        },
+      );
       if (sent.status === "ERROR") {
         throw new PolicyDeployError(
           `Policy deploy submission failed: ${sent.errorResult?.toXDR("base64") ?? "unknown"}`,
@@ -171,9 +262,19 @@ export function createPolicyDeployer(
         );
       }
 
-      const deadline = Date.now() + TIMEOUT_SECONDS * 1000;
+      const deadline = Date.now() + config.pollTimeoutMs;
       for (;;) {
-        const status = await server.getTransaction(sent.hash);
+        const status = await withTimeoutError(
+          "getTransaction",
+          config.rpcTimeoutMs,
+          () => server.getTransaction(sent.hash),
+          (err) => {
+            throw new PolicyDeployError(
+              `Policy deploy status RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+              "deploy_status_rpc_failed",
+            );
+          },
+        );
         if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
           const contractId = extractContractId(status);
           if (!contractId) {
