@@ -34,6 +34,11 @@ pub enum StorageKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedEntry {
     pub added_at: u64,
+    /// The address that attested this wasm hash. Used by the
+    /// `trusted_publishers_only` enforcement mode to decide whether an entry
+    /// was attested by a publisher the account trusts. Set to `Address::default()`
+    /// for entries added before this field existed.
+    pub attested_by: Address,
 }
 
 fn load_admin(env: &Env) -> Address {
@@ -75,7 +80,7 @@ impl VerifiedRegistry {
     /// Mark a wasm hash as verified.
     ///
     /// Emits an `add` event with topic `(add, admin, wasm_hash)` and
-    /// payload `VerifiedEntry { added_at }`.
+    /// payload `VerifiedEntry { added_at, attested_by }`.
     ///
     /// ## Storage choice
     /// Each entry uses a separate `persistent` key so lookup by wasm hash is
@@ -96,6 +101,7 @@ impl VerifiedRegistry {
 
         let entry = VerifiedEntry {
             added_at: env.ledger().timestamp(),
+            attested_by: admin.clone(),
         };
         env.storage()
             .persistent()
@@ -107,6 +113,31 @@ impl VerifiedRegistry {
             (EVENT_ADD, admin, wasm_hash),
             entry,
         );
+    }
+
+    /// Look up the full verification entry for a wasm hash.
+    ///
+    /// Returns `Some(VerifiedEntry)` if the hash is currently verified, `None`
+    /// otherwise. This is the read interface used by the policy contract's
+    /// `trusted_publishers_only` mode to inspect `attested_by`.
+    pub fn get_entry(env: Env, wasm_hash: BytesN<32>) -> Option<VerifiedEntry> {
+        let key = StorageKey::Verified(wasm_hash);
+        let entry: Option<VerifiedEntry> = env.storage().persistent().get::<StorageKey, VerifiedEntry>(&key);
+        renew_instance(&env);
+        entry
+    }
+
+    /// Check whether a wasm hash is currently verified.
+    ///
+    /// Returns `true` if the hash exists in the registry, `false` otherwise.
+    /// Returning `false` for an unknown hash is correct behaviour — this
+    /// function must never panic on unknown input because it is called inside
+    /// authorization paths where resource use is bounded.
+    pub fn is_verified(env: Env, wasm_hash: BytesN<32>) -> bool {
+        let key = StorageKey::Verified(wasm_hash);
+        let present = env.storage().persistent().has::<StorageKey>(&key);
+        renew_instance(&env);
+        present
     }
 
     /// Remove a wasm hash from the registry so it is no longer treated as
