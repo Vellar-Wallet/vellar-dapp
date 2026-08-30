@@ -47,7 +47,11 @@ export interface PolicyDefinition {
     dailyXlm?: string;
     perTxXlm?: string;
   };
+  perTxCapXlm?: string;
   allowlistedContracts?: string[];
+  allowedRecipients?: string[];
+  deniedRecipients?: string[];
+  trackedRecipients?: string[];
   timelocks?: {
     adminActionDelaySeconds?: number;
   };

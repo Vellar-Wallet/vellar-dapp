@@ -149,6 +149,47 @@ export const templates: PolicyTemplate[] = [
     }),
     enforcement: { kind: "custom-contract-pending" },
   },
+  {
+    type: "per_tx_cap",
+    title: "Per-transaction cap",
+    description: "Limit the maximum XLM that can be sent in a single transaction.",
+    schema: base.extend({
+      type: z.literal("per_tx_cap"),
+      perTxCapXlm: positiveDecimal,
+    }),
+    enforcement: { kind: "custom-contract-pending" },
+  },
+  {
+    type: "recipient_allowlist",
+    title: "Recipient allow/deny list",
+    description:
+      "Restrict transfers to an allow-list of recipients and optionally block specific addresses.",
+    schema: base
+      .extend({
+        type: z.literal("recipient_allowlist"),
+        allowedRecipients: z.array(address).min(1),
+        deniedRecipients: z.array(address).optional(),
+      })
+      .refine(
+        (v) => {
+          if (!v.deniedRecipients) return true;
+          return !v.deniedRecipients.some((d) => v.allowedRecipients.includes(d));
+        },
+        { message: "denied recipients cannot also appear in the allow list" },
+      ),
+    enforcement: { kind: "signer-limits" },
+  },
+  {
+    type: "never_sent_before",
+    title: "Never-sent-before",
+    description:
+      "Block transfers to recipients that have already received funds from this account.",
+    schema: base.extend({
+      type: z.literal("never_sent_before"),
+      trackedRecipients: z.array(address).optional(),
+    }),
+    enforcement: { kind: "signer-limits" },
+  },
 ];
 
 export function getTemplate(type: string): PolicyTemplate | undefined {

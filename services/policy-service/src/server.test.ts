@@ -57,6 +57,31 @@ describe("validateDefinition", () => {
         owners: [C1],
         timelocks: { adminActionDelaySeconds: 3600 },
       },
+      { version: "1", type: "per_tx_cap", owners: [C1], perTxCapXlm: "50" },
+      {
+        version: "1",
+        type: "recipient_allowlist",
+        owners: [C1],
+        allowedRecipients: [G1],
+      },
+      {
+        version: "1",
+        type: "recipient_allowlist",
+        owners: [C1],
+        allowedRecipients: [G1],
+        deniedRecipients: [G2],
+      },
+      {
+        version: "1",
+        type: "never_sent_before",
+        owners: [C1],
+      },
+      {
+        version: "1",
+        type: "never_sent_before",
+        owners: [C1],
+        trackedRecipients: [G1],
+      },
     ]) {
       expect(validateDefinition(definition)).toEqual({ valid: true, errors: [] });
     }
@@ -94,6 +119,32 @@ describe("validateDefinition", () => {
       { version: "1", type: "single_owner", owners: ["nope"] },
       /Stellar address/,
     ],
+    [
+      "per_tx_cap with zero amount",
+      { version: "1", type: "per_tx_cap", owners: [C1], perTxCapXlm: "0" },
+      /positive/,
+    ],
+    [
+      "recipient_allowlist with no allowed recipients",
+      { version: "1", type: "recipient_allowlist", owners: [C1], allowedRecipients: [] },
+      /allowedRecipients/,
+    ],
+    [
+      "recipient_allowlist with denied in allowed list",
+      {
+        version: "1",
+        type: "recipient_allowlist",
+        owners: [C1],
+        allowedRecipients: [G1],
+        deniedRecipients: [G1],
+      },
+      /denied recipients/,
+    ],
+    [
+      "recipient_allowlist with G address in allowed",
+      { version: "1", type: "recipient_allowlist", owners: [C1], allowedRecipients: ["nope"] },
+      /Stellar address/,
+    ],
   ])("rejects %s", (_label, definition, message) => {
     const result = validateDefinition(definition);
     expect(result.valid).toBe(false);
@@ -119,7 +170,7 @@ describe("Policy API", () => {
       kind: "policy-contract",
       wasmHash: SPENDING_POLICY_WASM_HASH,
     });
-    expect(res.json()).toHaveLength(5);
+    expect(res.json()).toHaveLength(8);
   });
 
   it("generate → review artifacts → GET → deploy records the deployment", async () => {
@@ -177,6 +228,59 @@ describe("Policy API", () => {
     expect(deploy.statusCode).toBe(404);
     const get = await server.inject({ url: "/policies/nope" });
     expect(get.statusCode).toBe(404);
+  });
+
+  it("generates per_tx_cap with enforcement descriptor in manifest", async () => {
+    const server = build();
+    const res = await server.inject({
+      method: "POST",
+      url: "/policies/generate",
+      payload: {
+        definition: { version: "1", type: "per_tx_cap", owners: [C1], perTxCapXlm: "50" },
+        network: "testnet",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const { policy } = res.json();
+    expect(policy.manifest.enforcement).toEqual({ kind: "custom-contract-pending" });
+    expect(policy.manifest.template).toBe("per_tx_cap");
+  });
+
+  it("generates recipient_allowlist with signer-limits enforcement", async () => {
+    const server = build();
+    const res = await server.inject({
+      method: "POST",
+      url: "/policies/generate",
+      payload: {
+        definition: {
+          version: "1",
+          type: "recipient_allowlist",
+          owners: [C1],
+          allowedRecipients: [G1],
+        },
+        network: "testnet",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const { policy } = res.json();
+    expect(policy.manifest.enforcement).toEqual({ kind: "signer-limits" });
+    expect(policy.manifest.template).toBe("recipient_allowlist");
+  });
+
+  it("generates never_sent_before with signer-limits enforcement", async () => {
+    const server = build();
+    const res = await server.inject({
+      method: "POST",
+      url: "/policies/generate",
+      payload: {
+        definition: { version: "1", type: "never_sent_before", owners: [C1] },
+        network: "testnet",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const { policy } = res.json();
+    expect(policy.manifest.enforcement).toEqual({ kind: "signer-limits" });
+    expect(policy.manifest.template).toBe("never_sent_before");
   });
 });
 
