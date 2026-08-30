@@ -33,6 +33,18 @@ vi.mock("@/lib/connector-factory", async (importOriginal) => {
   return { ...actual, getWalletRuntime: runtimeMock };
 });
 
+// #335: the policy builder is gated behind a gradual-rollout feature flag,
+// which defaults OFF for any session with no rollout configured. This suite
+// tests the builder's own behavior (templates, validation, deploy), not the
+// flag gate itself (see lib/feature-flags.test.ts and the "flag gating"
+// describe block below for that) — force the flag on here so the existing
+// assertions keep exercising the real UI rather than the "not yet available"
+// fallback.
+vi.mock("@/lib/feature-flags", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/feature-flags")>();
+  return { ...actual, isFlagEnabled: () => true };
+});
+
 const SESSION = {
   accountId: "CWALLET1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDE",
   network: "testnet",

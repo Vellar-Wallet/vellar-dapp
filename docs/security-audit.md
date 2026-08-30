@@ -1308,3 +1308,6 @@ _No auth header on any route. `CleanupStep` = `{ title, description, xdr, hash }
 unauthorized` is intentionally identical for missing/unknown/expired/wrong-account.
 10. **Gateway 415** — every mutation must send `Content-Type: application/json` or it never reaches the
     service (415 before the handler).
+11. **CSRF on policy-service admin endpoints (technical-doc.md cross-reference / Issue #311)**:
+    State-changing admin endpoints (`/admin/policies/*` and mutating routes when `enableCsrf` is set) require an `x-csrf-token` header acquired via `GET /admin/csrf-token`. Missing or invalid/expired tokens fail with `403 Forbidden` (`csrf_token_missing` or `csrf_token_invalid`). Safe methods (`GET`, `HEAD`, `OPTIONS`) remain unblocked.
+

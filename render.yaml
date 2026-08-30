@@ -49,6 +49,9 @@ services:
       # Allow the deployed frontend origin (update to the real vellar.xyz once live).
       - key: CORS_ORIGIN
         value: "https://vellar.xyz"
+      # Origin permission cache lifetime: 5 minutes (valid range: 1 second to 24 hours).
+      - key: PERMISSION_CACHE_TTL_MS
+        value: "300000"
       # Wire the Postgres created below.
       - key: DATABASE_URL
         fromDatabase:

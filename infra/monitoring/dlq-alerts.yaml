@@ -1,0 +1,90 @@
+# Prometheus alerting rules for Dead-Letter Queue monitoring
+# 
+# Include this file in your Prometheus configuration:
+#   rule_files:
+#     - '/path/to/dlq-alerts.yaml'
+
+groups:
+  - name: policy_service_dlq_alerts
+    interval: 30s
+    rules:
+      # Alert when DLQ depth is high (> 10 entries)
+      - alert: DLQHighDepth
+        expr: |
+          sum(dlq_depth_gauge{job_type="policy_deploy"}) > 10
+        for: 10m
+        labels:
+          severity: "warning"
+          component: "policy-service"
+          runbook: "https://docs.example.com/ops/dlq"
+        annotations:
+          summary: "Policy deployment DLQ depth is high"
+          description: |
+            Policy deployment DLQ has {{ $value | humanize }} entries waiting for operator action.
+            This may indicate repeated deployment failures due to RPC issues, invalid policies,
+            or insufficient sponsor funding. See runbook for troubleshooting steps.
+
+      # Alert when DLQ enqueue rate is high
+      - alert: DLQHighEnqueueRate
+        expr: |
+          rate(dlq_enqueue_total{job_type="policy_deploy"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: "warning"
+          component: "policy-service"
+          runbook: "https://docs.example.com/ops/dlq"
+        annotations:
+          summary: "Policy deployments failing faster than normal"
+          description: |
+            Policy deployment enqueue rate is {{ $value | humanizePercentage }}/sec.
+            Jobs are exceeding MAX_RETRIES and moving to DLQ. Check:
+            1. RPC endpoint health
+            2. Sponsor account balance
+            3. Recent policy template changes
+
+      # Critical alert when DLQ is growing unbounded
+      - alert: DLQCriticalDepth
+        expr: |
+          sum(dlq_depth_gauge{job_type="policy_deploy"}) > 50
+        for: 20m
+        labels:
+          severity: "critical"
+          component: "policy-service"
+          runbook: "https://docs.example.com/ops/dlq"
+        annotations:
+          summary: "Policy deployment DLQ is critically high"
+          description: |
+            Policy deployment DLQ has {{ $value | humanize }} entries.
+            This indicates a systemic issue (RPC down, sponsor account exhausted, or policy bug).
+            Immediate action required. See runbook for escalation steps.
+
+      # Alert when requeue fails repeatedly
+      - alert: DLQRequeueFailures
+        expr: |
+          increase(dlq_requeue_failures_total{job_type="policy_deploy"}[5m]) > 3
+        for: 5m
+        labels:
+          severity: "warning"
+          component: "policy-service"
+        annotations:
+          summary: "DLQ requeue operations are failing"
+          description: |
+            {{ $value | humanize }} requeue attempts failed in the last 5 minutes.
+            Check: 1. Job queue availability, 2. Database connectivity, 3. Auth service.
+
+      # Track DLQ depth as a metric (for SLO tracking)
+      - record: policy_service:dlq:depth_slo
+        expr: |
+          sum(dlq_depth_gauge{job_type="policy_deploy"})
+
+      # Track enqueue rate (for trend analysis)
+      - record: policy_service:dlq:enqueue_rate_5m
+        expr: |
+          rate(dlq_enqueue_total{job_type="policy_deploy"}[5m]) * 60  # per minute
+
+      # Track requeue success rate
+      - record: policy_service:dlq:requeue_success_rate
+        expr: |
+          (rate(dlq_requeue_total{job_type="policy_deploy"}[5m]) * 60) /
+          (rate(dlq_requeue_total{job_type="policy_deploy"}[5m]) * 60 +
+           rate(dlq_requeue_failures_total{job_type="policy_deploy"}[5m]) * 60)

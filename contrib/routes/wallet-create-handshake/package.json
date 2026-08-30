@@ -1,0 +1,14 @@
+{
+  "name": "wallet-create-handshake",
+  "version": "1.0.0",
+  "description": "Mock route module for wallet creation two-step handshake",
+  "private": true,
+  "scripts": {
+    "test": "node --loader tsx ./test.ts",
+    "test:check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.9.2"
+  }
+}

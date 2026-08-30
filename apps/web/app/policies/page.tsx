@@ -6,6 +6,7 @@ import { AppShell } from "@/components/app-shell";
 import { Eyebrow, LpActionButton } from "@/app/landing/ui";
 import { getWalletRuntime } from "@/lib/connector-factory";
 import { useWalletSession } from "@/lib/wallet-context";
+import { isFlagEnabled, readFlagConfig } from "@/lib/feature-flags";
 import {
   deployPolicy,
   detachPolicy,
@@ -30,8 +31,54 @@ type Stage =
   | { name: "configure"; template: PolicyTemplateInfo }
   | { name: "review"; template: PolicyTemplateInfo; policy: GeneratedPolicy };
 
+// Feature flag gating the policy builder's gradual rollout (#335 —
+// docs/decisions.md records the flag name and rollout plan). Read once at
+// module load: the env vars it's built from are inlined at Next.js build
+// time (NEXT_PUBLIC_*), so there's no benefit to re-reading them per render,
+// and reading it here (not inside the component) keeps
+// PolicyBuilderFlagged's gating logic testable without rendering the whole
+// page tree.
+const POLICY_BUILDER_FLAG = readFlagConfig("policyBuilderV2");
+
+/** Exported for tests — the gating decision as a pure function of session. */
+export function policyBuilderVisibleFor(accountId: string | null): boolean {
+  return isFlagEnabled(POLICY_BUILDER_FLAG, accountId);
+}
+
 export default function Policies() {
   const session = useWalletSession();
+
+  if (!policyBuilderVisibleFor(session?.accountId ?? null)) {
+    return <PolicyBuilderNotYetAvailable />;
+  }
+
+  return <PolicyBuilder session={session} />;
+}
+
+/**
+ * Shown to a connected wallet not yet in the policy-builder rollout, and to
+ * anyone with no wallet connected yet (accountId unavailable — see
+ * isFlagEnabled's doc: there is no stable identity to bucket against yet).
+ * A flagged-out user gets an honest "not yet" state rather than either a
+ * broken partial UI or a silently missing page.
+ */
+function PolicyBuilderNotYetAvailable() {
+  return (
+    <AppShell>
+      <div className="flex max-w-[720px] flex-col gap-5">
+        <header>
+          <h1>Account policies</h1>
+          <p className="mt-3! max-w-[560px] text-[15px] leading-relaxed text-[var(--lp-ink-soft)]">
+            Programmable account policies — spending limits, multisig, contract allowlists — are
+            rolling out gradually. This account isn't in the rollout yet; check back soon.
+          </p>
+        </header>
+      </div>
+    </AppShell>
+  );
+}
+
+function PolicyBuilder({ session }: { session: WalletSession | null }) {
   const [templates, setTemplates] = useState<PolicyTemplateInfo[] | null>(null);
   const [stage, setStage] = useState<Stage>({ name: "pick" });
   const [error, setError] = useState<string | null>(null);

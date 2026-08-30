@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatTokenAmount } from "vellar-sdk";
 import { AppShell } from "@/components/app-shell";
 import { Eyebrow, LpActionButton } from "@/app/landing/ui";
 import { useBalances } from "@/lib/balances";
 import { useWalletSession } from "@/lib/wallet-context";
+import { getAnalyticsTracker, walletCreationEvents } from "@/lib/analytics";
 import { ReceiveCard } from "./receive-card";
 import { SendPayment } from "./send-payment";
 
@@ -19,6 +20,18 @@ export default function Dashboard() {
   const session = useWalletSession();
   const balances = useBalances(session?.accountId);
   const [panel, setPanel] = useState<Panel>("grid");
+
+  useEffect(() => {
+    // Emit funnel completion event when dashboard mounts with active session
+    if (session) {
+      walletCreationEvents.funnelCompleted({
+        network: session.network,
+        contractId: session.contractId,
+        sessionId: getAnalyticsTracker().hashValue(session.sessionId),
+      });
+      void getAnalyticsTracker().flush();
+    }
+  }, [session]);
 
   const native = balances.data?.find((b) => b.symbol === "XLM");
   const total = native ? formatTokenAmount(native.amount, native.decimals) : "0";

@@ -123,6 +123,42 @@ the verifier hashes the optimized bytes; re-optimizing on upload would change th
 hash. Our spending-limit contract verifies byte-for-byte this way
 (`0f6b858d…`, tx `6f83e098…`).
 
+## RPC timeout and fallback (issue #330)
+
+Resolving the deployed wasm hash reads from the configured Soroban RPC
+endpoint (`STELLAR_RPC_URL`) via `getContractData` — a third-party dependency
+outside this service's control. That call is bounded by `VERIFY_RPC_TIMEOUT_MS`
+(default 10s); previously it had **no timeout at all**, so a hung RPC endpoint
+could stall a worker job indefinitely.
+
+A timeout is treated as **transient, not a verdict**: it does NOT produce a
+terminal `failed` outcome (a contract that is perfectly valid must never be
+permanently marked unverifiable just because one RPC call was slow). Instead
+the job is left in `building` and picked up again on the worker's normal
+retry path (`VERIFY_MAX_ATTEMPTS`, same reclaim/backoff/dead-letter mechanism
+an unexpected error already uses) — see `runWorkerTick` in `src/loop.ts`.
+
+This is deliberately different from a genuine RPC error (`rpc_error`, e.g. a
+malformed response) or a real not-found (`not_found`) — both of those DO
+still return a terminal `failed` outcome, since retrying them would not
+change the answer.
+
+## Reaper jitter (issue #331)
+
+The reaper (M7, above — reclaims stranded `building` rows) previously ran on
+a fixed `setInterval(runReaper, reapIntervalMs)`. In a horizontally-scaled
+deploy, every replica boots within the same short window (most obviously
+right after a rolling deploy) and would then sweep at the same wall-clock
+moments forever after — a routine reclaim query turning into a synchronized
+spike against Postgres on every tick.
+
+The reaper now reschedules itself with `setTimeout` after each run, drawing a
+fresh randomized delay via `jitteredDelayMs(reapIntervalMs, reapJitterMs)`
+(`src/jitter.ts`) each time — `reapJitterMs` is an ABSOLUTE ± bound (not a
+percentage), default 30s against the 5-min default interval. Set
+`VERIFY_REAP_JITTER_MS=0` to disable jitter and restore the old fixed-interval
+behavior exactly.
+
 ## Honest limitations (Phase 7 hardening)
 
 - **Third-party contracts** are verifiable only when the author built with a
@@ -147,6 +183,46 @@ are env-tunable (see below). **Signed job payloads are intentionally not
 implemented** — there is no untrusted queue between the service and the worker
 (the shared Postgres is the trust boundary); see docs/decisions.md.
 
+## Consumer group topology (issue #354)
+
+The worker-service now uses **domain-specific consumer groups** for queue processing.
+Each consumer group:
+
+- Has its own dedicated job store, so groups never compete for the same queue
+- Scales independently via configurable concurrency
+- Runs in isolated worker loops with independent polling
+- Shares common execution machinery (Executor, Resolver)
+
+### Current groups
+
+**Verification group** (`verification`):
+- Processes contract verification jobs from the `verification_records` table
+- Handles artifact download, WASM verification, attestation submission
+- Concurrency controlled by `WORKER_CONCURRENCY` (default: 1)
+- Each worker instance polls and claims its own batch
+
+### Scaling a consumer group
+
+To run more parallel verification workers, increase concurrency:
+
+```sh
+WORKER_CONCURRENCY=4 pnpm --filter @vellar/worker-service start
+```
+
+This spawns 4 independent worker loops, each claiming and processing verification
+jobs concurrently. With a batch size of N, total throughput = concurrency × N.
+
+### Adding new consumer groups
+
+Future domains (e.g., transaction processing) can be added by:
+
+1. Defining a new store interface (e.g., `TransactionJobStore`)
+2. Adding a factory function in `consumer-groups.ts` (e.g., `createTransactionGroup`)
+3. Starting the group in `index.ts` with its own store and concurrency settings
+
+The architecture ensures groups remain isolated — a verification worker will never
+process transaction jobs and vice versa.
+
 ## Env
 
 | Var                       | Purpose                                                        | Default |
@@ -154,8 +230,11 @@ implemented** — there is no untrusted queue between the service and the worker
 | `DATABASE_URL`            | shared verification store (REQUIRED — worker exits without it) | —       |
 | `VERIFY_BUILD_IMAGE`      | toolchain image → real Docker builds; unset → stub             | unset   |
 | `STELLAR_RPC_URL`         | RPC for reading the deployed wasm hash                         | testnet |
+| `VERIFY_RPC_TIMEOUT_MS`   | cap on the RPC round-trip; a timeout is retried, not failed     | 10000   |
 | `VERIFY_POLL_IDLE_MS`     | poll interval when the queue is idle                           | 5000    |
 | `VERIFY_BUILD_TIMEOUT_S`  | kill a build after this many seconds                           | 600     |
 | `VERIFY_BUILD_MEMORY`     | container memory cap (docker `--memory`)                       | 2g      |
 | `VERIFY_BUILD_CPUS`       | container CPU cap (docker `--cpus`)                            | 2       |
 | `VERIFY_BUILD_PIDS_LIMIT` | max processes in the container                                 | 512     |
+| `WORKER_CONCURRENCY`      | parallel worker loops in the verification consumer group       | 1       |
+| `VERIFY_REAP_JITTER_MS`   | ± randomized jitter on the reaper interval (0 disables it)     | 30000   |

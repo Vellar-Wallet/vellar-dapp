@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { __resetMetricsForTest } from "@vellar/service-kit";
 import {
   buildServer,
   createMemoryVerificationRepository,
@@ -12,6 +13,10 @@ import {
 const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
 const C2 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
+
+beforeEach(() => {
+  __resetMetricsForTest();
+});
 
 let app: FastifyInstance | undefined;
 afterEach(async () => {
@@ -382,3 +387,63 @@ describe("createMemoryVerificationRepository", () => {
     expect(c2.map((r) => r.id)).toEqual(["c"]);
   });
 });
+
+describe("verification-service request duration histograms", () => {
+  it("records request duration histograms by route and updates buckets correctly", async () => {
+    const { app } = build();
+
+    // 1. Send submission request (POST /verification/submit)
+    const submitRes = await app.inject({
+      method: "POST",
+      url: "/verification/submit",
+      payload: validRepoSubmission,
+    });
+    expect(submitRes.statusCode).toBe(201);
+
+    // 2. Query verification status by contract (GET /verification/:contractId)
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/verification/${C1}`,
+    });
+    expect(getRes.statusCode).toBe(200);
+
+    // 3. Query status endpoint (GET /verification/:contractId/status)
+    const statusRes = await app.inject({
+      method: "GET",
+      url: `/verification/${C1}/status`,
+    });
+    expect(statusRes.statusCode).toBe(200);
+
+    // 4. Fetch /metrics endpoint
+    const metricsRes = await app.inject({
+      method: "GET",
+      url: "/metrics",
+    });
+    expect(metricsRes.statusCode).toBe(200);
+    const body = metricsRes.body;
+
+    // Verify histogram definitions and count/sum are exposed
+    expect(body).toContain("vela_http_request_duration_seconds_bucket");
+    expect(body).toContain("vela_http_request_duration_seconds_count");
+    expect(body).toContain("vela_http_request_duration_seconds_sum");
+
+    // Verify buckets for POST /verification/submit route
+    expect(body).toMatch(
+      /vela_http_request_duration_seconds_bucket\{[^}]*service="verification-service"[^}]*route="\/verification\/submit"[^}]*\}\s+[1-9]/,
+    );
+
+    // Verify buckets for GET /verification/:contractId route (pattern, not raw address)
+    expect(body).toMatch(
+      /vela_http_request_duration_seconds_bucket\{[^}]*service="verification-service"[^}]*route="\/verification\/:contractId"[^}]*\}\s+[1-9]/,
+    );
+
+    // Verify buckets for GET /verification/:contractId/status route
+    expect(body).toMatch(
+      /vela_http_request_duration_seconds_bucket\{[^}]*service="verification-service"[^}]*route="\/verification\/:contractId\/status"[^}]*\}\s+[1-9]/,
+    );
+
+    // Ensure raw contract addresses do not leak into route labels (no cardinality explosion)
+    expect(body).not.toContain(`route="/verification/${C1}"`);
+  });
+});
+

@@ -46,6 +46,20 @@ passkey (an explicit, auditable admin action).
 
 Range checks: `daily_limit ≥ 1`, `1 ≤ window_seconds ≤ 31,536,000` (365 days).
 
+## Policy Template Schema Validation (idea.md §6.2)
+
+Templates submitted to `policy-service` are strictly validated prior to code generation or on-chain instantiation:
+
+- **Strict Schema Enforcement**: Unknown or extra properties outside the template definition are rejected with field-level errors (`.strict()`).
+- **Owner Addresses**: Validated against Stellar address formats (`G…` or `C…`). Duplicated owner addresses are rejected. `single_owner` requires exactly one owner; `multisig_threshold` requires at least two owners.
+- **Multisig Threshold**: Must be an integer `≥ 2` and cannot exceed the number of distinct owners (`threshold ≤ owners.length`).
+- **Spending Limits**:
+  - `dailyXlm` and `perTxXlm` must be positive decimal strings with at most 7 decimal places (stroop precision).
+  - Minimum allowance is 1 stroop (`0.0000001` XLM). Sub-stroop amounts (`0`, negative, or `> 7` decimal places) fail validation.
+  - When both are specified, `perTxXlm` must not exceed `dailyXlm`.
+- **Contract Allowlists**: Must be valid contract addresses (`C…`). Duplicates are rejected, and at least one contract must be provided.
+- **Timelocks**: `adminActionDelaySeconds` must be an integer between `1` second and `31,536,000` seconds (365 days).
+
 ## Single-tenant binding
 
 Each instance is bound to one wallet at deploy. Both the `install` hook and the

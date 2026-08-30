@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   registerHealth,
   registerMetrics,
+  registerCorrelationId,
   domainMetrics,
   recordOutcome,
   type SpendBudget,
@@ -22,6 +23,8 @@ import {
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 import { assertScopedToKnownWallets, ScopeError } from "./scope";
 import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
+import type { CacheOperation } from "./cache-metrics";
+import { NoOpCache } from "./cache";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
 // passkeys by design (technical-doc.md §8 — no silent signing, no server key
@@ -83,6 +86,7 @@ export interface WalletServiceDeps {
   wallets?: WalletRepository;
   sessions?: SessionRepository;
   audit?: AuditLog;
+  cache?: CacheOperation;
   now?: () => Date;
   /** Passphrase used to parse submitted XDR for funding-path scoping. Keyed off
    * server config, NEVER the request body's network field (security-audit V5).
@@ -102,18 +106,35 @@ export interface WalletServiceDeps {
    * meter (fails closed). Metering on the body would let a caller split spend
    * across the testnet/mainnet partitions and double the effective ceiling. */
   budgetNetwork?: BudgetNetwork;
+  passkeyRateLimitMax?: number;
+  passkeyRateLimitWindowMs?: number;
+  /** Optional job enqueuer for worker-service jobs (Issue #299). */
+  jobQueue?: {
+    enqueue(job: {
+      recordId: string;
+      contractId: string;
+      correlationId?: string;
+      [key: string]: unknown;
+    }): Promise<void>;
+  };
 }
 
 export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const wallets = deps.wallets ?? createMemoryWalletRepository();
   const sessions = deps.sessions ?? createMemorySessionRepository();
   const audit = deps.audit ?? createMemoryAuditLog();
+  const cache = deps.cache ?? new NoOpCache();
   const now = deps.now ?? (() => new Date());
   const { submitter } = deps;
+
+  const connectRateLimits = new Map<string, { count: number; resetAt: number }>();
+  const passkeyRateLimitMax = deps.passkeyRateLimitMax ?? 5;
+  const passkeyRateLimitWindowMs = deps.passkeyRateLimitWindowMs ?? 60_000;
 
   const app = Fastify({ logger: true });
   registerHealth(app, "wallet-service", { isReady: deps.isReady });
   registerMetrics(app, "wallet-service");
+  registerCorrelationId(app);
 
   async function openSession(contractId: string, network: "testnet" | "mainnet") {
     const at = now();
@@ -228,7 +249,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     await wallets.insert({ keyId, contractId, network, createdAt: now().toISOString() });
     const session = await openSession(contractId, network);
-    await audit.record("wallet.created", { contractId, network, txHash: hash });
+    await audit.record("wallet.created", { contractId, network, txHash: hash, correlationId: request.correlationId });
     recordOutcome(domainMetrics.walletCreated, "wallet-service", "success", network);
     return reply.code(201).send({ contractId, sessionId: session.id, txHash: hash });
   });
@@ -240,15 +261,38 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     }
     const { keyId, network } = parsed.data;
 
+    const ip = request.ip || "127.0.0.1";
+    const rateKey = `${ip}:${keyId}`;
+    const currentTime = now().getTime();
+    let record = connectRateLimits.get(rateKey);
+    if (!record || currentTime > record.resetAt) {
+      record = { count: 1, resetAt: currentTime + passkeyRateLimitWindowMs };
+      connectRateLimits.set(rateKey, record);
+    } else {
+      record.count += 1;
+    }
+
+    if (record.count > passkeyRateLimitMax) {
+      recordOutcome(domainMetrics.passkeyAuth, "wallet-service", "failure", network);
+      recordOutcome(domainMetrics.passkeyAuthRateLimited, "wallet-service", "failure", network);
+      return reply
+        .code(429)
+        .header("retry-after", Math.ceil((record.resetAt - currentTime) / 1000))
+        .send({
+          error: "rate_limited",
+          message: "Too many authentication attempts for this account or IP. Please try again later.",
+        });
+    }
+
     const wallet = await wallets.findByKeyId(keyId, network);
     if (!wallet) {
-      recordOutcome(domainMetrics.passkeyAuth, "wallet-service", "failure", network);
+      recordOutcome(domainMetrics.walletPasskeyAuth, "wallet-service", "failure", network);
       return reply.code(404).send({ error: "wallet_not_found" });
     }
 
     const session = await openSession(wallet.contractId, network);
-    await audit.record("wallet.connected", { contractId: wallet.contractId, network });
-    recordOutcome(domainMetrics.passkeyAuth, "wallet-service", "success", network);
+    await audit.record("wallet.connected", { contractId: wallet.contractId, network, correlationId: request.correlationId });
+    recordOutcome(domainMetrics.walletPasskeyAuth, "wallet-service", "success", network);
     return reply.send({ contractId: wallet.contractId, sessionId: session.id });
   });
 
@@ -271,14 +315,14 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       } catch (err) {
         if (err instanceof ScopeError) {
           request.log.warn({ code: err.code }, "rejected unscoped submission");
-          recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+          recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
           return reply.code(403).send({ error: err.code, message: err.message });
         }
         // A repository error here means we cannot verify the tx is scoped to a
         // known wallet (e.g. Postgres dropped mid-run). Fail CLOSED — refuse to
         // sponsor/relay rather than degrade to unmetered submission (FIX 7).
         request.log.error(err, "scoping check failed; refusing submission");
-        recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
         return reply.code(503).send({
           error: "persistence_unavailable",
           message: "Cannot verify wallet scope right now; try again shortly.",
@@ -288,13 +332,13 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     try {
       const { hash } = await submitter.submit(signedXdr);
-      await audit.record("tx.submitted", { network, txHash: hash });
-      recordOutcome(domainMetrics.txSigned, "wallet-service", "success", network);
+      await audit.record("tx.submitted", { network, txHash: hash, correlationId: request.correlationId });
+      recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
       return reply.send({ hash });
     } catch (err) {
       const sub = err instanceof SubmissionError ? err : undefined;
       request.log.error(err, "transaction submission failed");
-      recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+      recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
       // Submission goes through the relayer/RPC path — a failure here is also an
       // RPC-degradation signal (§13 alerting: tx submission spikes/failures).
       domainMetrics.rpcErrors.inc({ service: "wallet-service", upstream: "relayer" });
@@ -303,6 +347,38 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         message: sub?.message ?? "Transaction submission failed",
       });
     }
+  });
+
+  const jobSchema = z.object({
+    recordId: z.string().min(1),
+    contractId: z.string().min(1),
+    sourceType: z.enum(["repo", "upload"]).default("repo"),
+    toolchainVersion: z.string().default("latest"),
+  });
+
+  // Enqueue a job for worker-service with correlation ID preserved (Issue #299)
+  app.post("/wallet/jobs", async (request, reply) => {
+    const parsed = jobSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+    const correlationId = request.correlationId;
+    if (deps.jobQueue) {
+      await deps.jobQueue.enqueue({
+        ...parsed.data,
+        correlationId,
+      });
+    }
+    request.log.info({ correlationId, recordId: parsed.data.recordId }, "worker job enqueued");
+    await audit.record("worker.job_enqueued", {
+      ...parsed.data,
+      correlationId,
+    });
+    return reply.code(202).send({
+      enqueued: true,
+      recordId: parsed.data.recordId,
+      correlationId,
+    });
   });
 
   // Session/device management (technical-doc.md §5.1). Every route below is

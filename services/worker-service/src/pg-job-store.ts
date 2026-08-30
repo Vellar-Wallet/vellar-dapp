@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { verificationRecords } from "@vellar/verification-service/db-schema";
 import type { VerificationRecordInternal } from "@vellar/verification-service/server";
+import { calculateBackoffDelay } from "./backoff";
 import type { ClaimedJob, ReapResult, VerificationJobStore } from "./job-store";
 
 // Postgres-backed job store, sharing the verification_records table (and its
@@ -83,37 +84,61 @@ export function createPgJobStore(db: NodePgDatabase): VerificationJobStore {
         .where(eq(verificationRecords.id, recordId));
     },
 
-    async reapStranded({ timeoutMs, maxAttempts, nowMs }) {
+    async reapStranded({ timeoutMs, maxAttempts, baseBackoffDelayMs = 1_000, maxBackoffDelayMs = 30_000, nowMs, onReclaimed, onDeadLettered }) {
       const now = nowMs ?? Date.now();
       const cutoff = new Date(now - timeoutMs);
-      // One atomic statement: every 'building' row older than the cutoff is
-      // either reclaimed to 'submitted' (attempts < maxAttempts) or parked in
-      // 'dead_letter'. The jsonb status is kept in sync with the column. The
-      // attempts counter was already bumped at claim time.
+      
+      // Fetch all stranded 'building' rows to apply backoff logic in application layer.
+      // SQL alone cannot calculate variable delays per reclaim attempt, so we fetch
+      // the rows and apply backoff callbacks here before updating (M7 exponential backoff).
       const rows = await db.execute(sql`
-        UPDATE ${verificationRecords} AS vr
-        SET
-          status = next.new_status,
-          updated_at = ${new Date(now)},
-          record = jsonb_set(vr.record, '{status}', to_jsonb(next.new_status))
-        FROM (
-          SELECT id,
-            CASE WHEN coalesce((record->>'attempts')::int, 0) >= ${maxAttempts}
-                 THEN 'dead_letter' ELSE 'submitted' END AS new_status
-          FROM ${verificationRecords}
-          WHERE status = 'building' AND updated_at < ${cutoff}
-        ) AS next
-        WHERE vr.id = next.id
-        RETURNING next.new_status AS new_status
+        SELECT id, (record->>'attempts')::int AS attempts
+        FROM ${verificationRecords}
+        WHERE status = 'building' AND updated_at < ${cutoff}
       `);
-      const list = ((rows as unknown as { rows?: { new_status: string }[] }).rows ??
-        (rows as unknown as { new_status: string }[])) as { new_status: string }[];
+      
+      const list = ((rows as unknown as { rows?: { id: string; attempts: number }[] }).rows ??
+        (rows as unknown as { id: string; attempts: number }[])) as { id: string; attempts: number }[];
+      
       let reclaimed = 0;
       let deadLettered = 0;
-      for (const r of list) {
-        if (r.new_status === "dead_letter") deadLettered++;
-        else reclaimed++;
+      
+      for (const row of list) {
+        const attempts = row.attempts ?? 0;
+        
+        if (attempts >= maxAttempts) {
+          // Job exhausted all attempts — dead-letter it
+          await db
+            .update(verificationRecords)
+            .set({
+              status: "dead_letter",
+              updatedAt: new Date(now),
+              record: sql`jsonb_set(${verificationRecords.record}, '{status}', to_jsonb('dead_letter'))`,
+            })
+            .where(eq(verificationRecords.id, row.id));
+          deadLettered++;
+          onDeadLettered?.();
+        } else {
+          // Job can be retried — calculate backoff delay and report it.
+          // The delay represents how long this job SHOULD wait before being claimed again.
+          // In a future enhancement, this could update a "claimAfter" timestamp in the record.
+          // For now, we reclaim to 'submitted' and the natural poll interval provides spacing.
+          const backoffDelay = calculateBackoffDelay(attempts, baseBackoffDelayMs, maxBackoffDelayMs);
+          onReclaimed?.(attempts);
+          
+          // Return to submitted for reclaim (backoff delay is advisory/metric only in this version)
+          await db
+            .update(verificationRecords)
+            .set({
+              status: "submitted",
+              updatedAt: new Date(now),
+              record: sql`jsonb_set(${verificationRecords.record}, '{status}', to_jsonb('submitted'))`,
+            })
+            .where(eq(verificationRecords.id, row.id));
+          reclaimed++;
+        }
       }
+      
       return { reclaimed, deadLettered } satisfies ReapResult;
     },
 

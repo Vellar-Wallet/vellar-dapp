@@ -61,3 +61,34 @@ export const spendLedger = pgTable(
   },
   (table) => [index("spend_ledger_line_network_at_idx").on(table.line, table.network, table.at)],
 );
+
+// Transaction submission queue for exactly-once processing (Issue #291).
+// Implements idempotent submission with transient retry-with-backoff and dead-letter tracking.
+// Status lifecycle: submitted → processing → succeeded/failed/dead_letter.
+// The record JSONB stores the full submission state for observability and replay.
+export const transactionSubmissions = pgTable(
+  "transaction_submissions",
+  {
+    // Stellar transaction hash — the transaction ID. Uniquely identifies a transaction.
+    transactionId: text("transaction_id").primaryKey(),
+    // Status: 'submitted' (queued), 'processing' (claimed by worker), 'succeeded'
+    // (confirmed on-chain), 'failed' (permanent error), 'dead_letter' (max retries exceeded)
+    status: text("status").notNull(),
+    // Full submission record (JSONB): includes submitter choice, network, signedXdr,
+    // attempts count, error details, timestamps, worker ID for tracing.
+    record: jsonb("record").notNull().$type<Record<string, unknown>>(),
+    // Timestamp when the record was created (first submission).
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull(),
+    // Last update: status flip, retry, etc. Used for reaper to find abandoned jobs.
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull(),
+    // TTL expiration time (ISO string). Processed records expire after 48 hours.
+    // In-flight records expire after 5 minutes to allow retry if worker crashes.
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [
+    // Composite index for polling: claim submitted records ordered by creation time.
+    index("tx_submissions_status_created_idx").on(table.status, table.createdAt),
+    // Index for TTL-based cleanup: find expired records.
+    index("tx_submissions_expires_at_idx").on(table.expiresAt),
+  ],
+);
