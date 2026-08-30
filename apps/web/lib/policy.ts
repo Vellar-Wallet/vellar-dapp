@@ -2,12 +2,15 @@
 
 import type { PolicyDefinition } from "@vellar/types";
 import {
+  checkEscalation,
   createPolicyClient,
   enforcementLabel,
   stroopsToXlm,
   PolicyApiError,
   type DeployPolicyResult,
   type Enforcement,
+  type EscalationCheck,
+  type EscalationReason,
   type GeneratedPolicy,
   type PolicyAttachRuntime,
   type PolicyTemplateInfo,
@@ -26,6 +29,8 @@ import { walletConfig } from "./config";
 export type {
   DeployPolicyResult,
   Enforcement,
+  EscalationCheck,
+  EscalationReason,
   GeneratedPolicy,
   PolicyAttachRuntime,
   PolicyTemplateInfo,
@@ -33,7 +38,7 @@ export type {
   SpendingConstructor,
   ValidationResult,
 };
-export { enforcementLabel, stroopsToXlm, PolicyApiError };
+export { checkEscalation, enforcementLabel, ENFORCEMENT_DESCRIPTIONS, stroopsToXlm, PolicyApiError };
 
 function client() {
   const cfg = walletConfig();

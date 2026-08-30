@@ -8,24 +8,45 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/policies",
 }));
 
-const { listMock, validateMock, generateMock, simulateMock, deployMock } = vi.hoisted(() => ({
-  listMock: vi.fn(),
-  validateMock: vi.fn(),
-  generateMock: vi.fn(),
-  simulateMock: vi.fn(),
-  deployMock: vi.fn(),
+const { listMock, validateMock, generateMock, simulateMock, deployMock, escalationMock } =
+  vi.hoisted(() => ({
+    listMock: vi.fn(),
+    validateMock: vi.fn(),
+    generateMock: vi.fn(),
+    simulateMock: vi.fn(),
+    deployMock: vi.fn(),
+    escalationMock: vi.fn(),
+  }));
+
+vi.mock("@/lib/policy", () => ({
+  listTemplates: listMock,
+  validatePolicy: validateMock,
+  generatePolicy: generateMock,
+  simulatePolicyDeploy: simulateMock,
+  deployPolicy: deployMock,
+  checkEscalation: escalationMock,
+  enforcementLabel: (e: { kind: string }) =>
+    e.kind === "policy-contract" ? "On-chain contract" : "Signer limits",
+  stroopsToXlm: (s: string) => {
+    const big = BigInt(s);
+    const whole = big / 10000000n;
+    const frac = big % 10000000n;
+    return frac === 0n
+      ? whole.toString()
+      : `${whole}.${frac.toString().padStart(7, "0").replace(/0+$/, "")}`;
+  },
+  ENFORCEMENT_DESCRIPTIONS: {
+    spending_limit:
+      "Enforced by a deployed on-chain policy contract. Coverage is limited to known transfer patterns.",
+    single_owner: "No on-chain policy enforcement.",
+    multisig_threshold: "Enforced by native signer limits.",
+    contract_allowlist: "Enforced by native signer limits.",
+    timelock: "Custom enforcement pending.",
+    per_tx_cap: "Custom enforcement pending.",
+    recipient_allowlist: "Enforced by native signer limits.",
+    never_sent_before: "Enforced by native signer limits.",
+  },
 }));
-vi.mock("@/lib/policy", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/policy")>("@/lib/policy");
-  return {
-    ...actual,
-    listTemplates: listMock,
-    validatePolicy: validateMock,
-    generatePolicy: generateMock,
-    simulatePolicyDeploy: simulateMock,
-    deployPolicy: deployMock,
-  };
-});
 
 const { runtimeMock } = vi.hoisted(() => ({ runtimeMock: vi.fn() }));
 vi.mock("@/lib/connector-factory", async (importOriginal) => {
@@ -70,6 +91,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   listMock.mockResolvedValue(templates);
+  escalationMock.mockReturnValue({ required: false, reasons: [] });
 });
 
 describe("Policy builder", () => {
@@ -173,5 +195,72 @@ describe("Policy builder", () => {
 
     expect((await screen.findByRole("alert")).textContent).toMatch(/set dailyXlm/i);
     expect(generateMock).not.toHaveBeenCalled();
+  });
+
+  it("escalation prompts the user with reasons when escalation is required", async () => {
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(generatedSpending);
+    simulateMock.mockResolvedValue({ ok: true, minResourceFee: "5000" });
+    escalationMock.mockReturnValue({
+      required: true,
+      reasons: [
+        {
+          templateType: "per_tx_cap",
+          message: "This transaction exceeds your per-transaction cap.",
+        },
+      ],
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /deploy to my account/i }));
+
+    expect(await screen.findByText(/additional confirmation required/i)).toBeDefined();
+    expect(screen.getByText(/exceeds your per-transaction cap/i)).toBeDefined();
+    expect(screen.getByRole("button", { name: /confirm with passkey/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeDefined();
+  });
+
+  it("escalation cancel aborts cleanly with no state change", async () => {
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(generatedSpending);
+    simulateMock.mockResolvedValue({ ok: true, minResourceFee: "5000" });
+    escalationMock.mockReturnValue({
+      required: true,
+      reasons: [{ templateType: "per_tx_cap", message: "Exceeds cap." }],
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /deploy to my account/i }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+
+    expect(screen.getByRole("button", { name: /deploy to my account/i })).toBeDefined();
+    expect(deployMock).not.toHaveBeenCalled();
+  });
+
+  it("no silent signing — escalation must be explicitly confirmed", async () => {
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(generatedSpending);
+    simulateMock.mockResolvedValue({ ok: true, minResourceFee: "5000" });
+    escalationMock.mockReturnValue({
+      required: true,
+      reasons: [{ templateType: "per_tx_cap", message: "Exceeds cap." }],
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /deploy to my account/i }));
+
+    // deployPolicy must NOT have been called — only the escalation UI is shown
+    expect(deployMock).not.toHaveBeenCalled();
+    expect(runtimeMock).not.toHaveBeenCalled();
   });
 });

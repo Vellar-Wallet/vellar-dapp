@@ -10,6 +10,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@vellar/types": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.9.2"
   }
