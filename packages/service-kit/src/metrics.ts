@@ -190,6 +190,12 @@ const workerQueueDepth = new Gauge({
 assertMetricName("vela_worker_queue_depth");
 
 // Referenced by domainMetrics/metrics.test.ts but not previously defined
+// anywhere in this file (a real pre-existing bug — importing this module
+// throws `workerProcessingLagSeconds is not defined` at module load time).
+// Also fixed independently in PR #381 (#326/#327); restoring here too since
+// this branch is based directly on upstream/dev, which doesn't have that
+// fix yet. Matches workerQueueDepth's sibling shape exactly, per
+// metrics.test.ts's existing expectations.
 // anywhere in this file (a real bug on dev — importing this module would
 // throw `workerProcessingLagSeconds is not defined` at module load time).
 // Restored here matching workerQueueDepth's sibling shape exactly, per the

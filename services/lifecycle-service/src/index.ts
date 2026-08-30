@@ -1,4 +1,5 @@
 import { hostFromEnv, portFromEnv, startService } from "@vellar/service-kit";
+import { createCachedAccountReader } from "./account-cache";
 import { createHorizonAccountReader } from "./horizon";
 import { buildServer } from "./server";
 import { initializeAuditLog } from "./audit";
@@ -20,7 +21,7 @@ if (process.env.DATABASE_URL) {
 }
 
 const app = buildServer({
-  reader: createHorizonAccountReader(horizonUrl),
+  reader: createCachedAccountReader(createHorizonAccountReader(horizonUrl)),
   store: jobStore,
 });
 await startService(app, {

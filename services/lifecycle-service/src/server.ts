@@ -9,6 +9,7 @@ import {
 } from "@vellar/service-kit";
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
+import type { CachedAccountReader } from "./account-cache";
 import { buildCleanupPlan, isClassicAccountId } from "./planner";
 import type { CleanupJobStore } from "./db/job-store";
 
@@ -35,6 +36,15 @@ export interface LifecycleServiceDeps {
 }
 
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
+
+/** `deps.reader` is a plain `AccountReader` in most tests and an
+ * uncached direct Horizon reader when caching is disabled — only
+ * narrow to the cache-invalidating shape when it's actually present,
+ * so a caller that never opted into caching gets no invalidation
+ * call at all (correct — there's nothing to invalidate). */
+function isCachedAccountReader(reader: AccountReader): reader is CachedAccountReader {
+  return typeof (reader as Partial<CachedAccountReader>).invalidate === "function";
+}
 
 function validatePair(accountId: string, destination: string): string | undefined {
   if (!isClassicAccountId(accountId)) return "not_classic_account";
@@ -233,6 +243,30 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
     }
 
     const step = buildMergeStep(account, destination, passphrase);
+
+    // Cache invalidation (#287): this endpoint builds the unsigned merge
+    // operation — the client still has to sign and submit it (via
+    // wallet-service) before the merge is actually final on-chain. This
+    // service has no way to observe that later confirmation, so this is
+    // deliberately OPTIMISTIC invalidation at the point the merge is
+    // committed to (logged to the audit trail), not proof the merge has
+    // happened. It's still correct to do: a merge this far along succeeds
+    // in the overwhelming common case, and evicting now means the very next
+    // /lifecycle/inspect or /lifecycle/plan call for either account
+    // re-reads Horizon instead of serving a cache entry that's about to be
+    // wrong — rather than waiting out the full TTL regardless. The TTL
+    // itself (see account-cache.ts) is the backstop for the rare case this
+    // specific merge never actually lands on-chain (invalidated early, but
+    // still re-fetches the correct still-unmerged state next time).
+    if (isCachedAccountReader(deps.reader)) {
+      deps.reader.invalidate(accountId); // merged away — should read as not-found
+      deps.reader.invalidate(destination); // balance changed
+      logEvent(deps.logger ?? request.log, "lifecycle.merge.cache_invalidated", {
+        accountId,
+        destination,
+      });
+    }
+
     await deps.auditLog.record("lifecycle.account_merged", { step });
     recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "success");
     return reply.send({ step });
