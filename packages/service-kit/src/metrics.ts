@@ -86,6 +86,15 @@ export const domainMetrics = {
     buckets: [1, 5, 15, 30, 60, 120, 300, 600, 1200],
     registers: [registry],
   }),
+  /** Circuit breaker state changes (#326) — labeled by the downstream call
+   * being protected (e.g. "verification-service") and the transition's
+   * endpoints, so an alert can fire specifically on `to="open"`. */
+  circuitBreakerStateChanges: new Counter({
+    name: "vela_circuit_breaker_state_changes_total",
+    help: "Circuit breaker state transitions",
+    labelNames: ["service", "breaker", "from", "to"] as const,
+    registers: [registry],
+  }),
 } as const;
 
 export type Outcome = "success" | "failure";
