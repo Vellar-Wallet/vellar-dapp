@@ -304,3 +304,13 @@ _Method: 12 parallel subsystem readers + 2 cross-cutting sweeps (auth end-to-end
 handling), reconciled by a completeness critic that walked the repo tree for coverage holes
 and spot-checked load-bearing security claims against the cited files. Read-only — no files
 were modified._
+
+---
+
+## 9. Security Hardening & Integration Testing Verification
+
+- **Account Merge Integration Testing**: Integration test suite in `services/lifecycle-service/src/account-merge.integration.test.ts` exercises full end-to-end account merge across `wallet-service`, `lifecycle-service`, and `policy-service`. Validates state consistency across database tables and verifies mid-process merge failure handling when blockers remain.
+- **Passkey Rate Limiting**: `POST /wallet/connect` in `wallet-service` is rate-limited per IP and `keyId`, returning `429` with `retry-after` header and tracking rate-limited auth attempts via `vela_passkey_auth_rate_limited_total` domain metric.
+- **CORS Origin Restriction**: `api-gateway` restricts allowed CORS origins to explicit web and extension domains (`http://localhost:3000`, `https://app.vellar.wallet`, `chrome-extension://vellar-wallet-extension`), with strict origin verification rejecting foreign/unauthorized origins.
+- **Contracts Build Pipeline Hardening**: All Rust dependencies in `contracts/Cargo.toml` (`soroban-sdk`, `ed25519-dalek`, `smart-wallet-interface`) are pinned to exact versions and commit hashes, with CI verification enforcing supply-chain security.
+

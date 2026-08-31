@@ -1,10 +1,9 @@
 import {
   errorPayload,
-  hasCapability,
-  normalizeOrigin,
   type ProviderRequest,
   type ResponsePayload,
 } from "@vellar/provider-sdk";
+import { hasCapability, normalizeOrigin } from "@vellar/permission-service";
 import { isPairOriginAllowed, type PairOriginPolicy } from "./pair-origins";
 import type { ExtensionState } from "./state";
 

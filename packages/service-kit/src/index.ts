@@ -17,6 +17,8 @@ export {
   type MetricValidationResult,
 } from "./metrics";
 
+export { Counter } from "prom-client";
+
 export {
   CORRELATION_ID_HEADER,
   REQUEST_ID_HEADER,
@@ -63,13 +65,41 @@ export {
   type TraceHeaderMap,
 } from "./tracing";
 
+export {
+  createCircuitBreaker,
+  circuitBreakerLimitsFromEnv,
+  CircuitOpenError,
+  type CircuitBreaker,
+  type CircuitBreakerOptions,
+  type CircuitBreakerLimits,
+  type CircuitState,
+} from "./circuit-breaker";
+
+export {
+  retryWithBackoff,
+  MaxRetriesExceededError,
+  RetryAbortedError,
+  type RetryOptions,
+} from "./retry";
 
 export interface HealthOptions {
-  /** Optional readiness probe. When it returns false (or throws), /health
-   * responds 503 so the orchestrator stops routing traffic — used to surface a
-   * degraded persistence layer (security-audit.md M6 / FIX 7). A missing probe
-   * keeps the classic always-200 liveness behavior. */
+  /** Optional readiness probe. When it returns false (or throws), /health AND
+   * /ready respond 503 so the orchestrator stops routing traffic — used to
+   * surface a degraded persistence layer (security-audit.md M6 / FIX 7). A
+   * missing probe keeps the classic always-200 liveness behavior for both
+   * routes (existing behavior, unchanged for services that don't pass one). */
   isReady?: () => boolean | Promise<boolean>;
+}
+
+async function evaluateReadiness(
+  isReady: HealthOptions["isReady"],
+): Promise<boolean> {
+  if (!isReady) return true;
+  try {
+    return await isReady();
+  } catch {
+    return false; // a probe that throws is treated as not-ready
+  }
 }
 
 export function registerHealth(
@@ -77,19 +107,28 @@ export function registerHealth(
   serviceName: string,
   options: HealthOptions = {},
 ): void {
+  // /health: liveness-shaped by default (always 200), but reflects readiness
+  // too when isReady is supplied — this is EXISTING behavior, preserved
+  // unchanged so a deploy currently relying on it (e.g. a healthCheckPath)
+  // doesn't silently start behaving differently.
   app.get("/health", async (_request, reply) => {
-    if (options.isReady) {
-      let ready = false;
-      try {
-        ready = await options.isReady();
-      } catch {
-        ready = false; // a probe that throws is treated as not-ready
-      }
-      if (!ready) {
-        return reply.code(503).send({ status: "unavailable", service: serviceName });
-      }
+    if (!(await evaluateReadiness(options.isReady))) {
+      return reply.code(503).send({ status: "unavailable", service: serviceName });
     }
     return { status: "ok", service: serviceName };
+  });
+
+  // /ready: readiness ONLY — "can this instance serve dependent work right
+  // now?" (security-audit.md M6 / FIX 7 generalized beyond wallet-service).
+  // Distinct from /health so callers that specifically want a
+  // liveness/readiness split (rather than /health's dual-purpose shape) have
+  // a dedicated route. A service with no isReady probe reports ready — there
+  // is nothing for it to be not-ready about.
+  app.get("/ready", async (_request, reply) => {
+    if (!(await evaluateReadiness(options.isReady))) {
+      return reply.code(503).send({ status: "not_ready", service: serviceName });
+    }
+    return { status: "ready", service: serviceName };
   });
 }
 

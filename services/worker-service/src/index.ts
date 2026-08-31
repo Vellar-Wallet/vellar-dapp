@@ -6,9 +6,13 @@ import { configFromEnv, executorFromConfig } from "./config";
 import { createRpcArtifactResolver } from "./resolver";
 import { createPgJobStore } from "./pg-job-store";
 import { startWorkerLoop, type WorkerMetrics } from "./loop";
+import { createVerificationGroup } from "./consumer-groups";
 import { createAttestor, type Attestor } from "./attestor";
 import { assertAttestorSafeForNetwork } from "./attestor-guard";
 import { createRegistrySubmitter } from "./registry-submitter";
+import { jitteredDelayMs } from "./jitter";
+import { safeLog, createSafeLogger } from "./config/secretsRedactor";
+import { validateSecrets } from "./config/validateSecrets";
 
 // @vellar/worker-service — the deterministic build worker (technical-doc.md §8.4).
 //
@@ -25,11 +29,20 @@ import { createRegistrySubmitter } from "./registry-submitter";
 
 const config = configFromEnv();
 
+// Validate secrets at startup (names only, never values)
+try {
+  validateSecrets();
+} catch (err) {
+  safeLog("error", "[worker-service] Secret validation failed", err);
+  process.exit(1);
+}
+
 if (!config.databaseUrl) {
   // The worker has nothing to do without the shared store. Fail loudly rather
   // than idle-poll forever against nothing.
-  console.error(
-    "[worker-service] DATABASE_URL is not set — the build worker needs the shared verification store. Exiting.",
+  safeLog(
+    "error",
+    "[worker-service] DATABASE_URL is not set — the build worker needs the shared verification store. Exiting."
   );
   process.exit(1);
 }
@@ -37,13 +50,10 @@ if (!config.databaseUrl) {
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
 const db = drizzle(pool);
 const store = createPgJobStore(db);
-const resolver = createRpcArtifactResolver({ rpcUrl: config.rpcUrl });
+const resolver = createRpcArtifactResolver({ rpcUrl: config.rpcUrl, timeoutMs: config.rpcTimeoutMs });
 const { executor, mode } = executorFromConfig(config);
 
-const log = {
-  info: (msg: string) => console.log(`[worker-service] ${msg}`),
-  error: (msg: string, err?: unknown) => console.error(`[worker-service] ${msg}`, err ?? ""),
-};
+const log = createSafeLogger();
 
 if (mode === "stub") {
   log.info(
@@ -106,7 +116,7 @@ if (config.attestorSecretKey && config.attestationRegistryId) {
       allowSingleKey: process.env.ALLOW_SINGLE_KEY_ATTESTOR === "1",
     });
   } catch (err) {
-    console.error(`[worker-service] ${err instanceof Error ? err.message : String(err)}`);
+    safeLog("error", `[worker-service] ${err instanceof Error ? err.message : String(err)}`, err);
     process.exit(1);
   }
   attestor = createAttestor({
@@ -142,30 +152,99 @@ const loop = startWorkerLoop({
 });
 log.info(`build worker started (rpc=${config.rpcUrl}). Polling for submitted verifications.`);
 
+// Consumer groups (issue #354): domain-specific consumer groups allow
+// independent scaling and monitoring. Currently we run a single verification
+// group, but this architecture enables future transaction processing groups
+// or other domains to be added with their own stores and concurrency settings.
+const verificationGroup = createVerificationGroup({
+  store,
+  executor,
+  resolver,
+  concurrency: config.workerConcurrency ?? 1,
+  idleDelayMs: config.pollIdleMs,
+  log,
+});
+log.info(
+  `verification consumer group started (concurrency=${config.workerConcurrency ?? 1}, rpc=${config.rpcUrl}).`,
+);
+
 // Reaper (M7): periodically return crashed 'building' rows to the queue, or
 // park them in dead_letter after too many attempts, so a mid-build crash can't
 // strand a job forever.
+//
+// Jittered (issue #331): a fixed setInterval would tick every replica of this
+// service at the same wall-clock moments (most obviously right after a
+// rolling deploy, when every instance boots within the same few seconds),
+// turning a routine reclaim sweep into a synchronized spike against Postgres.
+// Rescheduling with setTimeout (rather than setInterval) lets each tick draw
+// a fresh jittered delay instead of repeating one fixed period forever.
+let reapTimer: ReturnType<typeof setTimeout> | undefined;
+let reaperStopped = false;
+
 const runReaper = async () => {
   try {
     const res = await store.reapStranded({
       timeoutMs: config.reapTimeoutMs,
       maxAttempts: config.maxBuildAttempts,
+      baseBackoffDelayMs: config.backoffBaseDelayMs,
+      maxBackoffDelayMs: config.maxBackoffDelayMs,
+      // Track retry attempts for metrics
+      onReclaimed: (attempt: number) => {
+        domainMetrics.verificationRetry.inc({
+          service: "worker-service",
+          attempt: String(attempt),
+        });
+      },
+      // Track dead-lettered jobs
+      onDeadLettered: () => {
+        domainMetrics.verificationDeadLetter.inc({
+          service: "worker-service",
+        });
+      },
     });
     if (res.reclaimed || res.deadLettered) {
       log.info(`reaper: reclaimed ${res.reclaimed}, dead-lettered ${res.deadLettered}`);
     }
   } catch (err) {
     log.error("reaper sweep failed", err);
+  } finally {
+    if (!reaperStopped) {
+      reapTimer = setTimeout(runReaper, jitteredDelayMs(config.reapIntervalMs, config.reapJitterMs));
+    }
   }
 };
-const reapTimer = setInterval(runReaper, config.reapIntervalMs);
 void runReaper();
+
+// ETL cleanup (issue #345): archive terminal rows older than the retention
+// threshold and remove them from the live table, preventing unbounded growth.
+// Runs on its own daily interval (configurable). The first pass is intentionally
+// deferred by one full interval so the process is fully started before hitting
+// the DB with a potentially large batch.
+const runCleanupJob = async () => {
+  try {
+    const result = await runCleanup(db, {
+      retentionDays: config.cleanupRetentionDays,
+      batchSize: config.cleanupBatchSize,
+      archiveEnabled: config.cleanupArchiveEnabled,
+    });
+    if (result.deleted > 0) {
+      log.info(
+        `cleanup: archived ${result.archived}, deleted ${result.deleted} stale verification_records (retentionDays=${config.cleanupRetentionDays}, archiveEnabled=${config.cleanupArchiveEnabled})`,
+      );
+    }
+  } catch (err) {
+    log.error("cleanup sweep failed", err);
+  }
+};
+const cleanupTimer = setInterval(runCleanupJob, config.cleanupIntervalMs);
 
 const shutdown = async () => {
   log.info("shutting down…");
   loop.stop();
+  verificationGroup.stop();
   if (sweepTimer) clearInterval(sweepTimer);
-  clearInterval(reapTimer);
+  reaperStopped = true;
+  clearTimeout(reapTimer);
   await metricsApp.close();
   await pool.end();
   process.exit(0);

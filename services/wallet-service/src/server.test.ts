@@ -134,6 +134,21 @@ describe("POST /wallet/connect", () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it("rate-limits passkey auth connect requests when max attempts exceeded (429)", async () => {
+    const server = buildServer({
+      submitter: workingSubmitter(),
+      passkeyRateLimitMax: 2,
+    });
+    const payload = { keyId: "test-key-limit", network: "testnet" as const };
+    const hit1 = await server.inject({ method: "POST", url: "/wallet/connect", payload });
+    expect(hit1.statusCode).toBe(404);
+    const hit2 = await server.inject({ method: "POST", url: "/wallet/connect", payload });
+    expect(hit2.statusCode).toBe(404);
+    const hit3 = await server.inject({ method: "POST", url: "/wallet/connect", payload });
+    expect(hit3.statusCode).toBe(429);
+    expect(hit3.json().error).toBe("rate_limited");
+  });
+
   it("scopes the mapping by network", async () => {
     const server = build(workingSubmitter());
     await server.inject({ method: "POST", url: "/wallet/create", payload: createBody });
@@ -199,6 +214,37 @@ describe("GET /health readiness (FIX 7)", () => {
     const res = await app.inject({ url: "/health" });
     expect(res.statusCode).toBe(503);
     expect(res.json().status).toBe("unavailable");
+  });
+});
+
+// Issue #329 — GET /ready: distinct from /health, so an orchestrator can gate
+// traffic on readiness specifically without depending on /health's dual
+// liveness+readiness shape. Backed by the same isReady probe (deps.isReady,
+// wired to the DB ping in index.ts) as /health's existing FIX 7 behavior.
+describe("GET /ready", () => {
+  it("200 when no probe is wired (dev default)", async () => {
+    const server = build(workingSubmitter());
+    const res = await server.inject({ url: "/ready" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "ready", service: "wallet-service" });
+  });
+
+  it("503 when a dependency (the DB, via isReady) is unavailable", async () => {
+    app = buildServer({ submitter: workingSubmitter(), isReady: () => false });
+    const res = await app.inject({ url: "/ready" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ status: "not_ready", service: "wallet-service" });
+  });
+
+  it("503 when the readiness probe throws (e.g. a DB ping that errors)", async () => {
+    app = buildServer({
+      submitter: workingSubmitter(),
+      isReady: async () => {
+        throw new Error("connection refused");
+      },
+    });
+    const res = await app.inject({ url: "/ready" });
+    expect(res.statusCode).toBe(503);
   });
 });
 

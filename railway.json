@@ -10,5 +10,8 @@
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
+  },
+  "variables": {
+    "PERMISSION_CACHE_TTL_MS": "300000"
   }
 }

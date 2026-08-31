@@ -9,7 +9,10 @@ import { extractTraceContext, withTraceSpan } from "@vellar/service-kit";
 
 /** Observability hook (idea.md §13): the loop reports each verification outcome
  * + turnaround and any unexpected worker failure. Optional + defaulted so the
- * loop stays a pure, injectable unit in tests. */
+ * loop stays a pure, injectable unit in tests.
+ *
+ * ISSUE #295: Added verificationRetry metric to track retry attempts for jobs
+ * that succeeded or failed after transient errors. */
 export interface WorkerMetrics {
   verificationResult(outcome: "verified" | "failed", turnaroundSeconds?: number): void;
   workerFailure(): void;
@@ -67,6 +70,7 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
         metrics.processingLag(lagSeconds);
       }
 
+      const retryAttempt = (job as unknown as { retryAttempt?: number }).retryAttempt;
       const traceCtx = extractTraceContext({
         "x-trace-id": (job as unknown as { traceId?: string }).traceId,
       });
@@ -78,6 +82,7 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
           return await runVerification(job, {
             executor: deps.executor,
             resolver: deps.resolver,
+            retryAttempt,
           });
         },
         { recordId: job.recordId, contractId: job.contractId },

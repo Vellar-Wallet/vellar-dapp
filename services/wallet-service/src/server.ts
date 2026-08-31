@@ -23,6 +23,8 @@ import {
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 import { assertScopedToKnownWallets, ScopeError } from "./scope";
 import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
+import type { CacheOperation } from "./cache-metrics";
+import { NoOpCache } from "./cache";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
 // passkeys by design (technical-doc.md §8 — no silent signing, no server key
@@ -84,6 +86,7 @@ export interface WalletServiceDeps {
   wallets?: WalletRepository;
   sessions?: SessionRepository;
   audit?: AuditLog;
+  cache?: CacheOperation;
   now?: () => Date;
   /** Passphrase used to parse submitted XDR for funding-path scoping. Keyed off
    * server config, NEVER the request body's network field (security-audit V5).
@@ -103,6 +106,8 @@ export interface WalletServiceDeps {
    * meter (fails closed). Metering on the body would let a caller split spend
    * across the testnet/mainnet partitions and double the effective ceiling. */
   budgetNetwork?: BudgetNetwork;
+  passkeyRateLimitMax?: number;
+  passkeyRateLimitWindowMs?: number;
   /** Optional job enqueuer for worker-service jobs (Issue #299). */
   jobQueue?: {
     enqueue(job: {
@@ -118,8 +123,13 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const wallets = deps.wallets ?? createMemoryWalletRepository();
   const sessions = deps.sessions ?? createMemorySessionRepository();
   const audit = deps.audit ?? createMemoryAuditLog();
+  const cache = deps.cache ?? new NoOpCache();
   const now = deps.now ?? (() => new Date());
   const { submitter } = deps;
+
+  const connectRateLimits = new Map<string, { count: number; resetAt: number }>();
+  const passkeyRateLimitMax = deps.passkeyRateLimitMax ?? 5;
+  const passkeyRateLimitWindowMs = deps.passkeyRateLimitWindowMs ?? 60_000;
 
   const app = Fastify({ logger: true });
   registerHealth(app, "wallet-service", { isReady: deps.isReady });
@@ -250,6 +260,29 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
     const { keyId, network } = parsed.data;
+
+    const ip = request.ip || "127.0.0.1";
+    const rateKey = `${ip}:${keyId}`;
+    const currentTime = now().getTime();
+    let record = connectRateLimits.get(rateKey);
+    if (!record || currentTime > record.resetAt) {
+      record = { count: 1, resetAt: currentTime + passkeyRateLimitWindowMs };
+      connectRateLimits.set(rateKey, record);
+    } else {
+      record.count += 1;
+    }
+
+    if (record.count > passkeyRateLimitMax) {
+      recordOutcome(domainMetrics.passkeyAuth, "wallet-service", "failure", network);
+      recordOutcome(domainMetrics.passkeyAuthRateLimited, "wallet-service", "failure", network);
+      return reply
+        .code(429)
+        .header("retry-after", Math.ceil((record.resetAt - currentTime) / 1000))
+        .send({
+          error: "rate_limited",
+          message: "Too many authentication attempts for this account or IP. Please try again later.",
+        });
+    }
 
     const wallet = await wallets.findByKeyId(keyId, network);
     if (!wallet) {

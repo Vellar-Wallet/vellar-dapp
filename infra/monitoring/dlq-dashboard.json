@@ -1,0 +1,306 @@
+{
+  "dashboard": {
+    "title": "Policy Service - Dead-Letter Queue Monitoring",
+    "description": "Monitor policy deployment job DLQ: depth, enqueue rate, requeue operations, and failure causes",
+    "tags": ["policy-service", "dlq", "observability"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "DLQ Depth (Active Entries)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(dlq_depth_gauge{job_type=\"policy_deploy\"})",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 10
+                }
+              ]
+            }
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "orientation": "auto",
+          "textMode": "auto",
+          "textMode": "auto"
+        }
+      },
+      {
+        "id": 2,
+        "title": "Enqueue Rate (jobs/min)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "rate(dlq_enqueue_total{job_type=\"policy_deploy\"}[5m]) * 60",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 0.05
+                },
+                {
+                  "color": "red",
+                  "value": 0.2
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Requeue Rate (jobs/min)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "rate(dlq_requeue_total{job_type=\"policy_deploy\"}[5m]) * 60",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "blue"
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "DLQ Depth Trend",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum(dlq_depth_gauge{job_type=\"policy_deploy\"})",
+            "legendFormat": "Active DLQ Entries",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 20
+            },
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            }
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": ["last", "mean", "max"],
+            "displayMode": "table",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Enqueue vs Requeue Rate",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "rate(dlq_enqueue_total{job_type=\"policy_deploy\"}[5m]) * 60",
+            "legendFormat": "Enqueue (jobs/min)",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(dlq_requeue_total{job_type=\"policy_deploy\"}[5m]) * 60",
+            "legendFormat": "Requeue (jobs/min)",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 2
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": ["last", "mean"],
+            "displayMode": "table",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Total DLQ Enqueues (Cumulative)",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "dlq_enqueue_total{job_type=\"policy_deploy\"}",
+            "legendFormat": "Total Enqueued",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 0
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Total DLQ Requeues (Cumulative)",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "dlq_requeue_total{job_type=\"policy_deploy\"}",
+            "legendFormat": "Total Requeued",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 0
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Alert Status",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 24,
+          "x": 0,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "ALERTS{alertname=~\"DLQHighDepth|DLQCriticalDepth|DLQHighEnqueueRate\", job_type=\"policy_deploy\"}",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [
+              {
+                "type": "value",
+                "options": {
+                  "0": {
+                    "color": "green",
+                    "text": "No Alerts"
+                  },
+                  "1": {
+                    "color": "red",
+                    "text": "Alerts Active"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "schemaVersion": 38,
+    "style": "dark",
+    "templating": {
+      "list": []
+    }
+  }
+}
