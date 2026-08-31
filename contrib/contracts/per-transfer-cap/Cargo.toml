@@ -1,0 +1,32 @@
+[package]
+name = "per-transfer-cap-policy"
+version = "0.1.0"
+authors = ["VELA"]
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = "27.0.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "27.0.0", features = ["testutils"] }
+# Forces the ed25519-dalek 2.x pin into resolution so soroban-env-host's test
+# PRNG compiles. Not referenced from our test code.
+ed25519-dalek = "=2.2.0"
+
+# Match the audited workspace's release profile: overflow checks ON (this policy
+# does checked arithmetic, but defense-in-depth), panic=abort, size-optimized.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
