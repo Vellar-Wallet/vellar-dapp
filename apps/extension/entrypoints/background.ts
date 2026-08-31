@@ -21,6 +21,7 @@ import {
   type PairOriginPolicy,
 } from "../lib/pair-origins";
 import { addGrant, loadState, revokeGrant, setPairedWallet } from "../lib/state";
+import { backgroundErrorReporter } from "../lib/error-reporter";
 
 // Background service worker (technical-doc.md §6.2B, §7.3): routes validated
 // dApp requests, holds the pending-approval queue, and opens the approval
@@ -34,6 +35,20 @@ export default defineBackground(() => {
   const pending = new Map<string, PendingApproval>();
   // Track the open approval window so we don't spawn a new one per request.
   let approvalWindowId: number | undefined;
+
+  // Global unhandled error handlers for background worker (#302)
+  if (typeof self !== "undefined") {
+    self.addEventListener("error", (event) => {
+      void backgroundErrorReporter.reportError(event.error ?? event.message, {
+        source: "background_unhandled_error",
+      });
+    });
+    self.addEventListener("unhandledrejection", (event) => {
+      void backgroundErrorReporter.reportError(event.reason, {
+        source: "background_unhandled_rejection",
+      });
+    });
+  }
 
   // L3: resolve the pair-origin allowlist once at startup. A misconfigured
   // production build (no origins, no escape hatch) throws — we DISABLE pairing
@@ -51,8 +66,10 @@ export default defineBackground(() => {
   } catch (err) {
     if (err instanceof PairOriginsMisconfiguredError) {
       console.error(`[vellar] pairing disabled: ${err.message}`);
+      void backgroundErrorReporter.reportError(err, { source: "pair_origins_misconfigured" });
       pairOrigins = []; // fail closed: no origin may pair
     } else {
+      void backgroundErrorReporter.reportError(err, { source: "pair_origins_init" });
       throw err;
     }
   }
@@ -176,6 +193,10 @@ export default defineBackground(() => {
         });
         entry.resolve({ method: "sign_transaction", result: { signedXdr } });
       } catch (err) {
+        void backgroundErrorReporter.reportError(err, {
+          method: "sign_transaction",
+          origin: entry.origin,
+        });
         entry.resolve(
           errorPayload("internal", err instanceof Error ? err.message : "Signing failed"),
         );

@@ -1,6 +1,7 @@
 import type { Attestor } from "./attestor";
 import type { VerificationJobStore } from "./job-store";
 import { runVerification, type RunVerificationDeps } from "./verify";
+import { extractTraceContext, withTraceSpan } from "@vellar/service-kit";
 
 // The build worker's poll loop. Claims submitted jobs, runs each to a terminal
 // outcome, and records the result. Kept separate from process/timer wiring so a
@@ -69,11 +70,23 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
         metrics.processingLag(lagSeconds);
       }
 
-      const outcome = await runVerification(job, {
-        executor: deps.executor,
-        resolver: deps.resolver,
-        retryAttempt,
+      const retryAttempt = (job as unknown as { retryAttempt?: number }).retryAttempt;
+      const traceCtx = extractTraceContext({
+        "x-trace-id": (job as unknown as { traceId?: string }).traceId,
       });
+      const outcome = await withTraceSpan(
+        "worker-service",
+        "policy.execute",
+        traceCtx,
+        async () => {
+          return await runVerification(job, {
+            executor: deps.executor,
+            resolver: deps.resolver,
+            retryAttempt,
+          });
+        },
+        { recordId: job.recordId, contractId: job.contractId },
+      );
       await deps.store.complete(job.recordId, outcome);
       const turnaround =
         job.submittedAtMs !== undefined ? (Date.now() - job.submittedAtMs) / 1000 : undefined;

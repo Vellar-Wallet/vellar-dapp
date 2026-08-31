@@ -146,6 +146,17 @@ vela_worker_queue_depth{service="worker-service"}
 vela_worker_processing_lag_seconds{service="worker-service"}
 ```
 
+## Distributed Tracing (#301)
+
+End-to-end trace visibility across service boundaries during policy generation and deployment flows is captured using OpenTelemetry-compatible trace spans via `@vellar/service-kit`:
+
+### Trace Propagation Flow
+1. **API Gateway (`api-gateway`)**: Injects or extracts `x-trace-id`, `x-span-id`, and W3C `traceparent` headers on incoming HTTP requests and proxies them to downstream services.
+2. **Policy Service (`policy-service`)**: Extracts trace context from headers and wraps policy generation and deployment operations in `withTraceSpan("policy-service", "policy.deploy-instance", traceCtx)`. Propagates `traceId` with queued verification and deployment jobs.
+3. **Worker Service (`worker-service`)**: Extracts `traceId` from claimed deployment jobs and executes verification in `withTraceSpan("worker-service", "policy.execute", traceCtx)`.
+
+Trace spans are recorded in `TraceCollector` and exportable to OpenTelemetry APM backends (Jaeger, Zipkin, Datadog).
+
 ### Structured events
 
 The following events are emitted via `logEvent()` for operational search and

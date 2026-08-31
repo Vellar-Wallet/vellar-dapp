@@ -429,12 +429,163 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     }
     await sessions.delete(target.id);
     // Audit the event with a HASHED reference, never the raw id (a credential).
-    await audit.record("session.revoked", {
-      sessionRef: sessionRef(target.id),
-      contractId: target.contractId,
-      network: target.network,
-    });
+    await audit.record(
+      "session.revoked",
+      {
+        sessionRef: sessionRef(target.id),
+        contractId: target.contractId,
+        network: target.network,
+      },
+      session.contractId,
+    );
     return reply.code(204).send();
+  });
+
+  // Policy update sensitive action endpoint
+  app.post("/wallet/policy/update", async (request, reply) => {
+    const session = await resolveSessionCapability(request);
+    if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    const schema = z.object({
+      policyId: z.string().min(1),
+      rules: z.record(z.unknown()).optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    await audit.record(
+      "policy.updated",
+      {
+        contractId: session.contractId,
+        network: session.network,
+        policyId: parsed.data.policyId,
+        rules: parsed.data.rules ?? {},
+      },
+      session.contractId,
+    );
+
+    return reply.send({ status: "updated", policyId: parsed.data.policyId });
+  });
+
+  // Account merge sensitive action endpoint
+  app.post("/wallet/account/merge", async (request, reply) => {
+    const session = await resolveSessionCapability(request);
+    if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    const schema = z.object({
+      destinationContractId: z.string().min(1),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    await audit.record(
+      "account.merged",
+      {
+        sourceContractId: session.contractId,
+        destinationContractId: parsed.data.destinationContractId,
+        network: session.network,
+      },
+      session.contractId,
+    );
+
+    return reply.send({ status: "merged", destination: parsed.data.destinationContractId });
+  });
+
+  // Key rotation sensitive action endpoint
+  app.post("/wallet/key/rotate", async (request, reply) => {
+    const session = await resolveSessionCapability(request);
+    if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    const schema = z.object({
+      oldKeyId: z.string().min(1),
+      newKeyId: z.string().min(1),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    await audit.record(
+      "key.rotated",
+      {
+        contractId: session.contractId,
+        oldKeyId: parsed.data.oldKeyId,
+        newKeyId: parsed.data.newKeyId,
+        network: session.network,
+      },
+      session.contractId,
+    );
+
+    return reply.send({ status: "rotated", newKeyId: parsed.data.newKeyId });
+  });
+
+  // Threshold update sensitive action endpoint
+  app.post("/wallet/threshold/update", async (request, reply) => {
+    const session = await resolveSessionCapability(request);
+    if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    const schema = z.object({
+      threshold: z.number().min(1),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    await audit.record(
+      "threshold.updated",
+      {
+        contractId: session.contractId,
+        threshold: parsed.data.threshold,
+        network: session.network,
+      },
+      session.contractId,
+    );
+
+    return reply.send({ status: "threshold_updated", threshold: parsed.data.threshold });
+  });
+
+  // Signer add/remove sensitive action endpoint
+  app.post("/wallet/signer/manage", async (request, reply) => {
+    const session = await resolveSessionCapability(request);
+    if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    const schema = z.object({
+      action: z.enum(["add", "remove"]),
+      signerKey: z.string().min(1),
+      weight: z.number().optional(),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    const eventType = parsed.data.action === "add" ? "signer.added" : "signer.removed";
+    await audit.record(
+      eventType,
+      {
+        contractId: session.contractId,
+        signerKey: parsed.data.signerKey,
+        weight: parsed.data.weight,
+        network: session.network,
+      },
+      session.contractId,
+    );
+
+    return reply.send({ status: "signer_updated", action: parsed.data.action });
+  });
+
+  // Audit logs query endpoint
+  app.get("/wallet/audit-logs", async (request, reply) => {
+    const session = await resolveSessionCapability(request);
+    if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    const logs = await audit.list({ actor: session.contractId });
+    return reply.send({ auditLogs: logs });
   });
 
   return app;

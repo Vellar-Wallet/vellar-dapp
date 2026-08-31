@@ -133,22 +133,30 @@ function toSessionRecord(row: typeof walletSessions.$inferSelect) {
 
 export function createPgAuditLog(db: Db): AuditLog {
   return {
-    async record(type, data) {
+    async record(type, data, actor) {
       await db.insert(activityLogs).values({
         id: crypto.randomUUID(),
         type,
         at: new Date(),
-        data,
+        data: { ...data, ...(actor ? { actor } : {}) },
       });
     },
 
-    async list() {
+    async list(filter) {
       const rows = await db.select().from(activityLogs).orderBy(activityLogs.at);
-      return rows.map((row) => ({
+      let events = rows.map((row) => ({
         type: row.type,
         at: row.at.toISOString(),
         data: row.data,
+        actor: (row.data as Record<string, unknown> | undefined)?.actor as string | undefined,
       }));
+      if (filter?.type) {
+        events = events.filter((e) => e.type === filter.type);
+      }
+      if (filter?.actor) {
+        events = events.filter((e) => e.actor === filter.actor);
+      }
+      return events;
     },
   };
 }

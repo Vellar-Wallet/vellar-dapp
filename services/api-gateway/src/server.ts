@@ -7,6 +7,8 @@ import {
   CircuitOpenError,
   createCircuitBreaker,
   domainMetrics,
+  extractTraceContext,
+  injectTraceContext,
   registerHealth,
   registerMetrics,
 } from "@vellar/service-kit";
@@ -138,6 +140,13 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   app.addHook("onRequest", async (request, reply) => {
     const method = request.method.toUpperCase();
     const isMutation = method === "POST" || method === "PUT" || method === "PATCH";
+
+    // Distributed tracing context propagation (#301)
+    const traceCtx = extractTraceContext(request.headers as Record<string, string | undefined>);
+    const traceHeaders = injectTraceContext(traceCtx);
+    for (const [key, value] of Object.entries(traceHeaders)) {
+      request.headers[key] = value;
+    }
 
     // Body-size cap (413) — reject before the body is streamed upstream.
     const declaredLen = Number(request.headers["content-length"] ?? 0);

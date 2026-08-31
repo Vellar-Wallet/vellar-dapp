@@ -3,6 +3,11 @@ import Fastify, { type FastifyInstance } from "fastify";
 import {
   registerHealth,
   registerMetrics,
+  domainMetrics,
+  recordOutcome,
+  extractTraceContext,
+  withTraceSpan,
+  logEvent,
   type SpendBudget,
   type BudgetNetwork,
 } from "@vellar/service-kit";
@@ -244,7 +249,6 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
       }
       // Budget accounting error or other unexpected error
       request.log.error(err, "deploy-instance failed");
-      return reply.code(503).send({ error: "deploy_failed" });
     }
   });
 

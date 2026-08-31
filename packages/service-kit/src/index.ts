@@ -56,6 +56,16 @@ export {
 export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
 
 export {
+  extractTraceContext,
+  injectTraceContext,
+  withTraceSpan,
+  TraceCollector,
+  type TraceSpan,
+  type TraceContext,
+  type TraceHeaderMap,
+} from "./tracing";
+
+export {
   createCircuitBreaker,
   circuitBreakerLimitsFromEnv,
   CircuitOpenError,
