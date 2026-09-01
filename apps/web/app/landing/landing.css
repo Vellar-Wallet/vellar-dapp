@@ -333,6 +333,14 @@
   background: var(--lp-ink);
   color: var(--lp-sun);
 }
+/* On dark surfaces the ink-flip hover melts into the card behind it —
+   same swap move, but flip to paper there so the state stays visible. */
+.lp .lp-invert .lp-btn--sun:hover,
+.lp .lp-dark .lp-btn--sun:hover,
+.lp .lp-platcard--dark .lp-btn--sun:hover {
+  background: var(--lp-on-dark);
+  color: var(--lp-ink);
+}
 
 /* Secondary: forest fill. */
 .lp .lp-btn--forest {
