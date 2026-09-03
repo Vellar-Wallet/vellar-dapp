@@ -13,6 +13,7 @@ import { createRegistrySubmitter } from "./registry-submitter";
 import { jitteredDelayMs } from "./jitter";
 import { safeLog, createSafeLogger } from "./config/secretsRedactor";
 import { validateSecrets } from "./config/validateSecrets";
+import { runCleanup } from "./cleanup";
 
 // @vellar/worker-service — the deterministic build worker (technical-doc.md §8.4).
 //
@@ -239,12 +240,18 @@ const runCleanupJob = async () => {
 const cleanupTimer = setInterval(runCleanupJob, config.cleanupIntervalMs);
 
 const shutdown = async () => {
-  log.info("shutting down…");
-  loop.stop();
+  log.info("shutting down, draining in-flight jobs…");
+  const drained = await loop.drain(10000);
   verificationGroup.stop();
+  if (!drained) {
+    log.error("drain timeout exceeded, forcing exit");
+  } else {
+    log.info("all in-flight jobs drained successfully");
+  }
   if (sweepTimer) clearInterval(sweepTimer);
   reaperStopped = true;
   clearTimeout(reapTimer);
+  clearInterval(cleanupTimer);
   await metricsApp.close();
   await pool.end();
   process.exit(0);

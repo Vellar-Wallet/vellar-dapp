@@ -130,11 +130,13 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
 
 export interface WorkerLoopHandle {
   stop(): void;
+  drain(timeoutMs?: number): Promise<boolean>;
+  getInFlightCount(): number;
 }
 
 /**
  * Runs the tick loop on an interval. When a tick finds work it polls again
- * quickly; when idle it waits `idleDelayMs`. Returns a handle to stop it.
+ * quickly; when idle it waits `idleDelayMs`. Returns a handle to stop it and drain jobs.
  */
 export function startWorkerLoop(
   deps: WorkerDeps & { idleDelayMs?: number; busyDelayMs?: number },
@@ -143,6 +145,8 @@ export function startWorkerLoop(
   const busyDelayMs = deps.busyDelayMs ?? 250;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let activeTickPromise: Promise<void> | null = null;
+  let inFlightCount = 0;
 
   const schedule = (ms: number) => {
     if (stopped) return;
@@ -152,19 +156,61 @@ export function startWorkerLoop(
   const tick = async () => {
     if (stopped) return;
     let handled = 0;
-    try {
-      handled = await runWorkerTick(deps);
-    } catch (err) {
-      (deps.log ?? silentLog).error("worker tick failed", err);
-    }
+    inFlightCount++;
+    const promise = (async () => {
+      try {
+        handled = await runWorkerTick(deps);
+      } catch (err) {
+        (deps.log ?? silentLog).error("worker tick failed", err);
+      } finally {
+        inFlightCount = Math.max(0, inFlightCount - 1);
+        activeTickPromise = null;
+      }
+    })();
+
+    activeTickPromise = promise;
+    await promise;
+
     schedule(handled > 0 ? busyDelayMs : idleDelayMs);
   };
 
   schedule(0);
+
+  const stop = () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+
   return {
-    stop() {
-      stopped = true;
-      if (timer) clearTimeout(timer);
+    stop,
+    getInFlightCount() {
+      return inFlightCount;
+    },
+    async drain(timeoutMs = 10000): Promise<boolean> {
+      stop();
+      if (!activeTickPromise && inFlightCount === 0) {
+        return true;
+      }
+
+      let timeoutTimer: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<boolean>((resolve) => {
+        timeoutTimer = setTimeout(() => resolve(false), timeoutMs);
+      });
+
+      const drainPromise = (async () => {
+        if (activeTickPromise) {
+          await activeTickPromise;
+        }
+        while (inFlightCount > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return true;
+      })();
+
+      const result = await Promise.race([drainPromise, timeoutPromise]);
+      clearTimeout(timeoutTimer!);
+      return result;
     },
   };
 }
+
