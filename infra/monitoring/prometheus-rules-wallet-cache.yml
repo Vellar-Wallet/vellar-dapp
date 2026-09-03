@@ -1,0 +1,39 @@
+# Prometheus recording rules for wallet-service cache metrics.
+# This file should be included in your Prometheus configuration.
+#
+# Usage:
+#   rule_files:
+#     - '/path/to/prometheus-rules-wallet-cache.yml'
+#
+# These pre-computed rules avoid expensive on-the-fly calculations in Grafana dashboards.
+
+groups:
+  - name: wallet_service_cache_metrics
+    interval: 30s
+    rules:
+      # Cache hit ratio: sum of hits / (sum of hits + sum of misses)
+      # Per-resource breakdown
+      - record: wallet:cache:hit_ratio
+        expr: |
+          sum by (resource) (rate(wallet_service_cache_hits_total[5m]))
+          /
+          (
+            sum by (resource) (rate(wallet_service_cache_hits_total[5m]))
+            +
+            sum by (resource) (rate(wallet_service_cache_misses_total[5m]))
+          )
+
+      # Hit rate: hits per second (rate of hits)
+      - record: wallet:cache:hit_rate
+        expr: sum by (resource) (rate(wallet_service_cache_hits_total[5m]))
+
+      # Miss rate: misses per second (rate of misses)
+      - record: wallet:cache:miss_rate
+        expr: sum by (resource) (rate(wallet_service_cache_misses_total[5m]))
+
+      # Total cache operations (hits + misses) per second
+      - record: wallet:cache:total_rate
+        expr: |
+          sum by (resource) (rate(wallet_service_cache_hits_total[5m]))
+          +
+          sum by (resource) (rate(wallet_service_cache_misses_total[5m]))

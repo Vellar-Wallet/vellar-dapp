@@ -9,6 +9,82 @@ build inputs. It shares only the `verification_records` Postgres table with
 compares the rebuilt wasm hash to the **on-chain** deployed hash, and writes
 `verified` / `failed`.
 
+## Import validation (issue #346)
+
+Every record claimed from the shared `verification_records` table is validated
+before it reaches the build pipeline. This guards against:
+
+- **Malformed rows** written by a bad migration, external tooling, or any future
+  ingestion path that bypassed the HTTP-layer Zod checks
+- **Data corruption** from the database layer
+- **Incomplete rows** missing required fields (contractId, toolchainVersion, etc.)
+- **Wrong-type values** in the jsonb (e.g. a number where a string is expected)
+- **Invalid contract addresses** (must be a Soroban `C…` address, not a classic
+  G-address or any other format)
+- **Malformed timestamps** or timestamp invariants (updatedAt must be ≥ createdAt)
+- **Cross-field logic errors** (e.g. sourceType="repo" but repoUrl is missing)
+
+When a record fails validation, the worker:
+
+1. **Does NOT persist it** — it is not mapped to a `ClaimedJob` or handed to the
+   build executor
+2. **Logs the rejection** with a clear, field-specific reason via `log.warn()`,
+   e.g.:
+   ```
+   import-validation: rejected claimed record id=rec-bad — contractId: must be a deployed Soroban contract address (C…); toolchainVersion: must be a non-empty string
+   ```
+3. **Leaves the row in 'building' state** in the database — the M7 reaper will
+   reclaim or dead-letter it after the timeout, giving operators a window to
+   inspect and fix the malformed row
+
+Valid records in the same batch continue processing normally — one bad record
+does not fail the entire claim.
+
+### Validation schema
+
+All validation rules are defined in `src/import-validation.ts` using Zod ^4.0.0
+(the same version used in `verification-service`). The rules cover:
+
+| Field | Required | Type | Rules |
+|---|---|---|---|
+| `id` | ✅ | string | non-empty |
+| `contractId` | ✅ | string | matches `/^C[A-Z2-7]{55}$/` (Soroban C… address) |
+| `sourceType` | ✅ | string | must be `"repo"` or `"upload"` |
+| `repoUrl` | ❌ | string | required if sourceType="repo", must be a valid URL |
+| `commitHash` | ❌ | string | required if sourceType="repo", matches `/^[0-9a-fA-F]{7,40}$/` (git sha) |
+| `sourceArchiveRef` | ❌ | string | required if sourceType="upload", non-empty |
+| `toolchainVersion` | ✅ | string | non-empty |
+| `buildFlags` | ❌ | array | each element is a string |
+| `lockfileHash` | ❌ | string | non-empty if present |
+| `outputHash` | ❌ | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256) |
+| `deployedHash` | ❌ | string | matches `/^[0-9a-f]{64}$/` if present (lowercase hex sha256) |
+| `status` | ✅ | string | one of: `"unverified"`, `"submitted"`, `"building"`, `"verified"`, `"failed"`, `"dead_letter"` |
+| `createdAt` | ✅ | string | valid ISO 8601 timestamp |
+| `updatedAt` | ✅ | string | valid ISO 8601 timestamp, must be ≥ createdAt |
+| `log` | ❌ | string | optional; the build log appears only on terminal records |
+| `statusDetail` | ❌ | string | optional; public sanitized detail appears only on terminal records |
+
+Unknown extra fields in the jsonb are silently ignored (forward-compatible with
+future schema extensions).
+
+### Finding rejected records in logs
+
+Rejected records are logged as warnings. Search your logs (e.g. Datadog,
+CloudWatch, or local `docker compose logs`) for:
+
+```
+import-validation: rejected claimed record id=
+```
+
+The message includes the record ID and a semicolon-delimited list of every
+failing field and why, so you can identify and fix the malformed row:
+
+```
+import-validation: rejected claimed record id=abc-123 — contractId: must be a deployed Soroban contract address (C…); toolchainVersion: must be a non-empty string
+```
+
+Once fixed, the row will be reclaimed and processed normally on the next poll.
+
 ## Two build modes (the 1A seam — see docs/decisions.md)
 
 The build step is a pluggable `BuildExecutor`, chosen at startup from env:
@@ -123,6 +199,42 @@ the verifier hashes the optimized bytes; re-optimizing on upload would change th
 hash. Our spending-limit contract verifies byte-for-byte this way
 (`0f6b858d…`, tx `6f83e098…`).
 
+## RPC timeout and fallback (issue #330)
+
+Resolving the deployed wasm hash reads from the configured Soroban RPC
+endpoint (`STELLAR_RPC_URL`) via `getContractData` — a third-party dependency
+outside this service's control. That call is bounded by `VERIFY_RPC_TIMEOUT_MS`
+(default 10s); previously it had **no timeout at all**, so a hung RPC endpoint
+could stall a worker job indefinitely.
+
+A timeout is treated as **transient, not a verdict**: it does NOT produce a
+terminal `failed` outcome (a contract that is perfectly valid must never be
+permanently marked unverifiable just because one RPC call was slow). Instead
+the job is left in `building` and picked up again on the worker's normal
+retry path (`VERIFY_MAX_ATTEMPTS`, same reclaim/backoff/dead-letter mechanism
+an unexpected error already uses) — see `runWorkerTick` in `src/loop.ts`.
+
+This is deliberately different from a genuine RPC error (`rpc_error`, e.g. a
+malformed response) or a real not-found (`not_found`) — both of those DO
+still return a terminal `failed` outcome, since retrying them would not
+change the answer.
+
+## Reaper jitter (issue #331)
+
+The reaper (M7, above — reclaims stranded `building` rows) previously ran on
+a fixed `setInterval(runReaper, reapIntervalMs)`. In a horizontally-scaled
+deploy, every replica boots within the same short window (most obviously
+right after a rolling deploy) and would then sweep at the same wall-clock
+moments forever after — a routine reclaim query turning into a synchronized
+spike against Postgres on every tick.
+
+The reaper now reschedules itself with `setTimeout` after each run, drawing a
+fresh randomized delay via `jitteredDelayMs(reapIntervalMs, reapJitterMs)`
+(`src/jitter.ts`) each time — `reapJitterMs` is an ABSOLUTE ± bound (not a
+percentage), default 30s against the 5-min default interval. Set
+`VERIFY_REAP_JITTER_MS=0` to disable jitter and restore the old fixed-interval
+behavior exactly.
+
 ## Honest limitations (Phase 7 hardening)
 
 - **Third-party contracts** are verifiable only when the author built with a
@@ -155,6 +267,46 @@ When `worker-service` receives `SIGINT` or `SIGTERM` (e.g. during deployments or
 2. It waits for all active in-flight verification jobs to complete their build execution, status persistence, and optional on-chain attestation mirroring.
 3. If in-flight jobs do not complete within the configurable drain timeout (`10000ms`), the process logs a warning and exits cleanly.
 
+## Consumer group topology (issue #354)
+
+The worker-service now uses **domain-specific consumer groups** for queue processing.
+Each consumer group:
+
+- Has its own dedicated job store, so groups never compete for the same queue
+- Scales independently via configurable concurrency
+- Runs in isolated worker loops with independent polling
+- Shares common execution machinery (Executor, Resolver)
+
+### Current groups
+
+**Verification group** (`verification`):
+- Processes contract verification jobs from the `verification_records` table
+- Handles artifact download, WASM verification, attestation submission
+- Concurrency controlled by `WORKER_CONCURRENCY` (default: 1)
+- Each worker instance polls and claims its own batch
+
+### Scaling a consumer group
+
+To run more parallel verification workers, increase concurrency:
+
+```sh
+WORKER_CONCURRENCY=4 pnpm --filter @vellar/worker-service start
+```
+
+This spawns 4 independent worker loops, each claiming and processing verification
+jobs concurrently. With a batch size of N, total throughput = concurrency × N.
+
+### Adding new consumer groups
+
+Future domains (e.g., transaction processing) can be added by:
+
+1. Defining a new store interface (e.g., `TransactionJobStore`)
+2. Adding a factory function in `consumer-groups.ts` (e.g., `createTransactionGroup`)
+3. Starting the group in `index.ts` with its own store and concurrency settings
+
+The architecture ensures groups remain isolated — a verification worker will never
+process transaction jobs and vice versa.
+
 ## Env
 
 | Var                       | Purpose                                                        | Default |
@@ -162,9 +314,11 @@ When `worker-service` receives `SIGINT` or `SIGTERM` (e.g. during deployments or
 | `DATABASE_URL`            | shared verification store (REQUIRED — worker exits without it) | —       |
 | `VERIFY_BUILD_IMAGE`      | toolchain image → real Docker builds; unset → stub             | unset   |
 | `STELLAR_RPC_URL`         | RPC for reading the deployed wasm hash                         | testnet |
+| `VERIFY_RPC_TIMEOUT_MS`   | cap on the RPC round-trip; a timeout is retried, not failed     | 10000   |
 | `VERIFY_POLL_IDLE_MS`     | poll interval when the queue is idle                           | 5000    |
 | `VERIFY_BUILD_TIMEOUT_S`  | kill a build after this many seconds                           | 600     |
 | `VERIFY_BUILD_MEMORY`     | container memory cap (docker `--memory`)                       | 2g      |
 | `VERIFY_BUILD_CPUS`       | container CPU cap (docker `--cpus`)                            | 2       |
 | `VERIFY_BUILD_PIDS_LIMIT` | max processes in the container                                 | 512     |
-
+| `WORKER_CONCURRENCY`      | parallel worker loops in the verification consumer group       | 1       |
+| `VERIFY_REAP_JITTER_MS`   | ± randomized jitter on the reaper interval (0 disables it)     | 30000   |

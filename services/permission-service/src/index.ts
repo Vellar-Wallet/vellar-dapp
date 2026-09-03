@@ -2,6 +2,8 @@ import pg from "pg";
 import { portFromEnv, startService } from "@vellar/service-kit";
 import { buildPermissionServer } from "./server";
 
+export { configFromEnv, DEFAULTS, type PermissionServiceRuntimeConfig } from "./config";
+export { OriginPermissionCache } from "./origin-permission-cache";
 export { buildPermissionServer, type PermissionServiceDeps } from "./server";
 
 const databaseUrl = process.env.DATABASE_URL;

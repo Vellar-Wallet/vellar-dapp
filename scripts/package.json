@@ -1,0 +1,16 @@
+{
+  "name": "@vellar/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Operational scripts: deploy health gating (#334, #336), etc.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  }
+}

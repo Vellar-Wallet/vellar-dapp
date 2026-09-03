@@ -12,6 +12,8 @@ export interface ClaimedJob extends VerificationJobInput {
   /** When the record was first submitted (epoch ms) — for turnaround timing.
    * Optional so stores that don't track it still satisfy the contract. */
   submittedAtMs?: number;
+  /** Cross-service correlation ID for end-to-end tracing (Issue #299). */
+  correlationId?: string;
 }
 
 export interface ReapResult {
@@ -31,11 +33,20 @@ export interface VerificationJobStore {
    * `timeoutMs` (a crashed/hung worker never completed them). Each reclaim bumps
    * an attempt counter; a row that has already been attempted `maxAttempts`
    * times is parked in 'dead_letter' instead of re-queued, so a poisoned job
-   * can't loop forever. `nowMs` is injectable for tests. */
+   * can't loop forever. Implements exponential backoff with full jitter on reclaim:
+   * a reclaimed job is delayed random(0, min(maxBackoffDelayMs, baseDelayMs * 2^attempt))
+   * before allowed to be claimed again, preventing thundering herd.
+   * `nowMs` is injectable for tests. */
   reapStranded(opts: {
     timeoutMs: number;
     maxAttempts: number;
+    baseBackoffDelayMs?: number;
+    maxBackoffDelayMs?: number;
     nowMs?: number;
+    /** Callback fired when a job is reclaimed (for metrics). */
+    onReclaimed?: (attempts: number) => void;
+    /** Callback fired when a job is dead-lettered (for metrics). */
+    onDeadLettered?: () => void;
   }): Promise<ReapResult>;
   /** Count of ACTIVE records (submitted + building) — the queue-depth control
    * for /verification/submit (M7). */

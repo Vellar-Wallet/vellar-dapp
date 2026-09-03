@@ -66,15 +66,31 @@ export interface SessionRepository {
   delete(id: string): Promise<boolean>;
 }
 
+export const SENSITIVE_WALLET_ACTIONS = [
+  "wallet.created",
+  "wallet.connected",
+  "session.revoked",
+  "tx.submitted",
+  "policy.updated",
+  "account.merged",
+  "key.rotated",
+  "threshold.updated",
+  "signer.added",
+  "signer.removed",
+] as const;
+
+export type SensitiveWalletAction = (typeof SENSITIVE_WALLET_ACTIONS)[number];
+
 export interface AuditEvent {
   type: string;
   at: string;
   data: Record<string, unknown>;
+  actor?: string;
 }
 
 export interface AuditLog {
-  record(type: string, data: Record<string, unknown>): Promise<void>;
-  list(): Promise<AuditEvent[]>;
+  record(type: string, data: Record<string, unknown>, actor?: string): Promise<void>;
+  list(filter?: { type?: string; actor?: string }): Promise<AuditEvent[]>;
 }
 
 export function createMemoryWalletRepository(): WalletRepository {
@@ -130,11 +146,18 @@ export function createMemorySessionRepository(): SessionRepository {
 export function createMemoryAuditLog(): AuditLog {
   const events: AuditEvent[] = [];
   return {
-    async record(type, data) {
-      events.push({ type, at: new Date().toISOString(), data });
+    async record(type, data, actor) {
+      events.push({ type, at: new Date().toISOString(), data, actor });
     },
-    async list() {
-      return [...events];
+    async list(filter) {
+      let filtered = [...events];
+      if (filter?.type) {
+        filtered = filtered.filter((e) => e.type === filter.type);
+      }
+      if (filter?.actor) {
+        filtered = filtered.filter((e) => e.actor === filter.actor);
+      }
+      return filtered;
     },
   };
 }

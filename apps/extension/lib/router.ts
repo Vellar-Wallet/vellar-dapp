@@ -1,10 +1,9 @@
 import {
   errorPayload,
-  hasCapability,
-  normalizeOrigin,
   type ProviderRequest,
   type ResponsePayload,
 } from "@vellar/provider-sdk";
+import { hasCapability, normalizeOrigin } from "@vellar/permission-service";
 import { isPairOriginAllowed, type PairOriginPolicy } from "./pair-origins";
 import type { ExtensionState } from "./state";
 
@@ -22,6 +21,8 @@ function respond(payload: ResponsePayload, revokeGrant?: boolean): RouteDecision
   return revokeGrant ? { kind: "respond", payload, revokeGrant } : { kind: "respond", payload };
 }
 
+import { sanitizeString } from "./sanitization";
+
 export function routeProviderRequest(
   request: ProviderRequest,
   rawOrigin: string,
@@ -35,6 +36,7 @@ export function routeProviderRequest(
   if (!origin) {
     return respond(errorPayload("invalid_request", "Requests from this origin are not supported"));
   }
+  const cleanOrigin = sanitizeString(origin);
 
   // Pairing is the one method that must work while nothing is paired yet.
   // Always requires explicit popup approval (origin + wallet shown), and the
@@ -48,7 +50,7 @@ export function routeProviderRequest(
         errorPayload("unauthorized", "This origin is not permitted to pair the Vellar extension"),
       );
     }
-    return { kind: "needs-approval", origin };
+    return { kind: "needs-approval", origin: cleanOrigin };
   }
 
   // Status probe: no approval, but only confirms an address+network the
@@ -84,7 +86,7 @@ export function routeProviderRequest(
           result: { address: wallet.address, network: wallet.network },
         });
       }
-      return { kind: "needs-approval", origin };
+      return { kind: "needs-approval", origin: cleanOrigin };
     }
 
     case "get_address": {
@@ -103,7 +105,7 @@ export function routeProviderRequest(
       }
       // Every transaction requires explicit approval — a grant only allows
       // the origin to ASK (§5.3 no silent signing).
-      return { kind: "needs-approval", origin };
+      return { kind: "needs-approval", origin: cleanOrigin };
     }
 
     case "disconnect": {

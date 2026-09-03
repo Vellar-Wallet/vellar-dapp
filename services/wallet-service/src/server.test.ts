@@ -134,6 +134,21 @@ describe("POST /wallet/connect", () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it("rate-limits passkey auth connect requests when max attempts exceeded (429)", async () => {
+    const server = buildServer({
+      submitter: workingSubmitter(),
+      passkeyRateLimitMax: 2,
+    });
+    const payload = { keyId: "test-key-limit", network: "testnet" as const };
+    const hit1 = await server.inject({ method: "POST", url: "/wallet/connect", payload });
+    expect(hit1.statusCode).toBe(404);
+    const hit2 = await server.inject({ method: "POST", url: "/wallet/connect", payload });
+    expect(hit2.statusCode).toBe(404);
+    const hit3 = await server.inject({ method: "POST", url: "/wallet/connect", payload });
+    expect(hit3.statusCode).toBe(429);
+    expect(hit3.json().error).toBe("rate_limited");
+  });
+
   it("scopes the mapping by network", async () => {
     const server = build(workingSubmitter());
     await server.inject({ method: "POST", url: "/wallet/create", payload: createBody });
@@ -199,6 +214,37 @@ describe("GET /health readiness (FIX 7)", () => {
     const res = await app.inject({ url: "/health" });
     expect(res.statusCode).toBe(503);
     expect(res.json().status).toBe("unavailable");
+  });
+});
+
+// Issue #329 — GET /ready: distinct from /health, so an orchestrator can gate
+// traffic on readiness specifically without depending on /health's dual
+// liveness+readiness shape. Backed by the same isReady probe (deps.isReady,
+// wired to the DB ping in index.ts) as /health's existing FIX 7 behavior.
+describe("GET /ready", () => {
+  it("200 when no probe is wired (dev default)", async () => {
+    const server = build(workingSubmitter());
+    const res = await server.inject({ url: "/ready" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "ready", service: "wallet-service" });
+  });
+
+  it("503 when a dependency (the DB, via isReady) is unavailable", async () => {
+    app = buildServer({ submitter: workingSubmitter(), isReady: () => false });
+    const res = await app.inject({ url: "/ready" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ status: "not_ready", service: "wallet-service" });
+  });
+
+  it("503 when the readiness probe throws (e.g. a DB ping that errors)", async () => {
+    app = buildServer({
+      submitter: workingSubmitter(),
+      isReady: async () => {
+        throw new Error("connection refused");
+      },
+    });
+    const res = await app.inject({ url: "/ready" });
+    expect(res.statusCode).toBe(503);
   });
 });
 
@@ -683,6 +729,90 @@ describe("session capability does NOT drift into general auth (RA-3 scope)", () 
       payload: {},
     });
     expect(badSubmit.statusCode).toBe(400);
+  });
+});
+
+describe("sensitive wallet action audit logging (#313)", () => {
+  const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
+
+  it("records audit log entries with actor, action, and timestamp for all sensitive wallet actions", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    // 1. policy.updated
+    const policyRes = await server.inject({
+      method: "POST",
+      url: "/wallet/policy/update",
+      headers: bearer(createSessionId),
+      payload: { policyId: "pol-123", rules: { maxSpend: "100" } },
+    });
+    expect(policyRes.statusCode).toBe(200);
+
+    // 2. account.merged
+    const mergeRes = await server.inject({
+      method: "POST",
+      url: "/wallet/account/merge",
+      headers: bearer(createSessionId),
+      payload: { destinationContractId: "CDESTINATION" },
+    });
+    expect(mergeRes.statusCode).toBe(200);
+
+    // 3. key.rotated
+    const rotateRes = await server.inject({
+      method: "POST",
+      url: "/wallet/key/rotate",
+      headers: bearer(createSessionId),
+      payload: { oldKeyId: "key-old", newKeyId: "key-new" },
+    });
+    expect(rotateRes.statusCode).toBe(200);
+
+    // 4. threshold.updated
+    const thresholdRes = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 2 },
+    });
+    expect(thresholdRes.statusCode).toBe(200);
+
+    // 5. signer.added & signer.removed
+    const addSignerRes = await server.inject({
+      method: "POST",
+      url: "/wallet/signer/manage",
+      headers: bearer(createSessionId),
+      payload: { action: "add", signerKey: "GNEWKEY", weight: 1 },
+    });
+    expect(addSignerRes.statusCode).toBe(200);
+
+    const removeSignerRes = await server.inject({
+      method: "POST",
+      url: "/wallet/signer/manage",
+      headers: bearer(createSessionId),
+      payload: { action: "remove", signerKey: "GNEWKEY" },
+    });
+    expect(removeSignerRes.statusCode).toBe(200);
+
+    // Verify audit logs
+    const auditLogsRes = await server.inject({
+      url: "/wallet/audit-logs",
+      headers: bearer(createSessionId),
+    });
+    expect(auditLogsRes.statusCode).toBe(200);
+    const logs = auditLogsRes.json().auditLogs;
+
+    const eventTypes = logs.map((l: { type: string }) => l.type);
+    expect(eventTypes).toContain("policy.updated");
+    expect(eventTypes).toContain("account.merged");
+    expect(eventTypes).toContain("key.rotated");
+    expect(eventTypes).toContain("threshold.updated");
+    expect(eventTypes).toContain("signer.added");
+    expect(eventTypes).toContain("signer.removed");
+
+    for (const log of logs) {
+      expect(log.actor).toBe("CCONTRACT");
+      expect(log.at).toBeDefined();
+    }
   });
 });
 

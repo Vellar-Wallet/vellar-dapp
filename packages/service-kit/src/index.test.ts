@@ -58,6 +58,67 @@ describe("registerHealth", () => {
     expect(res.statusCode).toBe(503);
     await app.close();
   });
+
+  // /ready — distinct from /health (issue #329): a dedicated readiness route
+  // rather than /health's dual liveness+readiness shape.
+  it("/ready reports ready when no probe is configured (nothing to be not-ready about)", async () => {
+    const app = Fastify();
+    registerHealth(app, "test-service");
+    const res = await app.inject({ method: "GET", url: "/ready" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "ready", service: "test-service" });
+    await app.close();
+  });
+
+  it("/ready returns 200 when the readiness probe reports ready", async () => {
+    const app = Fastify();
+    registerHealth(app, "svc", { isReady: () => true });
+    const res = await app.inject({ method: "GET", url: "/ready" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "ready", service: "svc" });
+    await app.close();
+  });
+
+  it("/ready returns 503 when the readiness probe reports NOT ready", async () => {
+    const app = Fastify();
+    registerHealth(app, "svc", { isReady: () => false });
+    const res = await app.inject({ method: "GET", url: "/ready" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ status: "not_ready", service: "svc" });
+    await app.close();
+  });
+
+  it("/ready returns 503 when an async readiness probe rejects", async () => {
+    const app = Fastify();
+    registerHealth(app, "svc", {
+      isReady: async () => {
+        throw new Error("db connection lost");
+      },
+    });
+    const res = await app.inject({ method: "GET", url: "/ready" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ status: "not_ready", service: "svc" });
+    await app.close();
+  });
+
+  it("/health and /ready agree — a probe change flips both routes together", async () => {
+    let ready = true;
+    const app = Fastify();
+    registerHealth(app, "svc", { isReady: () => ready });
+
+    const healthOk = await app.inject({ method: "GET", url: "/health" });
+    const readyOk = await app.inject({ method: "GET", url: "/ready" });
+    expect(healthOk.statusCode).toBe(200);
+    expect(readyOk.statusCode).toBe(200);
+
+    ready = false;
+    const healthDown = await app.inject({ method: "GET", url: "/health" });
+    const readyDown = await app.inject({ method: "GET", url: "/ready" });
+    expect(healthDown.statusCode).toBe(503);
+    expect(readyDown.statusCode).toBe(503);
+
+    await app.close();
+  });
 });
 
 describe("portFromEnv", () => {

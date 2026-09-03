@@ -47,6 +47,12 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+      - name: Verify contracts supply-chain hardening
+        run: |
+          grep -E 'soroban-sdk = "=27\.0\.0"' contracts/Cargo.toml
+          grep -E 'ed25519-dalek = "=2\.2\.0"' contracts/Cargo.toml
+          grep -E 'rev = "[0-9a-f]{40}"' contracts/Cargo.toml
+
       - name: Typecheck
         run: pnpm typecheck
 

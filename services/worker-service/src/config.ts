@@ -8,6 +8,12 @@ export interface WorkerRuntimeConfig {
    * (the M5 attestor guard) read THIS, never an inference from the passphrase. */
   network: Network;
   rpcUrl: string;
+  /** Cap on the getContractData RPC round-trip when resolving the deployed
+   * wasm hash (issue #330) — that call previously had no timeout at all, so
+   * a hung upstream RPC endpoint could stall a worker job indefinitely.
+   * Default 10s. A timeout is retried (left "building"), never a terminal
+   * "failed" verdict — see resolver.ts / verify.ts. */
+  rpcTimeoutMs: number;
   /** Required: the worker shares verification-service's Postgres. Without it the
    * worker has no jobs to claim and exits with a loud error. */
   databaseUrl: string | undefined;
@@ -35,9 +41,20 @@ export interface WorkerRuntimeConfig {
   reapTimeoutMs: number;
   /** Reaper interval — how often to sweep for stranded rows. Default 5 min. */
   reapIntervalMs: number;
+  /** Randomized jitter bound applied to reapIntervalMs on every tick (issue
+   * #331) — an ABSOLUTE ± duration, not a percentage, so multiple
+   * worker-service replicas don't sweep in lockstep and spike Postgres
+   * together. Default 30s (10% of the default 5-min interval). Set to 0 to
+   * disable (exact fixed interval, the old behavior). */
+  reapJitterMs: number;
   /** Max claim attempts before a stranded job is parked in 'dead_letter'
    * (default 3: a transient crash gets 2 retries, a poisoned job parks). */
   maxBuildAttempts: number;
+  /** Consumer group concurrency (#354): how many parallel worker loops to run
+   * in the verification consumer group. Default 1. */
+  workerConcurrency: number;
+  /** Backpressure concurrency limit for concurrent transaction processing (default 2). */
+  concurrencyLimit: number;
 }
 
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
@@ -60,6 +77,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRunti
   return {
     network,
     rpcUrl,
+    rpcTimeoutMs: env.VERIFY_RPC_TIMEOUT_MS ? Number(env.VERIFY_RPC_TIMEOUT_MS) : 10_000,
     databaseUrl: env.DATABASE_URL || undefined,
     buildImage: env.VERIFY_BUILD_IMAGE || undefined,
     pollIdleMs: env.VERIFY_POLL_IDLE_MS ? Number(env.VERIFY_POLL_IDLE_MS) : 5000,
@@ -78,7 +96,14 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRunti
     attestationSweepMs: env.ATTESTATION_SWEEP_MS ? Number(env.ATTESTATION_SWEEP_MS) : 600_000,
     reapTimeoutMs: env.VERIFY_REAP_TIMEOUT_MS ? Number(env.VERIFY_REAP_TIMEOUT_MS) : 900_000,
     reapIntervalMs: env.VERIFY_REAP_INTERVAL_MS ? Number(env.VERIFY_REAP_INTERVAL_MS) : 300_000,
+    reapJitterMs: env.VERIFY_REAP_JITTER_MS ? Number(env.VERIFY_REAP_JITTER_MS) : 30_000,
     maxBuildAttempts: env.VERIFY_MAX_ATTEMPTS ? Number(env.VERIFY_MAX_ATTEMPTS) : 3,
+    workerConcurrency: env.WORKER_CONCURRENCY ? Number(env.WORKER_CONCURRENCY) : 1,
+    concurrencyLimit: env.WORKER_CONCURRENCY
+      ? Number(env.WORKER_CONCURRENCY)
+      : env.VERIFY_CONCURRENCY_LIMIT
+      ? Number(env.VERIFY_CONCURRENCY_LIMIT)
+      : 2,
   };
 }
 

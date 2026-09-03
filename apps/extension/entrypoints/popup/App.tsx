@@ -77,21 +77,23 @@ interface RequestDescription {
   address?: string;
 }
 
+import { sanitizeString } from "../../lib/sanitization";
+
 function describeRequest(request: PendingApprovalSummary["request"]): RequestDescription {
   switch (request.method) {
     case "connect":
       return { text: "wants to connect: see your address and request transaction approvals." };
     case "pair":
       return {
-        text: `wants to pair this extension as a device signer on ${request.params.network}. You'll confirm with your passkey next; the pairing expires automatically.`,
-        address: request.params.address,
+        text: `wants to pair this extension as a device signer on ${sanitizeString(request.params.network)}. You'll confirm with your passkey next; the pairing expires automatically.`,
+        address: sanitizeString(request.params.address),
       };
     case "sign_transaction":
       return {
-        text: `wants you to sign a transaction on ${request.params.network}. Approving signs it with this device's key — review the site carefully.`,
+        text: `wants you to sign a transaction on ${sanitizeString(request.params.network)}. Approving signs it with this device's key — review the site carefully.`,
       };
     default:
-      return { text: `sent a ${request.method} request.` };
+      return { text: `sent a ${sanitizeString((request as { method: string }).method)} request.` };
   }
 }
 
