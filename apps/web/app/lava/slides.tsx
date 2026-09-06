@@ -454,7 +454,7 @@ export const SLIDES: Slide[] = [
         <h2>
           Five things, <em>in order.</em>
         </h2>
-        <div className="deck-milestones">
+        <div className="deck-milestones deck-milestones--five">
           <div className="deck-milestone deck-card--lime">
             <h4>Harden the infrastructure</h4>
             <p>
