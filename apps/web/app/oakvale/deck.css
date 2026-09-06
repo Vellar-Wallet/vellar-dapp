@@ -1,0 +1,905 @@
+/* ============================================================
+   Oakvale pitch deck — built on the existing "paper & signals"
+   token system (landing.css), NOT a new design language. A real
+   slide deck on top of it: one slide in view, click/arrow-key to
+   advance, animated in/out using the site's own reveal easing.
+   ============================================================ */
+
+.deck {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--lp-paper);
+  color: var(--lp-ink);
+  font-family: var(--lp-body);
+}
+
+.deck-slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(2rem, 6vw, 6rem) clamp(1.5rem, 8vw, 8rem);
+  opacity: 0;
+  transform: translateY(24px);
+  pointer-events: none;
+  transition:
+    opacity 0.55s var(--lp-ease-rise),
+    transform 0.55s var(--lp-ease-rise);
+}
+.deck-slide.is-active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.deck-slide.is-leaving {
+  opacity: 0;
+  transform: translateY(-16px);
+}
+
+.deck-slide-inner {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* ---- Per-element stagger, fires when the slide becomes active. Same
+   easing as the slide transition itself, so the deck reads as one voice
+   instead of the container animating and everything inside just appearing. ---- */
+@keyframes deck-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.deck-slide.is-active .deck-eyebrow,
+.deck-slide.is-active h1,
+.deck-slide.is-active h2,
+.deck-slide.is-active .deck-lead,
+.deck-slide.is-active p.deck-body,
+.deck-slide.is-active .deck-kicker,
+.deck-slide.is-active .deck-logo-row,
+.deck-slide.is-active .deck-ask-number,
+.deck-slide.is-active .deck-ribbon,
+.deck-slide.is-active .deck-card,
+.deck-slide.is-active .deck-evidence-row,
+.deck-slide.is-active .deck-chips b,
+.deck-slide.is-active .deck-budget-item,
+.deck-slide.is-active .deck-team-name,
+.deck-slide.is-active .deck-team-role {
+  animation: deck-rise 0.6s var(--lp-ease-rise) both;
+}
+.deck-slide.is-active .deck-eyebrow {
+  animation-delay: 0.02s;
+}
+.deck-slide.is-active .deck-logo-row {
+  animation-delay: 0s;
+}
+.deck-slide.is-active h1,
+.deck-slide.is-active h2 {
+  animation-delay: 0.08s;
+}
+.deck-slide.is-active .deck-lead,
+.deck-slide.is-active p.deck-body:first-of-type {
+  animation-delay: 0.16s;
+}
+.deck-slide.is-active .deck-ask-number {
+  animation-delay: 0.1s;
+}
+.deck-slide.is-active .deck-kicker,
+.deck-slide.is-active .deck-ribbon {
+  animation-delay: 0.3s;
+}
+.deck-slide.is-active .deck-card:nth-child(1),
+.deck-slide.is-active .deck-evidence-row:nth-child(1),
+.deck-slide.is-active .deck-chips b:nth-child(1),
+.deck-slide.is-active .deck-budget-item:nth-child(1) {
+  animation-delay: 0.2s;
+}
+.deck-slide.is-active .deck-card:nth-child(2),
+.deck-slide.is-active .deck-evidence-row:nth-child(2),
+.deck-slide.is-active .deck-chips b:nth-child(2),
+.deck-slide.is-active .deck-budget-item:nth-child(2) {
+  animation-delay: 0.28s;
+}
+.deck-slide.is-active .deck-card:nth-child(3),
+.deck-slide.is-active .deck-evidence-row:nth-child(3),
+.deck-slide.is-active .deck-chips b:nth-child(3),
+.deck-slide.is-active .deck-budget-item:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.deck-slide.is-active .deck-evidence-row:nth-child(4),
+.deck-slide.is-active .deck-chips b:nth-child(4),
+.deck-slide.is-active .deck-budget-item:nth-child(4) {
+  animation-delay: 0.44s;
+}
+.deck-slide.is-active .deck-team-name {
+  animation-delay: 0.1s;
+}
+.deck-slide.is-active .deck-team-role {
+  animation-delay: 0.18s;
+}
+.deck-slide.is-active .deck-card:hover {
+  transform: translateY(-3px);
+}
+.deck-card {
+  transition: transform 0.2s ease;
+}
+
+/* ---- Chrome: progress + controls, always on top ---- */
+
+.deck-chrome {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+.deck-chrome > * {
+  pointer-events: auto;
+}
+
+.deck-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: var(--lp-lime);
+  z-index: 21;
+  transition: width 0.4s var(--lp-ease-rise);
+}
+
+.deck-pagecount {
+  position: fixed;
+  bottom: clamp(1rem, 3vw, 2rem);
+  left: clamp(1.25rem, 4vw, 2.5rem);
+  font-family: var(--lp-mono);
+  font-size: 0.8125rem;
+  color: var(--lp-ink-faint);
+  letter-spacing: 0.04em;
+  z-index: 21;
+}
+
+.deck-nav {
+  position: fixed;
+  bottom: clamp(1rem, 3vw, 2rem);
+  right: clamp(1.25rem, 4vw, 2.5rem);
+  display: flex;
+  gap: 0.5rem;
+  z-index: 21;
+}
+.deck-nav-btn {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  background: var(--lp-ink);
+  color: var(--lp-on-dark);
+  border: none;
+  cursor: pointer;
+  clip-path: var(--lp-clip-br-sm);
+  transition:
+    background var(--lp-dur-fast) ease,
+    opacity var(--lp-dur-fast) ease;
+}
+.deck-nav-btn:hover {
+  background: var(--lp-forest);
+}
+.deck-nav-btn:focus-visible {
+  outline: 2px solid var(--lp-sun);
+  outline-offset: 3px;
+}
+.deck-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.deck-nav-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---- Slide anatomy ---- */
+
+.deck-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  width: fit-content;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lp-ink-faint);
+  margin-bottom: var(--lp-sp-4);
+}
+
+.deck-slide h1,
+.deck-slide h2 {
+  font-family: var(--lp-display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.04;
+  margin: 0 0 var(--lp-sp-6);
+}
+.deck-slide h1 {
+  font-size: clamp(2.5rem, 2rem + 3.5vw, 4.75rem);
+}
+.deck-slide h2 {
+  font-size: clamp(1.9rem, 1.5rem + 2.2vw, 3.1rem);
+}
+.deck-slide h1 em,
+.deck-slide h2 em {
+  font-family: var(--lp-serif);
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.deck-lead {
+  font-size: clamp(1.0625rem, 1rem + 0.5vw, 1.375rem);
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+  max-width: 62ch;
+}
+
+.deck-slide p.deck-body {
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  color: var(--lp-ink-soft);
+  max-width: 68ch;
+  margin: 0 0 var(--lp-sp-4);
+}
+.deck-slide p.deck-body b {
+  color: var(--lp-ink);
+  font-weight: 700;
+}
+
+.deck-kicker {
+  font-family: var(--lp-mono);
+  font-size: 0.8125rem;
+  color: var(--lp-ink-faint);
+  margin-top: var(--lp-sp-8);
+}
+
+/* The one loud number per slide. */
+.deck-headline-number {
+  font-family: var(--lp-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--lp-ink);
+  background: var(--lp-lime);
+  padding: 0.05em 0.28em;
+  display: inline-block;
+}
+
+/* ---- Evidence rows (Space Mono data lines) ---- */
+
+.deck-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-sp-3);
+  margin-top: var(--lp-sp-6);
+}
+.deck-evidence-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--lp-sp-3);
+  padding-bottom: var(--lp-sp-3);
+  border-bottom: 1px solid var(--lp-line);
+  font-family: var(--lp-mono);
+  font-size: 0.9375rem;
+}
+.deck-evidence-row .num {
+  font-weight: 700;
+  color: var(--lp-forest);
+  min-width: 2.2ch;
+  flex-shrink: 0;
+}
+.deck-evidence-row .label {
+  color: var(--lp-ink-soft);
+  font-family: var(--lp-body);
+  font-size: 1rem;
+}
+
+/* ---- Milestones (roadmap steps, big faded numeral per card) ---- */
+
+.deck-milestones {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--lp-sp-6);
+  margin-top: var(--lp-sp-8);
+}
+.deck-milestone {
+  position: relative;
+  min-height: 190px;
+  padding: var(--lp-sp-6);
+  background: var(--lp-ink);
+  clip-path: var(--lp-clip-br-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-sp-2);
+}
+.deck-milestone::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  z-index: -1;
+  background: var(--card-fill, var(--lp-paper));
+  clip-path: var(--lp-clip-br-md-in1);
+}
+.deck-milestone-num {
+  align-self: flex-end;
+  margin-top: auto;
+  font-family: var(--lp-display);
+  font-weight: 800;
+  font-size: 2.5rem;
+  line-height: 1;
+  color: rgba(12, 59, 49, 0.22);
+}
+.deck-milestone h4 {
+  font-family: var(--lp-display);
+  font-weight: 700;
+  font-size: 1.1875rem;
+  margin: 0;
+}
+.deck-milestone p {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--lp-ink-soft);
+  margin: 0;
+}
+
+/* ---- Flow diagram (sequential 4-step proof chain) ---- */
+
+.deck-flow {
+  display: flex;
+  align-items: stretch;
+  gap: var(--lp-sp-3);
+  margin-top: var(--lp-sp-8);
+}
+.deck-flow-step {
+  flex: 1;
+  min-width: 0;
+}
+.deck-flow-card {
+  height: 100%;
+  padding: var(--lp-sp-6);
+}
+.deck-flow-card h4 {
+  font-size: 1.0625rem;
+}
+.deck-flow-card p {
+  font-size: 0.875rem;
+}
+.deck-flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lp-ink-faint);
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+/* ---- Card grid (problem / solution triplets) ---- */
+
+.deck-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--lp-sp-4);
+  margin-top: var(--lp-sp-8);
+}
+.deck-card {
+  position: relative;
+  padding: var(--lp-sp-6);
+  background: var(--lp-ink);
+  clip-path: var(--lp-clip-br-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-sp-2);
+}
+.deck-card::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  z-index: -1;
+  background: var(--card-fill, var(--lp-paper));
+  clip-path: var(--lp-clip-br-md-in1);
+}
+.deck-card h4 {
+  font-family: var(--lp-display);
+  font-weight: 700;
+  font-size: 1.1875rem;
+  margin: 0;
+}
+.deck-card p {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--lp-ink-soft);
+  margin: 0;
+}
+.deck-card--coral {
+  --card-fill: var(--lp-coral-soft);
+}
+.deck-card--lime {
+  --card-fill: var(--lp-lime-soft);
+}
+.deck-card--mint {
+  --card-fill: var(--lp-mint-soft);
+}
+.deck-card--sun {
+  --card-fill: var(--lp-sun-soft);
+}
+
+/* Bottom-anchored chip/tag some cards carry (evidence, roles, status).
+   The "border" is the element's own background clipped to the outer cut;
+   the fill sits on ::before clipped to the matching inset shape, so the
+   diagonal edge gets a real stroke instead of being left open by
+   clip-path (which never draws a border along the shape it cuts). */
+.deck-card-chip {
+  position: relative;
+  align-self: flex-start;
+  margin-top: var(--lp-sp-4);
+  min-width: 2.4em;
+  text-align: center;
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--lp-forest);
+  background: var(--lp-line-strong);
+  padding: 0.3em 0.6em;
+  clip-path: var(--lp-clip-br-sm);
+}
+.deck-card-chip::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--lp-paper);
+  clip-path: var(--lp-clip-br-sm-in1);
+}
+
+/* ---- Title / close slide logo row ---- */
+
+.deck-logo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--lp-sp-xl);
+}
+.deck-logo-row img {
+  display: block;
+  height: clamp(40px, 5.5vw, 56px);
+  width: auto;
+}
+
+/* Oakvale's mark is cream-on-transparent; inverted + darkened so it reads
+   as dark ink on the deck's own paper ground instead of sitting in a chip. */
+.oakvale-chip {
+  display: inline-flex;
+  align-items: center;
+}
+.oakvale-chip img {
+  height: clamp(56px, 8vw, 170px);
+  width: auto;
+  filter: invert(1) brightness(0.35);
+}
+
+/* ---- Chips (used on the competitive-position / team slides) ---- */
+
+.deck-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lp-sp-2);
+  margin-top: var(--lp-sp-4);
+}
+.deck-chips b {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 5px 10px;
+  border: 1px solid var(--lp-line-strong);
+  font-family: var(--lp-body);
+}
+
+/* ---- Two-column layout (used on several slides) ---- */
+
+.deck-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: var(--lp-sp-12);
+  align-items: start;
+}
+
+/* ---- Ask slide: the four-category breakdown ---- */
+
+.deck-ask-number {
+  font-family: var(--lp-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--lp-ink);
+  background: var(--lp-lime);
+  padding: 0.08em 0.3em;
+  font-size: clamp(3rem, 2.2rem + 4vw, 5.5rem);
+  display: inline-block;
+  line-height: 1;
+  margin-bottom: var(--lp-sp-6);
+}
+
+.deck-budget-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-sp-6);
+  margin-top: var(--lp-sp-8);
+  max-width: 640px;
+}
+.deck-budget-item .t {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--lp-sp-2);
+}
+.deck-budget-item .cat {
+  font-family: var(--lp-display);
+  font-weight: 700;
+  font-size: 1.0625rem;
+}
+.deck-budget-item .pct {
+  font-family: var(--lp-mono);
+  font-weight: 700;
+  color: var(--lp-forest);
+}
+.deck-budget-item .track {
+  height: 22px;
+  background: var(--lp-line-strong);
+  overflow: hidden;
+  clip-path: var(--lp-clip-br-sm);
+}
+.deck-budget-item .fill {
+  height: 100%;
+  background: var(--lp-forest);
+  display: flex;
+  align-items: center;
+  padding-left: 0.6rem;
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--lp-on-dark);
+  width: 0%;
+  transition: width 0.8s var(--lp-ease-rise) 0.2s;
+}
+.deck-slide.is-active .deck-budget-item .fill {
+  width: var(--fill-pct);
+}
+.deck-budget-item .desc {
+  font-size: 0.875rem;
+  color: var(--lp-ink-faint);
+  margin-top: var(--lp-sp-2);
+}
+
+/* ---- Team slide ---- */
+
+.deck-team-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--lp-sp-6);
+}
+.deck-team-name {
+  font-family: var(--lp-display);
+  font-weight: 800;
+  font-size: clamp(1.75rem, 1.4rem + 1.6vw, 2.5rem);
+}
+.deck-team-role {
+  color: var(--lp-ink-faint);
+  font-size: 1rem;
+  margin-top: 2px;
+}
+.deck-team-photo {
+  width: 168px;
+  height: 168px;
+  object-fit: cover;
+  object-position: top center;
+  clip-path: var(--lp-clip-br-md);
+  flex-shrink: 0;
+}
+
+/* ---- Marketing-status ribbon (zero-marketing framing) ---- */
+
+.deck-ribbon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  font-family: var(--lp-mono);
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  color: var(--lp-forest);
+  background: var(--lp-lime-soft);
+  padding: 0.4em 0.8em;
+  margin-top: var(--lp-sp-6);
+  /* The ribbon is a pull-quote: body copy that follows it needs the same
+     breathing room above it that the ribbon itself gets. */
+  margin-bottom: var(--lp-sp-6);
+  clip-path: var(--lp-clip-br-sm);
+}
+.deck-ribbon::before {
+  content: "●";
+  font-size: 0.6em;
+}
+
+/* ---- Downloads chart (dataviz skill: forest fill, validated for contrast;
+   lime stays reserved for the headline total, not the bars themselves) ---- */
+
+.dl-chart {
+  margin-top: var(--lp-sp-6);
+}
+.dl-chart-title {
+  font-family: var(--lp-mono);
+  font-size: 0.8125rem;
+  color: var(--lp-ink-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 var(--lp-sp-4);
+}
+.dl-chart-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--lp-sp-3);
+  height: 180px;
+  margin-top: 1.75rem;
+  border-bottom: 1px solid var(--lp-line);
+  padding: 0 0.25rem;
+}
+.dl-bar-col {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  position: relative;
+  cursor: default;
+}
+.dl-bar-col:focus-visible {
+  outline: 2px solid var(--lp-forest);
+  outline-offset: 2px;
+}
+.dl-bar {
+  width: 100%;
+  max-width: 44px;
+  background: var(--lp-forest);
+  border-radius: 4px 4px 0 0; /* rounded data-end, anchored to the baseline */
+  position: relative;
+  transition:
+    background var(--lp-dur-fast) ease,
+    opacity var(--lp-dur-fast) ease;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+.dl-bar.is-partial {
+  background: var(--lp-line-strong);
+  background-image: repeating-linear-gradient(135deg, var(--lp-forest) 0 2px, transparent 2px 6px);
+}
+.dl-bar.is-hovered {
+  background: var(--lp-ink);
+}
+.dl-bar-value {
+  position: absolute;
+  top: -1.4rem;
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--lp-ink);
+}
+.dl-bar-label {
+  margin-top: var(--lp-sp-2);
+  font-family: var(--lp-mono);
+  font-size: 0.6875rem;
+  color: var(--lp-ink-faint);
+  white-space: nowrap;
+}
+.dl-tooltip {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--lp-ink);
+  color: var(--lp-on-dark);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  z-index: 5;
+  clip-path: var(--lp-clip-br-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+}
+.dl-tooltip b {
+  font-family: var(--lp-mono);
+}
+.dl-tooltip span {
+  font-size: 0.6875rem;
+  color: var(--lp-on-dark-faint);
+}
+.dl-chart-foot {
+  margin-top: var(--lp-sp-6);
+  font-size: 0.9375rem;
+  color: var(--lp-ink-soft);
+}
+.dl-chart-total {
+  font-family: var(--lp-mono);
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--lp-ink);
+  background: var(--lp-lime);
+  padding: 0.05em 0.25em;
+}
+
+/* Visually-hidden accessible table: same data, different modality. */
+.sr-only-table {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Reduced motion ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .deck-slide {
+    transition: opacity 0.01ms linear;
+    transform: none !important;
+  }
+  .deck-slide.is-active * {
+    animation: none !important;
+  }
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 900px) {
+  .deck-cards {
+    grid-template-columns: 1fr;
+  }
+  .deck-split {
+    grid-template-columns: 1fr;
+  }
+  .deck-logo-row {
+    margin-bottom: var(--lp-sp-lg);
+  }
+  .deck-milestones {
+    grid-template-columns: 1fr;
+  }
+  .deck-flow {
+    flex-direction: column;
+  }
+  .deck-flow-arrow {
+    transform: rotate(90deg);
+  }
+  .deck-team-head {
+    flex-direction: column-reverse;
+  }
+}
+
+
+/* ---- Download button ---- */
+
+/* Wider than the square arrow buttons, since it carries a word. */
+.deck-nav-btn--wide {
+  width: auto;
+  padding: 0 0.9rem;
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ---- Print / Save as PDF ----
+
+   On screen the deck shows one slide at a time, absolutely positioned and
+   faded. For print, DeckView mounts every slide and this block turns them
+   back into normal flow: one full landscape page each, no animation, no
+   presenter chrome. What the presenter sees is what lands in the PDF, and
+   because it prints real text rather than screenshots, the contact links stay
+   clickable and the deck stays searchable. */
+
+/* Landscape, at the deck's own 16:9 aspect. Chrome honours explicit page
+   dimensions, but naming `landscape` as well makes the print dialog default to
+   it rather than falling back to the user's last-used orientation. */
+@page {
+  size: 1600px 900px landscape;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  /* Presenter-only chrome never prints. */
+  .deck-chrome {
+    display: none !important;
+  }
+
+  .deck {
+    position: static !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .deck-slide {
+    position: relative !important;
+    inset: auto !important;
+    width: 1600px !important;
+    height: 900px !important;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+    animation: none !important;
+    pointer-events: auto !important;
+    break-after: page;
+    page-break-after: always;
+    overflow: hidden !important;
+  }
+
+  .deck-slide:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  /* The rise animation is keyed off .is-active, which only one slide carries.
+     Printing needs every element visible in its resting state. */
+  .deck-slide *,
+  .deck-slide.is-active * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* Nothing inside a slide may break across pages. */
+  .deck-cards,
+  .deck-card,
+  .deck-flow,
+  .deck-flow-step,
+  .deck-flow-card,
+  .deck-milestones,
+  .deck-milestone,
+  .deck-evidence,
+  .deck-evidence-row,
+  .deck-split,
+  .deck-founder,
+  .deck-ribbon {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Print engines drop backgrounds by default; these carry meaning. */
+  .deck-card,
+  .deck-card::before,
+  .deck-flow-card,
+  .deck-flow-card::before,
+  .deck-milestone,
+  .deck-milestone::before,
+  .deck-ribbon,
+  .deck-chips a,
+  .deck-headline-number {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
