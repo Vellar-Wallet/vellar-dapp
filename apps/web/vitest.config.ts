@@ -11,6 +11,16 @@ export default defineConfig({
     },
   },
   test: {
+    // Node 26 ships an experimental native localStorage that is only *available*
+    // when --localstorage-file is passed; enabled-but-unconfigured it shadows
+    // jsdom's with `undefined`, so `window.localStorage.clear()` throws in
+    // beforeEach and takes whole files down before a single assertion runs.
+    // This lived only in the package.json test script, so bare `vitest` and IDE
+    // runners saw 30+ false failures. Setting it here makes it invocation-
+    // independent. Vitest applies test.env before the worker environment loads.
+    env: {
+      NODE_OPTIONS: "--no-experimental-webstorage",
+    },
     environment: "jsdom",
     // Required for @testing-library/react auto-cleanup between tests.
     globals: true,
