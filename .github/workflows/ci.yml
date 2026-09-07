@@ -67,6 +67,9 @@ jobs:
           # stop being exercised.
           CI_REQUIRE_DB: "1"
 
+      - name: Load Test
+        run: pnpm test:load
+
       - name: Build
         run: pnpm build
 
