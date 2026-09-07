@@ -2,7 +2,6 @@
 
 <img width="5410" height="2088" alt="Full Logo White" src="https://github.com/user-attachments/assets/2eb47ce8-095d-4ce2-b64f-af530b7ce0f9" />
 
-
 **Vellar** is a web-first Stellar smart wallet with a companion browser extension.
 Passkey onboarding (no seed phrases), programmable on-chain account policies,
 contract verification & trust signals, and account cleanup/merge tooling — plus
