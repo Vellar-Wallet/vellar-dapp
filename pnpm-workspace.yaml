@@ -22,10 +22,15 @@ overrides:
   axios@>=1.0.0 <1.18.0: ">=1.18.1"
   # Blanket fast-uri pins: the range-scoped keys didn't catch parents that pin
   # an exact 4.1.0/3.1.3, so force the whole 3.x and 4.x lines to the patch.
-  # 4.1.2 is the advisory fix (GHSA host-confusion); the whole 4.x line resolves
-  # here through @fastify/ajv-compiler -> fastify (the live backend HTTP stack).
-  fast-uri@4: ">=4.1.2"
-  fast-uri@3: ">=3.1.4"
+  # The whole 4.x line resolves here through @fastify/ajv-compiler -> fastify
+  # (the live backend HTTP stack). Bumped 4.1.2 -> 4.1.3 on 2026-09-07: four
+  # further advisories (SSRF via malformed input and via repeated characters,
+  # host confusion via skipped IDN canonicalisation and via percent-encoded
+  # scheme) landed after the original pin, and 4.1.2 was exactly what resolved.
+  # A bare key (no @range selector) is required here: the selector form
+  # `fast-uri@4` left ajv@8.20.0 and @fastify/ajv-compiler@4.0.5 resolving
+  # 4.1.2 anyway. The bare key forces every resolution in the graph.
+  fast-uri: ">=4.1.3"
   shell-quote@<=1.8.4: ">=1.9.0"
   sharp@<0.35.0: ">=0.35.0"
   # Backend-runtime highs (2026-08): both are in the live services' HTTP stack.
@@ -43,6 +48,25 @@ overrides:
   adm-zip@<0.6.0: ">=0.6.0"
   brace-expansion@<1.1.18: ">=1.1.18"
   nanoid@<3.3.17: ">=3.3.17"
+  # Dev-only (2026-09-07). None of the three reaches runtime:
+  # browserslist via wxt -> @vitejs/plugin-react -> @babel/core (extension
+  # build); esbuild via drizzle-kit in three services and vite/wxt in the
+  # extension; uuid via wxt -> web-ext-run -> node-notifier.
+  # Versions are the advisories' own floors, not round numbers: esbuild needs
+  # 0.28.1 (the low arbitrary-file-read advisory), not 0.25.x — 0.25.12 and
+  # 0.27.7 both resolve here and 0.27.7 is inside the vulnerable range. uuid
+  # needs 11.1.1; 8.3.2 is what resolves today, so this is a major bump of a
+  # dev-only transitive.
+  browserslist@<4.28.7: ">=4.28.7"
+  esbuild@<0.28.1: ">=0.28.1"
+  uuid@<11.1.1: ">=11.1.1"
+  # toml reaches runtime: passkey-kit -> @openzeppelin/relayer-plugin-channels
+  # -> @stellar/stellar-sdk -> toml, used by the SDK's stellar_toml.js to parse
+  # a home domain's TOML. 3.0.0 carries an uncontrolled-recursion and a
+  # prototype-pollution advisory; the fix line is 4.2.0+. This is a MAJOR bump
+  # of a transitive we do not control, so it is verified two ways below rather
+  # than assumed: the export surface stays `parse`, and the full suite is green.
+  toml@<4.2.0: ">=4.2.0"
 
 # @hookform/resolvers 5.x imports `zod/v4/core` at runtime but declares only
 # react-hook-form as a peer. Under pnpm's strict linking zod is never placed

@@ -22,7 +22,7 @@
     "@vellar/service-kit": "workspace:*",
     "@vellar/types": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.4.0",
+    "fastify": "^5.12.3",
     "pg": "^8.22.0",
     "zod": "^4.0.0"
   },
