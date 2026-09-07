@@ -1,6 +1,6 @@
 # Oakvale pitch — speaking script
 
-13 slides. Say this, don't read it — each block is what to *say*, not what's on
+13 slides. Say this, don't read it — each block is what to _say_, not what's on
 the slide. Keep pace: this whole thing should run 6-8 minutes before questions.
 
 ---

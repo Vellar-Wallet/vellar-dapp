@@ -26,7 +26,7 @@ Three deliberate changes from the Oakvale deck:
 - **The ask is gone.** Replaced by a page on what the next twelve months look
   like and what a partner would be joining. The close asks for a conversation.
 - **The frame is trust infrastructure and payment rails**, not "agent payments."
-  LAVA funds attestations, verification and settlement. Vellar *is* an
+  LAVA funds attestations, verification and settlement. Vellar _is_ an
   attestation registry and a settlement layer that happens to serve agents.
   Leading with the agent framing sells the least LAVA-shaped part of the story.
 - **Africa is addressed honestly, and early.** LAVA is Africa-focused and this
@@ -37,12 +37,14 @@ Three deliberate changes from the Oakvale deck:
 ## Design system reference (pulled live from vellar.xyz, not guessed)
 
 **Type**
+
 - Display, headlines and slide titles, italic weight: Playfair Display, weights 500, 600, 700
 - Body and UI, everything else: Plus Jakarta Sans, weights 400 through 800
 - Utility, numbers, code, data labels, evidence rows: Space Mono, weights 400 and 700
 - Google Fonts import already in use on the site: `family=Playfair+Display:ital,wght@1,500;1,600;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700`
 
 **Color, light mode**
+
 - Ink, primary text: `#0c3b31`
 - Ink soft, secondary text: `#0c3b31bd`
 - Paper, background: `#fff`, paper tint `#f5f9f6`
@@ -54,6 +56,7 @@ Three deliberate changes from the Oakvale deck:
 - Line, hairlines and dividers: `#0c3b3129`
 
 **Color, dark mode**
+
 - Background: `#060a09`
 - Ink: `#eef2f0`
 - Ink soft: `#eff5f2bd`
@@ -79,7 +82,7 @@ Every slide below is one page. A horizontal rule marks the page break.
 
 Vellar
 
-**Trust infrastructure for money** *that moves itself.*
+**Trust infrastructure for money** _that moves itself._
 
 Attestations, spending policies and settlement on Stellar, so software can be
 given a budget instead of a key. Passkeys, not seed phrases. Verification anyone
@@ -407,20 +410,20 @@ it before.
 Not a slide. Reference material, so nothing on a page has to carry a citation
 and so every figure can be re-checked before the meeting.
 
-| Claim on slide | Value | Verify it |
-| --- | --- | --- |
-| SDK downloads | 1,166 all-time, 627 in the last 30 days | `curl https://api.npmjs.org/downloads/range/2025-01-01:2026-09-05/vellar-sdk` |
-| Facilitator tests | 613 passing, 4 skipped, typecheck clean | `npm test` in `vellar-facilitator` |
-| Concurrency | 50/50 settled, 0 `txBadSeq`, p95 11,956 ms; control arm 1/50 with 48 `txBadSeq` | `load-test-results-2026-08-31T11-15-47-630Z.json`, commit `6f5de85` |
-| Live metrics | 11 named `vellar_*` metrics | `curl -s https://vellar-facilitator.onrender.com/metrics \| grep -c '^# HELP vellar_'` |
-| Ecosystem totals | 7,725 payments, 557 buyers, 525 sellers | `curl https://vellar-explorer.onrender.com/stats` |
-| Vellar's share | 348 of 7,725 = 4.5% | same endpoint, `facilitatorBreakdown` |
-| Catalog size | 12 live resources | `curl https://vellar-facilitator.onrender.com/health` |
-| Channel pool | 50 channels, all available | same endpoint, `channelPool` |
-| VS Code extension | v0.2.3 published, 2 installs, 160 downloads | marketplace `extensionquery` API for `VellarWallet.vellar-x402` |
-| WebMCP | 6 tools, 3 core + 3 generated from the catalog | `vellar-webmcp.onrender.com` |
-| Fee-ceiling defect | ~139,500 stroops for a policy-governed payment vs a 50,000 default ceiling; `MAX_TX_FEE_STROOPS` ships at 500,000 | `docs/decision-fee-thresholds.md` in the facilitator repo |
-| Credential-type gap | passkey-kit 0.14 cannot emit type-1 credentials; deployed facilitators reject type-2 | facilitator `technical-doc.md` §2 |
+| Claim on slide      | Value                                                                                                             | Verify it                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| SDK downloads       | 1,166 all-time, 627 in the last 30 days                                                                           | `curl https://api.npmjs.org/downloads/range/2025-01-01:2026-09-05/vellar-sdk`          |
+| Facilitator tests   | 613 passing, 4 skipped, typecheck clean                                                                           | `npm test` in `vellar-facilitator`                                                     |
+| Concurrency         | 50/50 settled, 0 `txBadSeq`, p95 11,956 ms; control arm 1/50 with 48 `txBadSeq`                                   | `load-test-results-2026-08-31T11-15-47-630Z.json`, commit `6f5de85`                    |
+| Live metrics        | 11 named `vellar_*` metrics                                                                                       | `curl -s https://vellar-facilitator.onrender.com/metrics \| grep -c '^# HELP vellar_'` |
+| Ecosystem totals    | 7,725 payments, 557 buyers, 525 sellers                                                                           | `curl https://vellar-explorer.onrender.com/stats`                                      |
+| Vellar's share      | 348 of 7,725 = 4.5%                                                                                               | same endpoint, `facilitatorBreakdown`                                                  |
+| Catalog size        | 12 live resources                                                                                                 | `curl https://vellar-facilitator.onrender.com/health`                                  |
+| Channel pool        | 50 channels, all available                                                                                        | same endpoint, `channelPool`                                                           |
+| VS Code extension   | v0.2.3 published, 2 installs, 160 downloads                                                                       | marketplace `extensionquery` API for `VellarWallet.vellar-x402`                        |
+| WebMCP              | 6 tools, 3 core + 3 generated from the catalog                                                                    | `vellar-webmcp.onrender.com`                                                           |
+| Fee-ceiling defect  | ~139,500 stroops for a policy-governed payment vs a 50,000 default ceiling; `MAX_TX_FEE_STROOPS` ships at 500,000 | `docs/decision-fee-thresholds.md` in the facilitator repo                              |
+| Credential-type gap | passkey-kit 0.14 cannot emit type-1 credentials; deployed facilitators reject type-2                              | facilitator `technical-doc.md` §2                                                      |
 
 **What changed since the Oakvale deck, and why this deck uses the new numbers.**
 SDK downloads moved 1,110 → 1,166. Facilitator tests moved 514 → 613, which

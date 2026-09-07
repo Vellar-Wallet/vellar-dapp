@@ -179,8 +179,8 @@ export const SLIDES: Slide[] = [
             <div className="deck-flow-card deck-card deck-card--lime">
               <h4>The wallet sets the budget</h4>
               <p>
-                An owner creates a wallet with a face scan or fingerprint, no seed phrase, and sets a
-                spending limit that is written to the blockchain.
+                An owner creates a wallet with a face scan or fingerprint, no seed phrase, and sets
+                a spending limit that is written to the blockchain.
               </p>
               <span className="deck-card-chip">01 &middot; Wallet</span>
             </div>
@@ -205,8 +205,8 @@ export const SLIDES: Slide[] = [
             <div className="deck-flow-card deck-card deck-card--sun">
               <h4>We settle the payment</h4>
               <p>
-                Vellar checks the payment against the chain, pays the network fee on the buyer&rsquo;s
-                behalf, and settles it in seconds. This is the part we charge for.
+                Vellar checks the payment against the chain, pays the network fee on the
+                buyer&rsquo;s behalf, and settles it in seconds. This is the part we charge for.
               </p>
               <span className="deck-card-chip">03 &middot; Vellar</span>
             </div>
@@ -218,8 +218,8 @@ export const SLIDES: Slide[] = [
             <div className="deck-flow-card deck-card deck-card--coral">
               <h4>Anyone can audit us</h4>
               <p>
-                A separate public explorer reads the blockchain itself and reports what really settled,
-                including when the answer is unflattering to us.
+                A separate public explorer reads the blockchain itself and reports what really
+                settled, including when the answer is unflattering to us.
               </p>
               <span className="deck-card-chip">04 &middot; Explorer</span>
             </div>
@@ -258,8 +258,8 @@ export const SLIDES: Slide[] = [
           <div className="deck-evidence-row">
             <span className="num">7,750</span>
             <span className="label">
-              payments across the whole visible market. The base we are competing for, growing
-              every day
+              payments across the whole visible market. The base we are competing for, growing every
+              day
             </span>
           </div>
           <div className="deck-evidence-row">
@@ -290,9 +290,9 @@ export const SLIDES: Slide[] = [
           <div className="deck-card deck-card--lime">
             <h4>Developers get paid per call</h4>
             <p>
-              Any developer can put something useful behind a price, whether a dataset, a model,
-              a tool or a service, list it on our catalogue, and get paid every time an agent uses
-              it. No contract, no invoice, no waiting 30 days.
+              Any developer can put something useful behind a price, whether a dataset, a model, a
+              tool or a service, list it on our catalogue, and get paid every time an agent uses it.
+              No contract, no invoice, no waiting 30 days.
             </p>
             <span className="deck-card-chip">01</span>
           </div>
@@ -329,8 +329,8 @@ export const SLIDES: Slide[] = [
           <div className="deck-card deck-card--lime">
             <h4>Straight from the editor</h4>
             <p>
-              Vellar installs into VS Code and Cursor, the two places developers already spend
-              their day. Start earning from an endpoint without leaving the file you are writing.
+              Vellar installs into VS Code and Cursor, the two places developers already spend their
+              day. Start earning from an endpoint without leaving the file you are writing.
             </p>
             <span className="deck-card-chip">01</span>
           </div>
@@ -366,8 +366,8 @@ export const SLIDES: Slide[] = [
         </p>
         <p className="deck-body">
           Stablecoin rails were never a workaround here. They were the first thing that worked. A
-          market that never got a consumer card layer does not have to unwind one to serve
-          software. It starts from where the rest of the world is heading.
+          market that never got a consumer card layer does not have to unwind one to serve software.
+          It starts from where the rest of the world is heading.
         </p>
         <div className="deck-ribbon">
           Built in Nigeria, on the rail Africa already uses most. Infrastructure that works here and

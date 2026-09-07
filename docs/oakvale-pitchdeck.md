@@ -5,12 +5,14 @@ Copy and pagination only, for building on your own domain against the existing V
 ## Design system reference (pulled live from vellar.xyz, not guessed)
 
 **Type**
+
 - Display, headlines and slide titles, italic weight: Playfair Display, weights 500, 600, 700
 - Body and UI, everything else: Plus Jakarta Sans, weights 400 through 800
 - Utility, numbers, code, data labels, evidence rows: Space Mono, weights 400 and 700
 - Google Fonts import already in use on the site: `family=Playfair+Display:ital,wght@1,500;1,600;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700`
 
 **Color, light mode**
+
 - Ink, primary text: `#0c3b31`
 - Ink soft, secondary text: `#0c3b31bd`
 - Paper, background: `#fff`, paper tint `#f5f9f6`
@@ -22,6 +24,7 @@ Copy and pagination only, for building on your own domain against the existing V
 - Line, hairlines and dividers: `#0c3b3129`
 
 **Color, dark mode**
+
 - Background: `#060a09`
 - Ink: `#eef2f0`
 - Ink soft: `#eff5f2bd`
@@ -39,7 +42,7 @@ Every slide below is one page. A horizontal rule marks the page break.
 
 Vellar
 
-**Give your agent a budget,** *not your keys.*
+**Give your agent a budget,** _not your keys._
 
 The agent payments stack for Stellar. Smart accounts that pay HTTP 402 APIs autonomously, budgets enforced on chain, trust ranked discovery. Secured by passkeys, not seed phrases.
 
