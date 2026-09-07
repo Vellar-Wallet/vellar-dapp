@@ -17,7 +17,7 @@
     "@vellar/types": "workspace:*",
     "@vellar/ui": "workspace:*",
     "@vellar/verification-sdk": "workspace:*",
-    "vellar-sdk": "^0.6.1",
+    "vellar-sdk": "^0.6.2",
     "buffer": "^6.0.3",
     "passkey-kit": "^0.14.0",
     "react": "^19.2.0",
