@@ -61,7 +61,7 @@ test("extension: pair, dApp connect, one-click device-signer payment (live testn
     await expect(web).toHaveURL(/\/dashboard/, { timeout: 120_000 });
 
     await web.getByRole("button", { name: "Receive" }).click();
-    const addressLocator = web.locator("p.mono", { hasText: /^C[A-Z2-7]{55}$/ }).first();
+    const addressLocator = web.getByTestId("wallet-address");
     await expect(addressLocator).toBeVisible({ timeout: 30_000 });
     const contractId = (await addressLocator.textContent())!.trim();
     await web.getByRole("button", { name: "Close" }).click();
