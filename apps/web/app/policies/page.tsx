@@ -416,7 +416,10 @@ function ReviewCard({
       {state.name === "done" || state.name === "detaching" ? (
         <div className="lpa-well text-[13px] leading-relaxed text-[var(--lp-ink-soft)]">
           <p className="lpa-ok m-0! font-bold">✓ Policy attached to your account</p>
-          <p className="mt-2! break-all font-[family-name:var(--lp-mono)] text-[11px]">
+          <p
+            data-testid="policy-contract-id"
+            className="mt-2! break-all font-[family-name:var(--lp-mono)] text-[11px]"
+          >
             contract {state.contractId}
           </p>
           {state.name === "done" && (
