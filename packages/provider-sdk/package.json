@@ -5,13 +5,15 @@
   "description": "dApp provider interface, request/response schemas, permission model helpers, extension bridge utilities",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./connected-wallet": "./src/connected-wallet.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@creit.tech/stellar-wallets-kit": "^2.6.0",
     "@vellar/types": "workspace:*",
     "zod": "^4.0.0"
   },
