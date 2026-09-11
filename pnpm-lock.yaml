@@ -20,6 +20,7 @@ overrides:
   esbuild@<0.28.1: '>=0.28.1'
   uuid@<11.1.1: '>=11.1.1'
   toml@<4.2.0: '>=4.2.0'
+  smol-toml@<1.7.1: '>=1.7.1'
 
 packageExtensionsChecksum: sha256-7EyWhva5Lcamo6pe18OzfUc27A7xbWt39+G/ofluF9k=
 
@@ -5168,8 +5169,8 @@ packages:
   slow-redact@0.3.2:
     resolution: {integrity: sha512-MseHyi2+E/hBRqdOi5COy6wZ7j7DxXRz9NkseavNYSvvWC06D8a5cidVZX3tcG5eCW3NIyVU4zT63hw0Q486jw==}
 
-  smol-toml@1.7.0:
-    resolution: {integrity: sha512-aqVvWoyO21L23mb+drl4RmMXbf6N7FdHjAhTRA9ZBL7apWBgfWC16KjrASI+1p9GAroljyMHj6fK67i0UiTNvQ==}
+  smol-toml@1.8.0:
+    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
     engines: {node: '>= 18'}
 
   sonic-boom@4.2.1:
@@ -7982,7 +7983,7 @@ snapshots:
       commander: 14.0.3
       eventsource: 4.1.0
       feaxios: 0.0.23
-      smol-toml: 1.7.0
+      smol-toml: 1.8.0
       uint8array-extras: 1.5.0
     transitivePeerDependencies:
       - debug
@@ -8000,7 +8001,7 @@ snapshots:
       commander: 14.0.3
       eventsource: 4.1.0
       feaxios: 0.0.23
-      smol-toml: 1.7.0
+      smol-toml: 1.8.0
       uint8array-extras: 1.5.0
     transitivePeerDependencies:
       - debug
@@ -11644,7 +11645,7 @@ snapshots:
 
   slow-redact@0.3.2: {}
 
-  smol-toml@1.7.0: {}
+  smol-toml@1.8.0: {}
 
   sonic-boom@4.2.1:
     dependencies:

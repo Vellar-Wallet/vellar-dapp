@@ -78,6 +78,11 @@ overrides:
   # of a transitive we do not control, so it is verified two ways below rather
   # than assumed: the export surface stays `parse`, and the full suite is green.
   toml@<4.2.0: ">=4.2.0"
+  # smol-toml reaches runtime through @stellar/stellar-sdk's TOML parsing, on 27
+  # paths spanning apps/web, apps/extension, packages/provider-sdk and five
+  # services. 1.7.0 carries a DoS via malformed TOML documents
+  # (GHSA-7w5x-hrqm-74c2); 1.7.1 is the advisory's own floor and a patch bump.
+  "smol-toml@<1.7.1": ">=1.7.1"
 
 # @hookform/resolvers 5.x imports `zod/v4/core` at runtime but declares only
 # react-hook-form as a peer. Under pnpm's strict linking zod is never placed
