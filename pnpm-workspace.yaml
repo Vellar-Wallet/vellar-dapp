@@ -7,6 +7,17 @@ allowBuilds:
   sharp: true
   spawn-sync: false
   "@tailwindcss/oxide": true
+  # Pulled in transitively by @creit.tech/stellar-wallets-kit's WalletConnect
+  # module (2026-09-11, marketplace step 1). None needs its build script for the
+  # four wallets we register (Freighter, Albedo, xBull, LOBSTR): bufferutil and
+  # utf-8-validate are optional native speedups for `ws` with pure-JS fallbacks,
+  # secp256k1 likewise falls back to its JS implementation, and @reown/appkit's
+  # postinstall is only telemetry/asset setup. Left unbuilt to keep the install
+  # free of native toolchain requirements.
+  '@reown/appkit': false
+  bufferutil: false
+  secp256k1: false
+  utf-8-validate: false
 minimumReleaseAgeExclude:
   - vellar-sdk@0.6.2
 # Security overrides: force patched versions of vulnerable TRANSITIVE deps
