@@ -1,0 +1,33 @@
+{
+  "name": "@vellar/marketplace-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Marketplace catalog/search proxy, seller listings, and x402 payment orchestration against vellar-facilitator",
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_ENV=development STELLAR_NETWORK=testnet tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.0.1",
+    "@vellar/service-kit": "workspace:*",
+    "@vellar/types": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.12.3",
+    "pg": "^8.22.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
+  }
+}
