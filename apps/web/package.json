@@ -24,7 +24,7 @@
     "@vellar/verification-sdk": "workspace:*",
     "gsap": "^3.15.0",
     "lenis": "^1.3.26",
-    "next": "^16.2.11",
+    "next": "^16.3.4",
     "ogl": "^1.0.11",
     "passkey-kit": "^0.14.0",
     "react": "^19.2.0",
