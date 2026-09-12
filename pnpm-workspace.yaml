@@ -7,6 +7,17 @@ allowBuilds:
   sharp: true
   spawn-sync: false
   "@tailwindcss/oxide": true
+  # Pulled in transitively by @creit.tech/stellar-wallets-kit's WalletConnect
+  # module (2026-09-11, marketplace step 1). None needs its build script for the
+  # four wallets we register (Freighter, Albedo, xBull, LOBSTR): bufferutil and
+  # utf-8-validate are optional native speedups for `ws` with pure-JS fallbacks,
+  # secp256k1 likewise falls back to its JS implementation, and @reown/appkit's
+  # postinstall is only telemetry/asset setup. Left unbuilt to keep the install
+  # free of native toolchain requirements.
+  '@reown/appkit': false
+  bufferutil: false
+  secp256k1: false
+  utf-8-validate: false
 minimumReleaseAgeExclude:
   - vellar-sdk@0.6.2
 # Security overrides: force patched versions of vulnerable TRANSITIVE deps
@@ -32,7 +43,10 @@ overrides:
   # 4.1.2 anyway. The bare key forces every resolution in the graph.
   fast-uri: ">=4.1.3"
   shell-quote@<=1.8.4: ">=1.9.0"
-  sharp@<0.35.0: ">=0.35.0"
+  # Raised 0.35.0 -> 0.35.4 (2026-09-12): libheif advisories
+  # GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 land in <0.35.4, and the old
+  # floor left 0.35.3 resolving. sharp reaches us via apps/web > next.
+  sharp@<0.35.4: ">=0.35.4"
   # Backend-runtime highs (2026-08): both are in the live services' HTTP stack.
   # find-my-way is fastify's router (service-kit>fastify); the advisory is an
   # HTTP/2 request DoS (only reachable if http2 is ever enabled, but cheap to
@@ -67,6 +81,11 @@ overrides:
   # of a transitive we do not control, so it is verified two ways below rather
   # than assumed: the export surface stays `parse`, and the full suite is green.
   toml@<4.2.0: ">=4.2.0"
+  # smol-toml reaches runtime through @stellar/stellar-sdk's TOML parsing, on 27
+  # paths spanning apps/web, apps/extension, packages/provider-sdk and five
+  # services. 1.7.0 carries a DoS via malformed TOML documents
+  # (GHSA-7w5x-hrqm-74c2); 1.7.1 is the advisory's own floor and a patch bump.
+  "smol-toml@<1.7.1": ">=1.7.1"
 
 # @hookform/resolvers 5.x imports `zod/v4/core` at runtime but declares only
 # react-hook-form as a peer. Under pnpm's strict linking zod is never placed

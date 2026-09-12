@@ -39,7 +39,7 @@ test("passkey wallet: create, fund, deploy spending-limit policy (live testnet)"
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 120_000 });
 
   await page.getByRole("button", { name: "Receive" }).click();
-  const addressLocator = page.locator("p.mono", { hasText: /^C[A-Z2-7]{55}$/ }).first();
+  const addressLocator = page.getByTestId("wallet-address");
   await expect(addressLocator).toBeVisible({ timeout: 30_000 });
   const contractId = (await addressLocator.textContent())!.trim();
   await page.getByRole("button", { name: "Close" }).click();
@@ -47,7 +47,7 @@ test("passkey wallet: create, fund, deploy spending-limit policy (live testnet)"
   // --- Fund the wallet (the account must exist on-chain to add a signer) ---
   await fundSmartWallet(contractId, 25n);
   await page.reload();
-  await expect(page.locator(".bal")).toContainText("25", { timeout: 60_000 });
+  await expect(page.getByTestId("account-balance")).toContainText("25", { timeout: 60_000 });
 
   // --- Build a spending-limit policy ---
   await page.goto("/policies");
@@ -67,7 +67,7 @@ test("passkey wallet: create, fund, deploy spending-limit policy (live testnet)"
     timeout: 240_000,
   });
   // The attached policy contract id is shown (C…).
-  await expect(page.locator("p.mono", { hasText: /^contract C[A-Z2-7]{55}$/ })).toBeVisible({
+  await expect(page.getByTestId("policy-contract-id")).toHaveText(/^contract C[A-Z2-7]{55}$/, {
     timeout: 30_000,
   });
 });

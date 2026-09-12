@@ -5,6 +5,7 @@
 //   - lifecycle-service    on LIFECYCLE_SERVICE_PORT    (default 4002)
 //   - policy-service       on POLICY_SERVICE_PORT       (default 4003)
 //   - verification-service on VERIFICATION_SERVICE_PORT (default 4004)
+//   - marketplace-service  on MARKETPLACE_PORT           (default 4006)
 //   - api-gateway          on PORT                      (the PUBLIC port — $PORT)
 //
 // The gateway is the only publicly-exposed service; it proxies to the others
@@ -28,6 +29,7 @@ await import("@vellar/wallet-service");
 await import("@vellar/lifecycle-service");
 await import("@vellar/policy-service");
 await import("@vellar/verification-service");
+await import("@vellar/marketplace-service");
 await import("@vellar/api-gateway");
 
 // eslint-disable-next-line no-console
