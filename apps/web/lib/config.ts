@@ -33,3 +33,10 @@ export function walletConfig(): WebWalletConfig {
     appName: "Vellar Wallet",
   };
 }
+
+// The marketplace routes live behind the gateway's `/marketplace` proxy
+// prefix (services/api-gateway/src/server.ts), the same pattern lib/lifecycle.ts
+// and friends use for their own service prefixes.
+export function marketplaceApiUrl(): string {
+  return `${walletConfig().apiUrl}/marketplace`;
+}
