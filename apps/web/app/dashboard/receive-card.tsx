@@ -25,7 +25,10 @@ export function ReceiveCard({ accountId, onClose }: { accountId: string; onClose
         <span className="flabel block text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--lp-ink-faint)]">
           YOUR ADDRESS
         </span>
-        <p className="mt-1.5! break-all font-[family-name:var(--lp-mono)] text-[13px]">
+        <p
+          data-testid="wallet-address"
+          className="mt-1.5! break-all font-[family-name:var(--lp-mono)] text-[13px]"
+        >
           {accountId}
         </p>
       </div>

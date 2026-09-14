@@ -67,7 +67,7 @@ export default function Dashboard() {
           {/* Account overview */}
           <section className="lpa-panel flex flex-col">
             <Eyebrow>Account balance</Eyebrow>
-            <div className="lpa-balance mt-2.5">
+            <div data-testid="account-balance" className="lpa-balance mt-2.5">
               {balances.isPending ? (
                 <span className="animate-pulse text-[var(--lp-ink-faint)]">…</span>
               ) : (

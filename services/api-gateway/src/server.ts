@@ -21,6 +21,7 @@ export interface GatewayOptions {
   lifecycleServiceUrl?: string;
   policyServiceUrl?: string;
   verificationServiceUrl?: string;
+  marketplaceServiceUrl?: string;
   corsOrigin?: string;
   /** Max requests per IP per window. Default 120/min; env RATE_LIMIT_MAX. */
   rateLimitMax?: number;
@@ -81,7 +82,8 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   // only the configured origin(s) are allowed (technical-doc.md §8.3). DELETE
   // must be listed explicitly — the plugin's default (GET,HEAD,POST) fails
   // session revocation at preflight.
-  app.register(cors, { origin: corsOrigin, methods: ["GET", "POST", "DELETE"] });
+  // PATCH added for marketplace listings updates (Step 2).
+  app.register(cors, { origin: corsOrigin, methods: ["GET", "POST", "PATCH", "DELETE"] });
 
   // Boundary checks that must run BEFORE proxying. @fastify/http-proxy streams
   // the body straight through, so Fastify's own `bodyLimit` (which only applies
@@ -149,6 +151,14 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     upstream: verificationServiceUrl,
     prefix: "/verification",
     rewritePrefix: "/verification",
+  });
+
+  const marketplaceServiceUrl =
+    options.marketplaceServiceUrl ?? process.env.MARKETPLACE_SERVICE_URL ?? "http://localhost:4006";
+  app.register(proxy, {
+    upstream: marketplaceServiceUrl,
+    prefix: "/marketplace",
+    rewritePrefix: "/marketplace",
   });
 
   return app;
