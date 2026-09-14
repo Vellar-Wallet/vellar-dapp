@@ -52,7 +52,11 @@ export function PayButton({
 
   if (!isConnected || !address) {
     return (
-      <button type="button" className="lp-btn lp-btn--sun lp-btn--sm" onClick={() => void connect()}>
+      <button
+        type="button"
+        className="lp-btn lp-btn--sun lp-btn--sm"
+        onClick={() => void connect()}
+      >
         Connect to Pay
       </button>
     );
@@ -124,7 +128,11 @@ export function PayButton({
   if (state.phase === "error") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--lp-sp-2)" }}>
-        <button type="button" className="lp-btn lp-btn--sun lp-btn--sm" onClick={() => void requestQuote()}>
+        <button
+          type="button"
+          className="lp-btn lp-btn--sun lp-btn--sm"
+          onClick={() => void requestQuote()}
+        >
           Pay
         </button>
         <div className="lp-mkt-error">
@@ -136,29 +144,41 @@ export function PayButton({
 
   if (state.phase === "success") {
     const short = state.txHash ? `${state.txHash.slice(0, 6)}...${state.txHash.slice(-4)}` : "";
-    return (
-      <span className="lp-verified">
-        Paid{short && ` · ${short}`}
-      </span>
-    );
+    return <span className="lp-verified">Paid{short && ` · ${short}`}</span>;
   }
 
   if (state.phase === "paying") {
     return (
-      <button type="button" disabled className="lp-btn lp-btn--sun lp-btn--sm" style={{ opacity: 0.6 }}>
+      <button
+        type="button"
+        disabled
+        className="lp-btn lp-btn--sun lp-btn--sm"
+        style={{ opacity: 0.6 }}
+      >
         Paying...
       </button>
     );
   }
 
   if (state.phase === "confirming") {
-    const priceLabel = state.price !== null ? `${state.price} ${state.asset ?? ""}`.trim() : "price";
+    const priceLabel =
+      state.price !== null ? `${state.price} ${state.asset ?? ""}`.trim() : "price";
     return (
       <div style={{ display: "flex", alignItems: "center", gap: "var(--lp-sp-2)" }}>
-        <span style={{ fontFamily: "var(--lp-mono)", fontSize: "var(--lp-fs-sm)", color: "var(--lp-ink)" }}>
+        <span
+          style={{
+            fontFamily: "var(--lp-mono)",
+            fontSize: "var(--lp-fs-sm)",
+            color: "var(--lp-ink)",
+          }}
+        >
           {priceLabel}
         </span>
-        <button type="button" className="lp-btn lp-btn--sun lp-btn--sm" onClick={() => void confirmPay()}>
+        <button
+          type="button"
+          className="lp-btn lp-btn--sun lp-btn--sm"
+          onClick={() => void confirmPay()}
+        >
           Confirm
         </button>
         <button

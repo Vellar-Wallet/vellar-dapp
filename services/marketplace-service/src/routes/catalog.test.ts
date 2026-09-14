@@ -159,7 +159,10 @@ describe("GET /marketplace/catalog/:id", () => {
   });
 
   it("returns 400 for an id that is not base64url", async () => {
-    const res = await build().inject({ method: "GET", url: "/marketplace/catalog/!!!not-valid!!!" });
+    const res = await build().inject({
+      method: "GET",
+      url: "/marketplace/catalog/!!!not-valid!!!",
+    });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe("invalid_resource_id");
   });

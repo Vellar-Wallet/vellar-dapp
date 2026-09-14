@@ -103,7 +103,11 @@ export function verifySignedBy(
 /** Extracts the ManageData value when the tx is a registration-shaped one. */
 function readRegistrationValue(tx: Transaction): string | undefined {
   const op = tx.operations[0];
-  if (tx.operations.length === 1 && op?.type === "manageData" && op.name === REGISTRATION_DATA_KEY) {
+  if (
+    tx.operations.length === 1 &&
+    op?.type === "manageData" &&
+    op.name === REGISTRATION_DATA_KEY
+  ) {
     return op.value ? Buffer.from(op.value).toString("utf8") : undefined;
   }
   return undefined;

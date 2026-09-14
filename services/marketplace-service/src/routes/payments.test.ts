@@ -32,9 +32,7 @@ describe("POST /marketplace/payments/quote", () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(402, {
         x402Version: 1,
-        accepts: [
-          { scheme: "exact", asset: "USDC", maxAmountRequired: "1000", payTo: "GSELLER" },
-        ],
+        accepts: [{ scheme: "exact", asset: "USDC", maxAmountRequired: "1000", payTo: "GSELLER" }],
       }),
     ) as unknown as typeof fetch;
     const res = await build(stubFacilitator(), fetchImpl).inject({
@@ -170,7 +168,9 @@ describe("POST /marketplace/payments/pay", () => {
 
   it("does not settle when the facilitator rejects the authorization", async () => {
     const settle = vi.fn();
-    const verify = vi.fn().mockResolvedValue({ isValid: false, invalidReason: "insufficient_funds" });
+    const verify = vi
+      .fn()
+      .mockResolvedValue({ isValid: false, invalidReason: "insufficient_funds" });
     const res = await build(stubFacilitator({ verify, settle })).inject({
       method: "POST",
       url: "/marketplace/payments/pay",
@@ -182,9 +182,7 @@ describe("POST /marketplace/payments/pay", () => {
   });
 
   it("propagates a facilitator failure", async () => {
-    const settle = vi
-      .fn()
-      .mockRejectedValue(new FacilitatorError(500, "settle exploded", 502));
+    const settle = vi.fn().mockRejectedValue(new FacilitatorError(500, "settle exploded", 502));
     const res = await build(stubFacilitator({ settle })).inject({
       method: "POST",
       url: "/marketplace/payments/pay",

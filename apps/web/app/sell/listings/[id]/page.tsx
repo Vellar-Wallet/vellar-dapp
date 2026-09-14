@@ -69,11 +69,21 @@ function EditForm({
     <form className="lp-mkt-form" onSubmit={(e) => void handleSubmit(e)}>
       <div className="lp-mkt-field">
         <label htmlFor="edit-title">Title</label>
-        <input id="edit-title" type="text" required value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input
+          id="edit-title"
+          type="text"
+          required
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
       </div>
       <div className="lp-mkt-field">
         <label htmlFor="edit-description">Description</label>
-        <textarea id="edit-description" value={description} onChange={(e) => setDescription(e.target.value)} />
+        <textarea
+          id="edit-description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
       </div>
       {error && (
         <div className="lp-mkt-error" role="alert">
@@ -109,7 +119,8 @@ function ListingDetail({ id, address }: { id: string; address: string }) {
         }
         setListing(body.listing);
       } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Could not reach the marketplace");
+        if (!cancelled)
+          setLoadError(err instanceof Error ? err.message : "Could not reach the marketplace");
       }
     })();
     return () => {

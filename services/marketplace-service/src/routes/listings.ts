@@ -2,7 +2,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { NonceError, NotFoundError, SignatureError } from "../lib/errors";
-import { isValidStellarAddress, verifyRegistrationSignature, verifySignedBy } from "../lib/signature";
+import {
+  isValidStellarAddress,
+  verifyRegistrationSignature,
+  verifySignedBy,
+} from "../lib/signature";
 import {
   DuplicateListingError,
   type ListingRecord,
@@ -12,9 +16,7 @@ import {
 
 // Seller listing routes (new-build-technical-doc.md §5.2).
 
-const addressSchema = z
-  .string()
-  .refine(isValidStellarAddress, "must be a valid Stellar G-address");
+const addressSchema = z.string().refine(isValidStellarAddress, "must be a valid Stellar G-address");
 
 const nonceQuerySchema = z.object({ address: addressSchema });
 

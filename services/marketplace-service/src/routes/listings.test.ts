@@ -8,7 +8,12 @@ import {
   type ListingRepository,
   type NonceRepository,
 } from "../repository";
-import { signedProofXdr, signedRegistrationXdr, stubFacilitator, TEST_PASSPHRASE } from "../test-support";
+import {
+  signedProofXdr,
+  signedRegistrationXdr,
+  stubFacilitator,
+  TEST_PASSPHRASE,
+} from "../test-support";
 
 let app: FastifyInstance | undefined;
 
@@ -242,7 +247,10 @@ describe("POST /marketplace/listings", () => {
     await h.app.inject({
       method: "POST",
       url: "/marketplace/listings",
-      payload: listingBody(first, signedRegistrationXdr(first, await getNonce(h, first.publicKey()))),
+      payload: listingBody(
+        first,
+        signedRegistrationXdr(first, await getNonce(h, first.publicKey())),
+      ),
     });
     const res = await h.app.inject({
       method: "POST",
@@ -410,9 +418,13 @@ describe("GET /marketplace/listings", () => {
     await h.app.inject({
       method: "POST",
       url: "/marketplace/listings",
-      payload: listingBody(other, signedRegistrationXdr(other, await getNonce(h, other.publicKey())), {
-        resourceUrl: "https://c.example.com/z",
-      }),
+      payload: listingBody(
+        other,
+        signedRegistrationXdr(other, await getNonce(h, other.publicKey())),
+        {
+          resourceUrl: "https://c.example.com/z",
+        },
+      ),
     });
 
     const res = await h.app.inject({
@@ -422,11 +434,16 @@ describe("GET /marketplace/listings", () => {
     expect(res.statusCode).toBe(200);
     const { listings } = res.json();
     expect(listings).toHaveLength(2);
-    expect(listings.every((l: { sellerAddress: string }) => l.sellerAddress === seller.publicKey())).toBe(true);
+    expect(
+      listings.every((l: { sellerAddress: string }) => l.sellerAddress === seller.publicKey()),
+    ).toBe(true);
   });
 
   it("requires a valid seller address", async () => {
-    const res = await build().app.inject({ method: "GET", url: "/marketplace/listings?seller=xyz" });
+    const res = await build().app.inject({
+      method: "GET",
+      url: "/marketplace/listings?seller=xyz",
+    });
     expect(res.statusCode).toBe(400);
   });
 });

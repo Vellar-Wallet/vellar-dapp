@@ -100,7 +100,9 @@ describe("FacilitatorClient", () => {
   it("prefers a top-level amount when there is no accepts[]", async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValue(jsonResponse(200, { items: [{ resource: "u", amount: "7", asset: "A" }] }));
+      .mockResolvedValue(
+        jsonResponse(200, { items: [{ resource: "u", amount: "7", asset: "A" }] }),
+      );
     const { resources } = await client(fetchImpl).getResources({});
     expect(resources[0]).toMatchObject({ priceAtomic: "7", asset: "A" });
   });
@@ -130,9 +132,9 @@ describe("FacilitatorClient", () => {
   });
 
   it("matches getResource on an EXACT url, never a prefix", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      jsonResponse(200, { items: [{ resource: "https://a.test/paid" }] }),
-    );
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { items: [{ resource: "https://a.test/paid" }] }));
     const c = client(fetchImpl);
     await expect(c.getResource("https://a.test/paid")).resolves.toMatchObject({
       resourceUrl: "https://a.test/paid",
