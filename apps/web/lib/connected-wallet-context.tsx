@@ -54,8 +54,7 @@ export function ConnectedWalletProvider({
   const resolvedNetwork: ConnectedWalletNetwork = network ?? config.network;
   // config.networkPassphrase is operator-overridable via env; fall back to the
   // network's canonical passphrase when it is unset.
-  const networkPassphrase =
-    config.networkPassphrase || connectedWalletPassphrase(resolvedNetwork);
+  const networkPassphrase = config.networkPassphrase || connectedWalletPassphrase(resolvedNetwork);
 
   const [state, setState] = useState<ConnectedWalletState>(DISCONNECTED);
 

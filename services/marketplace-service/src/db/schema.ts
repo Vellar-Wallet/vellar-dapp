@@ -30,7 +30,9 @@ export const marketplaceListings = pgTable(
       // SQL default, not `.default(0n)`: drizzle-kit 0.31.10 throws
       // "Do not know how to serialize a BigInt" when snapshotting a JS bigint.
       .default(sql`0`),
-    totalRevenue: bigint("total_revenue", { mode: "bigint" }).notNull().default(sql`0`),
+    totalRevenue: bigint("total_revenue", { mode: "bigint" })
+      .notNull()
+      .default(sql`0`),
   },
   (table) => [
     index("marketplace_listings_seller_address_idx").on(table.sellerAddress),

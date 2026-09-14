@@ -78,12 +78,7 @@ export async function createConnectedWalletKit(
     ]);
 
   StellarWalletsKit.init({
-    modules: [
-      new FreighterModule(),
-      new AlbedoModule(),
-      new xBullModule(),
-      new LobstrModule(),
-    ],
+    modules: [new FreighterModule(), new AlbedoModule(), new xBullModule(), new LobstrModule()],
     network: kitNetwork,
   });
 
