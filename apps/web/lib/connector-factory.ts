@@ -10,6 +10,12 @@ import {
 import { walletConfig } from "./config";
 import { createHttpWalletBackend } from "./http-backend";
 import { createPolicySignerActions } from "./policy-signer";
+import {
+  listAgentKeys as readAgentKeys,
+  revokeAgentKey as removeAgentKey,
+  type AgentKeyRecord,
+  type RevokeAgentKeyResult,
+} from "./agent-keys";
 
 // Builds the real PasskeyKit-backed wallet runtime. The connector and the
 // payment client MUST share one PasskeyKit instance — the connected passkey's
@@ -47,6 +53,13 @@ export interface WalletRuntime {
    * policy (security-audit.md V3 / FIX 5). Returns the tx hash.
    */
   detachPolicy(policyContractId: string): Promise<{ hash: string }>;
+  /** List Ed25519 agent keys, confirming indexed rows against live ledger state. */
+  listAgentKeys(wallet: string): Promise<AgentKeyRecord[]>;
+  /** Passkey-approved on-chain remote kill: detach policies, then remove key. */
+  revokeAgentKey(
+    publicKey: string,
+    policyContractIds: string[],
+  ): Promise<RevokeAgentKeyResult>;
 }
 
 /** 7 days — the device-signer session length. The contract stores the
@@ -124,6 +137,25 @@ export function getWalletRuntime(): Promise<WalletRuntime> {
       async detachPolicy(policyContractId) {
         const { SignerKey, SignerStore } = await import("passkey-kit");
         return policySignerActions({ SignerKey, SignerStore }).detachPolicy(policyContractId);
+      },
+      async listAgentKeys(wallet) {
+        const { MercuryIndexer, SignerKey } = await import("passkey-kit");
+        const indexer = MercuryIndexer.forNetwork({ rpc: kit.rpc }, config.networkPassphrase);
+        if (!indexer) throw new Error("Agent-key discovery is unavailable on this network.");
+        return readAgentKeys(
+          { indexer, kit: kit as never, backend, network: config.network, SignerKey },
+          wallet,
+        );
+      },
+      async revokeAgentKey(publicKey, policyContractIds) {
+        const { MercuryIndexer, SignerKey } = await import("passkey-kit");
+        const indexer = MercuryIndexer.forNetwork({ rpc: kit.rpc }, config.networkPassphrase);
+        if (!indexer) throw new Error("Agent-key discovery is unavailable on this network.");
+        return removeAgentKey(
+          { indexer, kit: kit as never, backend, network: config.network, SignerKey },
+          publicKey,
+          policyContractIds,
+        );
       },
     };
 

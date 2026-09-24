@@ -19,11 +19,27 @@ vi.mock("@/lib/sessions", () => ({
   useRevokeSession: () => ({ mutateAsync, isPending: false }),
 }));
 
+const { listAgentKeysMock, revokeAgentKeyMock, resumeMock } = vi.hoisted(() => ({
+  listAgentKeysMock: vi.fn(),
+  revokeAgentKeyMock: vi.fn(),
+  resumeMock: vi.fn(),
+}));
+vi.mock("@/lib/connector-factory", () => ({
+  createRealConnector: vi.fn(),
+  getRealPaymentClient: vi.fn(),
+  getWalletRuntime: async () => ({
+    listAgentKeys: listAgentKeysMock,
+    revokeAgentKey: revokeAgentKeyMock,
+    resume: resumeMock,
+  }),
+}));
+
 const walletSession: WalletSession = {
   accountId: "CACCOUNT",
   network: "testnet",
   connected: true,
   authMethod: "passkey",
+  keyId: "passkey-id",
   createdAt: "2026-07-16T09:00:00.000Z",
   lastActiveAt: "2026-07-16T09:00:00.000Z",
   serverSessionId: "sess-current",
@@ -65,6 +81,9 @@ beforeEach(() => {
     refetch: vi.fn(),
   });
   mutateAsync.mockResolvedValue(undefined);
+  resumeMock.mockResolvedValue(undefined);
+  listAgentKeysMock.mockResolvedValue([]);
+  revokeAgentKeyMock.mockResolvedValue({ alreadyRevoked: false, hashes: ["hash"] });
 });
 
 describe("Settings", () => {
@@ -105,6 +124,27 @@ describe("Settings", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /retry/i }));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  it("lists and revokes an agent key on-chain with passkey confirmation", async () => {
+    listAgentKeysMock.mockResolvedValue([
+      {
+        publicKey: "GAGENT",
+        label: "Agent key GAGENT…GAGENT",
+        status: "active",
+        storage: "temporary",
+        expiration: 2_000_000_000,
+        boundContracts: ["CTOKEN"],
+        policyContractIds: ["CPOLICY"],
+      },
+    ]);
+    renderSettings();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke on-chain" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm with passkey" }));
+
+    await waitFor(() => expect(revokeAgentKeyMock).toHaveBeenCalledWith("GAGENT", ["CPOLICY"]));
+    expect(resumeMock).toHaveBeenCalledWith(walletSession.keyId);
   });
 
   it("redirects to onboarding when disconnected", async () => {
