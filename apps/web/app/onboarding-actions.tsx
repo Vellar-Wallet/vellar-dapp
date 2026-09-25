@@ -11,7 +11,7 @@ import {
 import type { PasskeyEnvironment } from "@vellar/passkey";
 import { LpActionButton } from "@/app/landing/ui";
 import { walletConfig } from "@/lib/config";
-import { walletErrorMessage } from "@/lib/messages";
+import { passkeyCause, walletErrorMessage } from "@/lib/messages";
 import { useWalletActions } from "@/lib/wallet-context";
 import { getAnalyticsTracker, walletCreationEvents, walletSignInEvents } from "@/lib/analytics";
 
@@ -76,7 +76,7 @@ export function OnboardingActions({
       router.push("/dashboard");
     } catch (err) {
       // Changing your mind at the passkey prompt is not an error state.
-      if (isUserCancellation(err)) {
+      if (isUserCancellation(passkeyCause(err))) {
         if (kind === "create") {
           walletCreationEvents.creationCancelled(context);
         }

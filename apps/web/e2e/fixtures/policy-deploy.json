@@ -1,0 +1,207 @@
+{
+  "_generatedBy": "services/policy-service/src/e2e-fixtures.test.ts (real buildServer; regenerate with UPDATE_E2E_FIXTURES=1)",
+  "wallet": "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67",
+  "policyContract": "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA",
+  "definition": {
+    "version": "1",
+    "type": "spending_limit",
+    "owners": [
+      "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67"
+    ],
+    "spendingLimits": {
+      "dailyXlm": "10"
+    }
+  },
+  "invalidDefinition": {
+    "version": "1",
+    "type": "spending_limit",
+    "owners": [
+      "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67"
+    ],
+    "spendingLimits": {
+      "dailyXlm": "ten"
+    }
+  },
+  "templates": {
+    "status": 200,
+    "body": [
+      {
+        "type": "single_owner",
+        "title": "Single owner",
+        "description": "One key controls the account (the default smart-wallet state).",
+        "enforcement": {
+          "kind": "none"
+        }
+      },
+      {
+        "type": "multisig_threshold",
+        "title": "Multisig threshold",
+        "description": "Require N of M owners to approve sensitive actions.",
+        "enforcement": {
+          "kind": "signer-limits"
+        }
+      },
+      {
+        "type": "spending_limit",
+        "title": "Spending limit",
+        "description": "Cap total XLM a signer can move per fixed period, with optional on-chain safety rules (per-token single-transfer ceiling, token allowlist) for supported transfer patterns.",
+        "enforcement": {
+          "kind": "policy-contract",
+          "wasmHash": "c42ab9b52c977a3ba29ca3e848dda499e91180e0c01de86a7e21e241989fcbdf"
+        }
+      },
+      {
+        "type": "token_spending_limit",
+        "title": "Token budget (agent key)",
+        "description": "Cumulative allowance of ONE token per fixed period — the on-chain budget an agent session key is minted against. Transfers of any other token are rejected.",
+        "enforcement": {
+          "kind": "policy-contract",
+          "wasmHash": "7756ebbd6423a225692a529ca1294bc74e40bc7265184265dcd9bfc2e6a09c5e"
+        }
+      },
+      {
+        "type": "contract_allowlist",
+        "title": "Contract allowlist",
+        "description": "Restrict a signer to interacting only with approved contracts.",
+        "enforcement": {
+          "kind": "signer-limits"
+        }
+      },
+      {
+        "type": "verified_only",
+        "title": "Verified provenance only",
+        "description": "Restrict a signer to contracts with verified source provenance — strict (any live attestation) or trusted publishers only. Verified means reproducible, attributable source; not audited or safe.",
+        "enforcement": {
+          "kind": "policy-contract",
+          "wasmHash": "ef07b922670bab0f2c15c48bc96a3af0d858250c785536dde3e49d6ead690def"
+        }
+      },
+      {
+        "type": "timelock",
+        "title": "Time-lock",
+        "description": "Delay sensitive admin actions by a configurable period.",
+        "enforcement": {
+          "kind": "custom-contract-pending"
+        }
+      }
+    ]
+  },
+  "validate": {
+    "status": 200,
+    "body": {
+      "valid": true,
+      "errors": []
+    }
+  },
+  "generate": {
+    "status": 201,
+    "body": {
+      "policy": {
+        "id": "e2e-policy-id",
+        "createdAt": "2026-09-26T12:00:00.000Z",
+        "status": "generated",
+        "definition": {
+          "version": "1",
+          "type": "spending_limit",
+          "owners": [
+            "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67"
+          ],
+          "spendingLimits": {
+            "dailyXlm": "10"
+          }
+        },
+        "policyHash": "07a1e25a50872c0362b8e721cede11bbe9f3dbd2660145a56d84661b24cca574",
+        "manifest": {
+          "template": "spending_limit",
+          "enforcement": {
+            "kind": "policy-contract",
+            "wasmHash": "c42ab9b52c977a3ba29ca3e848dda499e91180e0c01de86a7e21e241989fcbdf",
+            "constructorArgs": {
+              "dailyLimitStroops": "100000000",
+              "windowSeconds": 86400
+            }
+          },
+          "network": "testnet"
+        }
+      }
+    }
+  },
+  "validateRejected": {
+    "status": 200,
+    "body": {
+      "valid": false,
+      "errors": [
+        "spendingLimits.dailyXlm: must be a valid decimal amount with at most 7 decimal places",
+        "spendingLimits.dailyXlm: amount must be at least 1 stroop (0.0000001 XLM)"
+      ]
+    }
+  },
+  "simulateOk": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "minResourceFee": "84372"
+    }
+  },
+  "deployInstanceOk": {
+    "status": 200,
+    "body": {
+      "policy": {
+        "id": "e2e-policy-id",
+        "createdAt": "2026-09-26T12:00:00.000Z",
+        "status": "instance_deployed",
+        "definition": {
+          "version": "1",
+          "type": "spending_limit",
+          "owners": [
+            "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67"
+          ],
+          "spendingLimits": {
+            "dailyXlm": "10"
+          }
+        },
+        "policyHash": "07a1e25a50872c0362b8e721cede11bbe9f3dbd2660145a56d84661b24cca574",
+        "manifest": {
+          "template": "spending_limit",
+          "enforcement": {
+            "kind": "policy-contract",
+            "wasmHash": "c42ab9b52c977a3ba29ca3e848dda499e91180e0c01de86a7e21e241989fcbdf",
+            "constructorArgs": {
+              "dailyLimitStroops": "100000000",
+              "windowSeconds": 86400
+            }
+          },
+          "network": "testnet"
+        },
+        "instance": {
+          "contractId": "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA",
+          "txHash": "e2e-instance-deploy-tx",
+          "wallet": "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67",
+          "deployedAt": "2026-09-26T12:00:00.000Z"
+        }
+      },
+      "contractId": "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA"
+    }
+  },
+  "simulateRejected": {
+    "status": 200,
+    "body": {
+      "ok": false,
+      "error": "HostError: Error(Contract, #2)"
+    }
+  },
+  "deployInstanceFailed": {
+    "status": 502,
+    "body": {
+      "error": "deploy_failed",
+      "code": "deploy_failed_onchain"
+    }
+  },
+  "simulateUnavailable": {
+    "status": 503,
+    "body": {
+      "error": "deploy_unavailable",
+      "reason": "no sponsor configured"
+    }
+  }
+}

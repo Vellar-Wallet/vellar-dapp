@@ -11,6 +11,7 @@ import {
 import { walletConfig } from "./config";
 import { createHttpWalletBackend } from "./http-backend";
 import { createPolicySignerActions } from "./policy-signer";
+import { ensureServerSession } from "./server-session";
 import { createSwapClient, type SwapClient } from "./swap/client";
 import { createSoroswapVenue } from "./swap/soroswap";
 import { createSignerActions, type AddAgentKeyInput } from "./signer-actions";
@@ -113,13 +114,21 @@ export function getWalletRuntime(): Promise<WalletRuntime> {
       networkPassphrase: config.networkPassphrase,
     }) as unknown as SacClientLike;
 
+    const kitConnector = createPasskeyKitConnector({
+      kit: kitLike,
+      backend,
+      network: config.network,
+      appName: config.appName,
+    });
+
     return {
-      connector: createPasskeyKitConnector({
-        kit: kitLike,
-        backend,
-        network: config.network,
-        appName: config.appName,
-      }),
+      connector: {
+        ...kitConnector,
+        // The kit skips /wallet/connect when it resolves the wallet by
+        // derivation (the normal case), so open the server session here.
+        connectWallet: async (network) =>
+          ensureServerSession(await kitConnector.connectWallet(network), backend),
+      },
       payments: createPaymentClient({
         kit: kitLike,
         sac,

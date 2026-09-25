@@ -31,5 +31,14 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: true,
     timeout: 120_000,
+    // The policy builder is behind the policyBuilderV2 rollout flag, which
+    // defaults to 0% — without this the "deploy policy" specs only ever see
+    // the "not in the rollout yet" page. Merged over process.env, so an
+    // explicit value still wins. A REUSED dev server keeps whatever it was
+    // started with (see e2e/README.md).
+    env: {
+      NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT:
+        process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT ?? "100",
+    },
   },
 });
