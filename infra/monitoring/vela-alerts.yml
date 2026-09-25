@@ -1,0 +1,108 @@
+# Prometheus alerting rules for the Vellar services — the "Recommended alert
+# rules (§13 Alerting)" from docs/observability.md, wired for real.
+#
+# Metric names here are the ones the code ACTUALLY emits
+# (packages/service-kit/src/metrics.ts, `vela_<subsystem>_<name>_<unit>`,
+# Issue #300). The original doc snippet used pre-#300 names
+# (`vela_tx_signed_total`, `vela_cleanup_completed_total`,
+# `vela_verification_turnaround_seconds`) that match no series and would
+# never fire.
+#
+# Loaded by infra/monitoring/prometheus/prometheus.yml. Validate with:
+#   promtool check rules infra/monitoring/vela-alerts.yml
+#
+# Thresholds are starting points — tune to real traffic.
+
+groups:
+  - name: vela_service_health
+    rules:
+      - alert: VelaServiceDown
+        expr: up{job=~"vela-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} ({{ $labels.instance }}) is not answering /metrics"
+          description: |
+            Prometheus has failed to scrape {{ $labels.instance }} for 2 minutes.
+            The process is down, crash-looping, or unreachable from the scraper.
+          runbook: "docs/observability.md#endpoints"
+
+  - name: vela_domain_alerts
+    rules:
+      # verification worker failures
+      - alert: VerificationWorkerFailures
+        expr: increase(vela_rpc_errors_total{service="worker-service",upstream="build"}[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: worker-service
+        annotations:
+          summary: "Verification worker build failures ({{ $value | humanize }} in 10m)"
+          description: |
+            worker-service recorded more than 3 build/upstream errors in the last
+            10 minutes. Check the build worker container and the verification
+            job logs (`event` field) for the failing submissions.
+          runbook: "docs/observability.md#recommended-alert-rules-13-alerting"
+
+      # RPC / Horizon degradation
+      - alert: RpcDegradation
+        expr: increase(vela_rpc_errors_total{upstream="relayer"}[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: wallet-service
+        annotations:
+          summary: "Relayer / RPC errors elevated ({{ $value | humanize }} in 5m)"
+          description: |
+            More than 5 relayer/RPC errors in 5 minutes. Transaction submission is
+            likely degraded — check the Stellar RPC endpoint and relayer status.
+          runbook: "docs/observability.md#recommended-alert-rules-13-alerting"
+
+      # tx submission failure spike (idea.md: tx submission spikes/failures)
+      - alert: TxSubmitFailureSpike
+        expr: |
+          sum(rate(vela_wallet_tx_signed_total{outcome="failure"}[5m]))
+          / clamp_min(sum(rate(vela_wallet_tx_signed_total[5m])), 1) > 0.2
+        for: 10m
+        labels:
+          severity: critical
+          component: wallet-service
+        annotations:
+          summary: "Transaction failure ratio above 20% ({{ $value | humanizePercentage }})"
+          description: |
+            More than 20% of signed transactions are failing over a 10-minute
+            window. Users are unable to transact reliably.
+          runbook: "docs/observability.md#recommended-alert-rules-13-alerting"
+
+      # abnormal cleanup failure rate
+      - alert: CleanupFailureRate
+        expr: |
+          sum(rate(vela_lifecycle_cleanup_completed_total{outcome="failure"}[15m]))
+          / clamp_min(sum(rate(vela_lifecycle_cleanup_completed_total[15m])), 1) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          component: lifecycle-service
+        annotations:
+          summary: "Cleanup failure ratio above 50% ({{ $value | humanizePercentage }})"
+          description: |
+            More than half of lifecycle cleanups are failing over 15 minutes.
+          runbook: "docs/observability.md#recommended-alert-rules-13-alerting"
+
+      # verification turnaround too slow (p95 > 5 min)
+      - alert: VerificationSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(vela_worker_verification_turnaround_seconds_bucket[30m])) by (le)
+          ) > 300
+        for: 15m
+        labels:
+          severity: warning
+          component: worker-service
+        annotations:
+          summary: "Verification p95 turnaround is {{ $value | humanizeDuration }}"
+          description: |
+            95th-percentile verification turnaround has exceeded 5 minutes for
+            15 minutes. Check worker queue depth and processing lag.
+          runbook: "docs/observability.md#worker-queue--backpressure-panel-worker-service"

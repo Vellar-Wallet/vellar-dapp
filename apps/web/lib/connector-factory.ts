@@ -14,6 +14,7 @@ import { createPolicySignerActions } from "./policy-signer";
 import { createSwapClient, type SwapClient } from "./swap/client";
 import { createSoroswapVenue } from "./swap/soroswap";
 import { createSignerActions, type AddAgentKeyInput } from "./signer-actions";
+import { createWalletUpgradeActions, type WalletVersionStatus } from "./wallet-upgrade";
 import type { RawSigner, SignerKeyRef } from "./signer-model";
 
 // Builds the real PasskeyKit-backed wallet runtime. The connector and the
@@ -82,6 +83,19 @@ export interface WalletRuntime {
    * (LastAdminSigner / LastSigner), which is the lockout guard of record.
    */
   removeSigner(key: SignerKeyRef): Promise<{ hash: string }>;
+  /**
+   * The wallet contract's on-chain wasm hash vs the hash this app build is
+   * pinned to (open-work 5.1). Read-only ledger lookup; no prompt.
+   */
+  walletVersion(accountId: string): Promise<WalletVersionStatus>;
+  /**
+   * Upgrade the wallet contract to the pinned `walletWasmHash` (open-work
+   * 5.1): passkey-signed `kit.upgrade(newWasmHash)`. The target is never
+   * caller-supplied. Returns the tx hash and the from/to wasm hashes.
+   */
+  upgradeWallet(
+    accountId: string,
+  ): Promise<{ hash: string; fromWasmHash: string; toWasmHash: string }>;
 }
 
 /** 7 days — the device-signer session length. The contract stores the
@@ -205,7 +219,25 @@ export function getWalletRuntime(): Promise<WalletRuntime> {
         const { SignerKey, SignerStore } = await import("passkey-kit");
         return signerActions({ SignerKey, SignerStore }).removeSigner(key);
       },
+      walletVersion: (accountId) => upgradeActions().status(accountId),
+      upgradeWallet: (accountId) => upgradeActions().upgrade(accountId),
     };
+
+    /** Bind the extracted upgrade actions (wallet-upgrade.ts) to this
+     * runtime's kit + backend, with a direct ledger read of the wallet
+     * contract instance for its current wasm hash. */
+    function upgradeActions() {
+      return createWalletUpgradeActions({
+        kit: {
+          upgrade: (newWasmHash) => kit.upgrade(Buffer.from(newWasmHash)),
+          sign: (tx) => kit.sign(tx as never),
+        },
+        backend,
+        network: config.network,
+        targetWasmHash: config.walletWasmHash,
+        readWalletWasmHash: (accountId) => readContractWasmHash(config.rpcUrl, accountId),
+      });
+    }
 
     /** Bind the extracted signer actions (signer-actions.ts) to this
      * runtime's kit + backend + network. Same RA-6 rationale as policy
@@ -264,6 +296,22 @@ const MAX_SIGNERS_CONFIRMED = 64;
 type SignerStoreValue = Parameters<import("passkey-kit").PasskeyKit["addEd25519"]>[2];
 type SignerLimitsValue = Parameters<import("passkey-kit").PasskeyKit["addEd25519"]>[1];
 type SignerKeyValue = Parameters<import("passkey-kit").PasskeyKit["remove"]>[0];
+
+/** A contract's current wasm hash (hex), read from its instance ledger entry. */
+async function readContractWasmHash(rpcUrl: string, contractId: string): Promise<string> {
+  const { rpc, xdr } = await import("@stellar/stellar-sdk");
+  const server = new rpc.Server(rpcUrl);
+  const entry = await server.getContractData(
+    contractId,
+    xdr.ScVal.scvLedgerKeyContractInstance(),
+    rpc.Durability.Persistent,
+  );
+  const executable = entry.val.contractData().val().instance().executable();
+  if (executable.switch() !== xdr.ContractExecutableType.contractExecutableWasm()) {
+    throw new Error(`${contractId} is not a wasm contract.`);
+  }
+  return Buffer.from(executable.wasmHash()).toString("hex");
+}
 
 /** Rebuild a passkey-kit SignerKey from the indexer's {key,value} view. */
 function signerKeyFrom(

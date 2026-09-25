@@ -1,0 +1,49 @@
+# Alertmanager routing for the Vellar alerts (infra/monitoring/vela-alerts.yml).
+#
+# Secrets are read from files, never committed: mount them into
+# /etc/alertmanager/secrets/ (the compose file maps ./alertmanager/secrets).
+#   slack_webhook_url  — Slack incoming-webhook URL for #vela-alerts
+#   oncall_webhook_url — generic webhook (PagerDuty Events v2 / Opsgenie /
+#                        a relay) for critical alerts
+# See alertmanager/secrets/README.md.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: slack
+  group_by: ["alertname", "service", "job"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity="critical"']
+      receiver: oncall
+      repeat_interval: 1h
+      continue: true
+    - matchers: ['severity="critical"']
+      receiver: slack
+
+inhibit_rules:
+  # A down service explains its own failing domain alerts — don't page twice.
+  - source_matchers: ['alertname="VelaServiceDown"']
+    target_matchers: ['severity="warning"']
+    equal: ["instance"]
+
+receivers:
+  - name: slack
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack_webhook_url
+        channel: "#vela-alerts"
+        send_resolved: true
+        title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          runbook: {{ .Annotations.runbook }}
+          {{ end }}
+
+  - name: oncall
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/oncall_webhook_url
+        send_resolved: true

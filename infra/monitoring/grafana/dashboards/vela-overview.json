@@ -1,0 +1,423 @@
+{
+  "uid": "vela-overview",
+  "title": "Vellar \u2014 Service Overview",
+  "tags": [
+    "vela",
+    "observability"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Targets up",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "up{job=~\"vela-.*\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "HTTP request rate by service",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_http_requests_total[5m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "HTTP 5xx ratio by service",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_http_requests_total{status=~\"5..\"}[5m])) by (service) / clamp_min(sum(rate(vela_http_requests_total[5m])) by (service), 1e-9)",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Domain success rates (5m)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_wallet_created_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(vela_wallet_created_total[5m])), 1e-9)",
+          "legendFormat": "wallet created"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_wallet_passkey_auth_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(vela_wallet_passkey_auth_total[5m])), 1e-9)",
+          "legendFormat": "passkey auth"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_wallet_tx_signed_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(vela_wallet_tx_signed_total[5m])), 1e-9)",
+          "legendFormat": "tx signed"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_policy_deployed_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(vela_policy_deployed_total[5m])), 1e-9)",
+          "legendFormat": "policy deployed"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_lifecycle_cleanup_completed_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(vela_lifecycle_cleanup_completed_total[5m])), 1e-9)",
+          "legendFormat": "cleanup"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(rate(vela_worker_verification_total{outcome=\"success\"}[5m])) / clamp_min(sum(rate(vela_worker_verification_total[5m])), 1e-9)",
+          "legendFormat": "verification"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "RPC errors by upstream",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "sum(increase(vela_rpc_errors_total[5m])) by (service, upstream)",
+          "legendFormat": "{{service}} \u2192 {{upstream}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "verification-service Latency (p50, p95, p99)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(vela_http_request_duration_seconds_bucket{service=\"verification-service\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}} - p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(vela_http_request_duration_seconds_bucket{service=\"verification-service\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}} - p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(vela_http_request_duration_seconds_bucket{service=\"verification-service\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}} - p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Verification turnaround p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(vela_worker_verification_turnaround_seconds_bucket[30m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Worker queue depth",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "vela_worker_queue_depth{service=\"worker-service\"}",
+          "legendFormat": "pending jobs"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Worker processing lag",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vela-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vela-prometheus"
+          },
+          "expr": "vela_worker_processing_lag_seconds{service=\"worker-service\"}",
+          "legendFormat": "lag"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Firing alerts",
+      "type": "alertlist",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      },
+      "options": {
+        "showOptions": "current",
+        "maxItems": 20,
+        "sortOrder": 1,
+        "stateFilter": {
+          "firing": true,
+          "pending": true
+        }
+      }
+    }
+  ]
+}

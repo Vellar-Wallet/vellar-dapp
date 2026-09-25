@@ -173,54 +173,53 @@ Example log line (JSON):
 
 ## Recommended alert rules (§13 Alerting)
 
-Wire these in your monitoring system against the metrics above. Thresholds are
-starting points — tune to real traffic.
+The rules are wired for real in
+[`infra/monitoring/vela-alerts.yml`](../infra/monitoring/vela-alerts.yml)
+(Prometheus rule file, with severity labels, summaries and runbook links) and
+routed by [`infra/monitoring/alertmanager/alertmanager.yml`](../infra/monitoring/alertmanager/alertmanager.yml):
+`critical` → on-call webhook + Slack, everything else → Slack.
 
-```yaml
-# verification worker failures
-- alert: VerificationWorkerFailures
-  expr: increase(vela_rpc_errors_total{service="worker-service",upstream="build"}[10m]) > 3
-  for: 5m
+| Alert                        | Expression (abridged)                                                                 | For | Severity |
+| ---------------------------- | ------------------------------------------------------------------------------------- | --- | -------- |
+| `VelaServiceDown`            | `up{job=~"vela-.*"} == 0`                                                             | 2m  | critical |
+| `VerificationWorkerFailures` | `increase(vela_rpc_errors_total{service="worker-service",upstream="build"}[10m]) > 3` | 5m  | warning  |
+| `RpcDegradation`             | `increase(vela_rpc_errors_total{upstream="relayer"}[5m]) > 5`                          | 5m  | warning  |
+| `TxSubmitFailureSpike`       | failure ratio of `vela_wallet_tx_signed_total` over 5m `> 0.2`                         | 10m | critical |
+| `CleanupFailureRate`         | failure ratio of `vela_lifecycle_cleanup_completed_total` over 15m `> 0.5`             | 15m | warning  |
+| `VerificationSlow`           | p95 of `vela_worker_verification_turnaround_seconds` over 30m `> 300`                  | 15m | warning  |
 
-# RPC / Horizon degradation
-- alert: RpcDegradation
-  expr: increase(vela_rpc_errors_total{upstream="relayer"}[5m]) > 5
-  for: 5m
+Thresholds are starting points — tune to real traffic. Note: an earlier version
+of this section used pre-#300 metric names (`vela_tx_signed_total`,
+`vela_cleanup_completed_total`, `vela_verification_turnaround_seconds`) that
+match no emitted series; the rule file uses the current names.
 
-# tx submission failure spike (idea.md: tx submission spikes/failures)
-- alert: TxSubmitFailureSpike
-  expr: |
-    sum(rate(vela_tx_signed_total{outcome="failure"}[5m]))
-    / clamp_min(sum(rate(vela_tx_signed_total[5m])), 1) > 0.2
-  for: 10m
+## Running the monitoring stack
 
-# abnormal cleanup failure rate
-- alert: CleanupFailureRate
-  expr: |
-    sum(rate(vela_cleanup_completed_total{outcome="failure"}[15m]))
-    / clamp_min(sum(rate(vela_cleanup_completed_total[15m])), 1) > 0.5
-  for: 15m
+[`infra/monitoring/docker-compose.yml`](../infra/monitoring/docker-compose.yml)
+runs Prometheus (scrape + rule evaluation), Alertmanager and Grafana (with the
+`Vellar — Service Overview` dashboard provisioned from
+`infra/monitoring/grafana/dashboards/`):
 
-# verification turnaround too slow (p95 > 5 min)
-- alert: VerificationSlow
-  expr: histogram_quantile(0.95, sum(rate(vela_verification_turnaround_seconds_bucket[30m])) by (le)) > 300
-  for: 15m
+```sh
+# secrets are files, never committed — see infra/monitoring/alertmanager/secrets/README.md
+echo "https://hooks.slack.com/services/..." > infra/monitoring/alertmanager/secrets/slack_webhook_url
+echo "https://events.pagerduty.com/..."     > infra/monitoring/alertmanager/secrets/oncall_webhook_url
+docker compose -f infra/monitoring/docker-compose.yml up -d
+# Prometheus :9090 · Alertmanager :9093 · Grafana :3001
 ```
 
-## Example scrape config
-
-```yaml
-scrape_configs:
-  - job_name: vela
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["gateway:4000", "worker:4005"] # all-in-one: just the gateway
-```
+Scrape targets live in
+[`infra/monitoring/prometheus/prometheus.yml`](../infra/monitoring/prometheus/prometheus.yml)
+and default to the local dev ports via `host.docker.internal`. For a deployed
+environment, point them at the real hosts; for `all-in-one`, keep only the
+gateway and the worker. Hosted Prometheus (Grafana Cloud, etc.) can import
+`vela-alerts.yml` and the dashboard JSON as-is.
 
 ## Honest scope
 
-The instrumentation (endpoints, metrics, structured events) is built and tested.
-Standing up Prometheus/Grafana and activating the alert rules above is
-environment-dependent ops — the free-tier hosting has nowhere to run a scraper,
-so this doc gives you everything needed to wire it wherever the app is deployed
-for real, without pretending a monitoring stack exists.
+The instrumentation (endpoints, metrics, structured events) is built and tested,
+and the scrape/alert/dashboard configuration is committed under
+`infra/monitoring/`. What remains environment-dependent is *where* that stack
+runs: the free-tier hosting has nowhere to run a scraper, so a deployment must
+either run the compose stack alongside the services or load the same rule file
+and dashboard into a hosted Prometheus.

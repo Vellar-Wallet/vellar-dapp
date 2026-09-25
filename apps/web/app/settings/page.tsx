@@ -18,9 +18,11 @@ import { AddPasskeyCard } from "./add-passkey-card";
 import { AgentKeysCard } from "./agent-keys-card";
 import { ProvenanceCard } from "./provenance-card";
 import { SignersCard } from "./signers-card";
+import { WalletUpgradeCard } from "./wallet-upgrade-card";
 
 // Account settings ("paper & signals" shell): signer management (#401),
-// agent keys (#394), verified-provenance signing (#398), extension pairing
+// agent keys (#394), verified-provenance signing (#398), wallet contract
+// upgrade (open-work 5.1), extension pairing
 // and server-side device sessions.
 
 export default function Settings() {
@@ -63,6 +65,7 @@ export default function Settings() {
         {session && <AddPasskeyCard session={session} />}
         {session && <AgentKeysCard session={session} />}
         {session && <ProvenanceCard session={session} />}
+        {session && <WalletUpgradeCard session={session} />}
         {session && <ExtensionPairingCard session={session} />}
 
         <section className="lpa-panel">
