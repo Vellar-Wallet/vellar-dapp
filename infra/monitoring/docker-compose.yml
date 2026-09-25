@@ -1,0 +1,63 @@
+# Monitoring stack for Vellar (docs/observability.md): Prometheus scrapes every
+# service's /metrics and evaluates the alert rules, Alertmanager routes them to
+# Slack / on-call, Grafana serves the dashboards.
+#
+# Usage (services running on the host via `pnpm dev`):
+#   1. create alertmanager/secrets/{slack_webhook_url,oncall_webhook_url}
+#   2. docker compose -f infra/monitoring/docker-compose.yml up -d
+#   Prometheus  http://localhost:9090   (Alerts tab shows rule state)
+#   Alertmanager http://localhost:9093
+#   Grafana     http://localhost:3001   (admin / $GRAFANA_ADMIN_PASSWORD)
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./vela-alerts.yml:/etc/prometheus/rules/vela-alerts.yml:ro
+      - ./dlq-alerts.yaml:/etc/prometheus/rules/dlq-alerts.yaml:ro
+      - ./prometheus-rules-wallet-cache.yml:/etc/prometheus/rules/prometheus-rules-wallet-cache.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - alertmanager
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/secrets:/etc/alertmanager/secrets:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
