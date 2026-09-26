@@ -45,7 +45,16 @@ export function xlmToBaseUnits(value: string): string {
 // and reading it here (not inside the component) keeps
 // PolicyBuilderFlagged's gating logic testable without rendering the whole
 // page tree.
-const POLICY_BUILDER_FLAG = readFlagConfig("policyBuilderV2");
+//
+// The env vars MUST be referenced literally here: Next.js only inlines
+// `process.env.NEXT_PUBLIC_X` written out in full, so readFlagConfig's own
+// computed `process.env[...]` lookup is always undefined in the browser — the
+// flag silently stayed at 0% for every account however it was configured.
+const POLICY_BUILDER_FLAG = readFlagConfig("policyBuilderV2", {
+  NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT:
+    process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT,
+  NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST: process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST,
+});
 
 /** Exported for tests — the gating decision as a pure function of session. */
 export function policyBuilderVisibleFor(accountId: string | null): boolean {

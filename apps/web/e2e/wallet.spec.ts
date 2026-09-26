@@ -41,13 +41,13 @@ test("passkey wallet: create, fund, pay, reconnect (live testnet)", async ({ pag
 
   // Read the full contract id from the Receive panel.
   await page.getByRole("button", { name: "Receive" }).click();
-  const addressLocator = page.locator("p.mono", { hasText: /^C[A-Z2-7]{55}$/ }).first();
+  const addressLocator = page.getByTestId("receive-address");
   await expect(addressLocator).toBeVisible({ timeout: 30_000 });
   const contractId = (await addressLocator.textContent())!.trim();
   await page.getByRole("button", { name: "Close" }).click();
 
   // Fresh wallet: balance hero reads 0 XLM.
-  const balanceHero = page.locator(".bal");
+  const balanceHero = page.locator(".lpa-balance");
   await expect(balanceHero).toContainText("0", { timeout: 60_000 });
 
   // --- Fund the smart wallet on-chain, then confirm the dashboard sees it ---
@@ -77,7 +77,7 @@ test("passkey wallet: create, fund, pay, reconnect (live testnet)", async ({ pag
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 60_000 });
   await page.getByRole("button", { name: "Receive" }).click();
-  await expect(page.locator("p.mono", { hasText: contractId })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("receive-address").filter({ hasText: contractId })).toBeVisible({ timeout: 30_000 });
 });
 
 // #321: reconnect after session expiry, with a data-loss check the existing
@@ -123,12 +123,12 @@ test("reconnect after a lost session regains access with no data loss (live test
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 120_000 });
 
   await page.getByRole("button", { name: "Receive" }).click();
-  const addressLocator = page.locator("p.mono", { hasText: /^C[A-Z2-7]{55}$/ }).first();
+  const addressLocator = page.getByTestId("receive-address");
   await expect(addressLocator).toBeVisible({ timeout: 30_000 });
   const contractId = (await addressLocator.textContent())!.trim();
   await page.getByRole("button", { name: "Close" }).click();
 
-  const balanceHero = page.locator(".bal");
+  const balanceHero = page.locator(".lpa-balance");
   const funder = await fundSmartWallet(contractId, 10n);
   await page.reload();
   await expect(balanceHero).toContainText("10", { timeout: 60_000 });
@@ -155,7 +155,7 @@ test("reconnect after a lost session regains access with no data loss (live test
 
   // No data loss: same account, same balance — nothing was reset or re-created.
   await page.getByRole("button", { name: "Receive" }).click();
-  await expect(page.locator("p.mono", { hasText: contractId })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("receive-address").filter({ hasText: contractId })).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Close" }).click();
   await expect(balanceHero).toContainText("10", { timeout: 60_000 });
 

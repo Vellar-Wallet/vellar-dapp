@@ -1,0 +1,59 @@
+{
+  "_generatedBy": "services/wallet-service/src/e2e-fixtures.test.ts (passkey-kit derivation + Spec, real buildServer; regenerate with UPDATE_E2E_FIXTURES=1)",
+  "wallet": "CCGCN3USDQV3CEWS2KDOZH6CWFAKJEPBK4ZFYOA7TL7N2OEZ26YCWZBA",
+  "keyId": "aqR5xbdIshvRpjlOQl0V1LR0k-TQ6PJTzbCLjcXe8hA",
+  "deployerPublicKey": "GC2C7AWLS2FMFTQAHW3IBUB4ZXVP4E37XNLEF2IK7IVXBB6CMEPCSXFO",
+  "credential": {
+    "credentialId": "aqR5xbdIshvRpjlOQl0V1LR0k+TQ6PJTzbCLjcXe8hA=",
+    "privateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgUG3Yv4uHDGJ9CINsU3A66JxDnVDpPk4Sy2Apc9OuljuhRANCAATEUku0VEIPLvL62pvny6iP7O5Vgp2pqFraQWXDplkOiVu6RsrA3Of4RTOrkH/VHWkPvUC77gtM5GSTyKWS9IFW",
+    "rpId": "localhost",
+    "userHandle": "dmVsbGFyLWUyZS11c2Vy",
+    "isResidentCredential": true,
+    "signCount": 0
+  },
+  "ledger": {
+    "walletInstance": {
+      "key": "AAAABgAAAAGMJu6SHCuxEtLShuyfwrFApJHhVzJcOB+a/t04mdewKwAAABQAAAAB",
+      "xdr": "AAAABgAAAAAAAAABjCbukhwrsRLS0obsn8KxQKSR4VcyXDgfmv7dOJnXsCsAAAAUAAAAAQAAABMAAAAA/e+tZLloNxR+HDM+UfU3tpbquSXp8UfmPVl8BOPJA/AAAAAA"
+    },
+    "passkeySigner": {
+      "key": "AAAABgAAAAGMJu6SHCuxEtLShuyfwrFApJHhVzJcOB+a/t04mdewKwAAABAAAAABAAAAAgAAAA8AAAAJU2VjcDI1NnIxAAAAAAAADQAAACBqpHnFt0iyG9GmOU5CXRXUtHST5NDo8lPNsIuNxd7yEAAAAAE=",
+      "xdr": "AAAABgAAAAAAAAABjCbukhwrsRLS0obsn8KxQKSR4VcyXDgfmv7dOJnXsCsAAAAQAAAAAQAAAAIAAAAPAAAACVNlY3AyNTZyMQAAAAAAAA0AAAAgaqR5xbdIshvRpjlOQl0V1LR0k+TQ6PJTzbCLjcXe8hAAAAABAAAAEAAAAAEAAAAEAAAADwAAAAlTZWNwMjU2cjEAAAAAAAANAAAAQQTEUku0VEIPLvL62pvny6iP7O5Vgp2pqFraQWXDplkOiVu6RsrA3Of4RTOrkH/VHWkPvUC77gtM5GSTyKWS9IFWAAAAAAAAEAAAAAEAAAABAAAAAQAAABAAAAABAAAAAQAAAAE="
+    }
+  },
+  "connectOk": {
+    "status": 200,
+    "body": {
+      "contractId": "CCGCN3USDQV3CEWS2KDOZH6CWFAKJEPBK4ZFYOA7TL7N2OEZ26YCWZBA",
+      "sessionId": "e2e-session-id"
+    }
+  },
+  "sessions": {
+    "status": 200,
+    "body": {
+      "sessions": [
+        {
+          "id": "e2e-session-id",
+          "contractId": "CCGCN3USDQV3CEWS2KDOZH6CWFAKJEPBK4ZFYOA7TL7N2OEZ26YCWZBA",
+          "network": "testnet",
+          "createdAt": "2026-09-26T12:00:00.000Z",
+          "lastActiveAt": "2026-09-26T12:00:00.000Z",
+          "expiresAt": "2026-10-03T12:00:00.000Z"
+        }
+      ]
+    }
+  },
+  "connectRateLimited": {
+    "status": 429,
+    "body": {
+      "error": "rate_limited",
+      "message": "Too many authentication attempts for this account or IP. Please try again later."
+    }
+  },
+  "connectNotFound": {
+    "status": 404,
+    "body": {
+      "error": "wallet_not_found"
+    }
+  }
+}

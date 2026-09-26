@@ -266,8 +266,12 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
           message: "Policy-deploy budget reached; try again later.",
         });
       }
-      // Budget accounting error or other unexpected error
+      // Any other failure (e.g. an RPC error the deployer didn't wrap) MUST
+      // still answer with an error status. Falling through used to resolve the
+      // handler with no body — an empty 200 the client read as a successful
+      // deploy with contractId undefined.
       request.log.error(err, "deploy-instance failed");
+      return reply.code(500).send({ error: "deploy_failed" });
     }
   });
 
