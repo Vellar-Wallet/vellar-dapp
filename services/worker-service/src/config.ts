@@ -1,5 +1,5 @@
 import { dockerBuildExecutor, stubBuildExecutor, type BuildExecutor } from "./executor";
-import { resolveNetwork, type Network } from "@vellar/service-kit";
+import { resolveNetwork, rpcPoolConfigFromEnv, type Network, type RpcPoolEnv } from "@vellar/service-kit";
 
 export interface WorkerRuntimeConfig {
   /** The explicit, cross-checked network (RA-10). Resolved from STELLAR_NETWORK
@@ -7,7 +7,11 @@ export interface WorkerRuntimeConfig {
    * refuses to boot on an incoherent or missing network. Security decisions
    * (the M5 attestor guard) read THIS, never an inference from the passphrase. */
   network: Network;
+  /** The primary (highest-priority) RPC endpoint — `rpcPool.urls[0]`. */
   rpcUrl: string;
+  /** Every RPC endpoint (STELLAR_RPC_URLS, else STELLAR_RPC_URL) plus the
+   * health-check tuning for the rotation pool. Every URL is network-checked. */
+  rpcPool: RpcPoolEnv;
   /** Cap on the getContractData RPC round-trip when resolving the deployed
    * wasm hash (issue #330) — that call previously had no timeout at all, so
    * a hung upstream RPC endpoint could stall a worker job indefinitely.
@@ -60,7 +64,8 @@ export interface WorkerRuntimeConfig {
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRuntimeConfig {
-  const rpcUrl = env.STELLAR_RPC_URL || TESTNET_RPC;
+  const rpcPool = rpcPoolConfigFromEnv(TESTNET_RPC, env);
+  const rpcUrl = rpcPool.urls[0]!;
   const networkPassphrase = env.STELLAR_NETWORK_PASSPHRASE || "Test SDF Network ; September 2015";
   // RA-10: resolve the network EXPLICITLY (STELLAR_NETWORK, required) and refuse
   // to boot if it is missing or disagrees with the passphrase/RPC. This throws a
@@ -73,10 +78,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WorkerRunti
     network: env.STELLAR_NETWORK,
     passphrase: networkPassphrase,
     rpcUrl,
+    rpcUrls: rpcPool.urls,
   });
   return {
     network,
     rpcUrl,
+    rpcPool,
     rpcTimeoutMs: env.VERIFY_RPC_TIMEOUT_MS ? Number(env.VERIFY_RPC_TIMEOUT_MS) : 10_000,
     databaseUrl: env.DATABASE_URL || undefined,
     buildImage: env.VERIFY_BUILD_IMAGE || undefined,

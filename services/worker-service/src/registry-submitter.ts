@@ -7,6 +7,7 @@ import {
   scValToNative,
   rpc,
 } from "@stellar/stellar-sdk";
+import type { RpcPool } from "@vellar/service-kit";
 import type { AttestationSubmitter } from "./attestor";
 
 // The real AttestationSubmitter: invokes the AttestationRegistry contract over
@@ -32,14 +33,30 @@ export interface RegistrySubmitterOptions {
     | "getTransaction"
     | "getLatestLedger"
   >;
+  /** Health-checked endpoint pool. When set, each call runs against the
+   * pool's current endpoint, chosen when the call starts and kept for the
+   * whole build → send → poll sequence. Writes are NOT retried on another
+   * endpoint — a failed call surfaces as before and the attestor retries it. */
+  rpcPool?: RpcPool;
 }
 
 export function createRegistrySubmitter(options: RegistrySubmitterOptions): AttestationSubmitter {
-  const server = options.server ?? new rpc.Server(options.rpcUrl);
+  const servers = new Map<string, rpc.Server>();
+  const pick = (): NonNullable<RegistrySubmitterOptions["server"]> => {
+    if (options.server) return options.server;
+    const url = options.rpcPool?.current() ?? options.rpcUrl;
+    let server = servers.get(url);
+    if (!server) {
+      server = new rpc.Server(url);
+      servers.set(url, server);
+    }
+    return server;
+  };
   const keypair = Keypair.fromSecret(options.attestorSecretKey);
   const registry = new Contract(options.registryContractId);
 
   async function invoke(method: string, args: import("@stellar/stellar-sdk").xdr.ScVal[]) {
+    const server = pick();
     const account = await server.getAccount(keypair.publicKey());
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -70,6 +87,7 @@ export function createRegistrySubmitter(options: RegistrySubmitterOptions): Atte
   }
 
   async function simulateRead(method: string, args: import("@stellar/stellar-sdk").xdr.ScVal[]) {
+    const server = pick();
     const account = await server.getAccount(keypair.publicKey());
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -129,6 +147,7 @@ export function createRegistrySubmitter(options: RegistrySubmitterOptions): Atte
     },
 
     async currentLedger() {
+      const server = pick();
       const latest = await server.getLatestLedger();
       return latest.sequence;
     },

@@ -66,6 +66,10 @@ export interface NetworkInputs {
   network: string | undefined;
   passphrase: string;
   rpcUrl: string;
+  /** Every endpoint in the RPC pool (rpc-pool.ts), when more than one is
+   * configured. EACH is cross-checked like `rpcUrl` — failover must never be
+   * able to rotate onto an endpoint for the other network. */
+  rpcUrls?: string[];
 }
 
 /**
@@ -102,18 +106,20 @@ export function resolveNetwork(inputs: NetworkInputs): Network {
     );
   }
 
-  const rpc = rpcNetwork(inputs.rpcUrl);
-  if (rpc !== network) {
-    disagreements.push(
-      rpc ? `RPC host looks like ${rpc}` : `RPC host '${inputs.rpcUrl}' is unrecognized`,
-    );
+  for (const rpcUrl of new Set([inputs.rpcUrl, ...(inputs.rpcUrls ?? [])])) {
+    const rpc = rpcNetwork(rpcUrl);
+    if (rpc !== network) {
+      disagreements.push(
+        rpc ? `RPC host '${rpcUrl}' looks like ${rpc}` : `RPC host '${rpcUrl}' is unrecognized`,
+      );
+    }
   }
 
   if (disagreements.length > 0) {
     throw new NetworkConfigError(
       `STELLAR_NETWORK='${network}' but the configuration is incoherent: ${disagreements.join("; ")}. ` +
         "Refusing to boot rather than guess which value is correct — align STELLAR_NETWORK, " +
-        "STELLAR_NETWORK_PASSPHRASE, and STELLAR_RPC_URL.",
+        "STELLAR_NETWORK_PASSPHRASE, and STELLAR_RPC_URL / STELLAR_RPC_URLS.",
     );
   }
 

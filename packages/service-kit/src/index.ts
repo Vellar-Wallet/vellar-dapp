@@ -100,6 +100,19 @@ export {
 } from "./circuit-breaker";
 
 export {
+  createRpcPool,
+  withRpcFailover,
+  rpcPoolConfigFromEnv,
+  getHealthProbe,
+  type RpcPool,
+  type RpcPoolOptions,
+  type RpcPoolEnv,
+  type RpcProbe,
+  type RpcProbeResult,
+  type RpcEndpointHealth,
+} from "./rpc-pool";
+
+export {
   retryWithBackoff,
   MaxRetriesExceededError,
   RetryAbortedError,

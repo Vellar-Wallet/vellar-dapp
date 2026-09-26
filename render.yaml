@@ -38,7 +38,11 @@ services:
     autoDeploy: false
     # Render runs from the repo root; install the workspace, then start the
     # combined backend. (The SDK is a published npm dep — nothing to pre-build.)
-    buildCommand: "corepack enable && pnpm install --frozen-lockfile"
+    # The backend runs under tsx, which strips types WITHOUT checking them, so
+    # there is no compile step to catch a type error. Typecheck all-in-one and
+    # every workspace package it depends on as part of the build, so a commit
+    # that doesn't typecheck fails the deploy instead of shipping.
+    buildCommand: "corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo run typecheck --filter=@vellar/all-in-one..."
     startCommand: "pnpm --filter @vellar/all-in-one start"
     healthCheckPath: /health
     envVars:

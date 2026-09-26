@@ -376,6 +376,21 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
     },
   };
   // --- end Vellar x402 setup ---
+  // Validate the contractId BEFORE the payment gate. Fastify runs onRequest
+  // hooks in registration order, so this hook (registered ahead of
+  // paymentMiddleware) rejects a malformed id with 400 before the caller is
+  // asked to pay — or charged — for a request that can only ever fail.
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.method !== "GET" || request.routeOptions.url !== "/verification/:contractId") {
+      return;
+    }
+    const parsed = contractIdSchema.safeParse(
+      (request.params as { contractId?: string }).contractId,
+    );
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_contract_id" });
+    }
+  });
   paymentMiddleware(app, x402Routes, x402Server); // Vellar x402: gate the route below
   app.get("/verification/:contractId", async (request, reply) => {
     const parsed = contractIdSchema.safeParse(

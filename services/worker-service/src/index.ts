@@ -2,6 +2,7 @@ import pg from "pg";
 import Fastify from "fastify";
 import { drizzle } from "drizzle-orm/node-postgres";
 import {
+  createRpcPool,
   domainMetrics,
   portFromEnv,
   registerHealth,
@@ -59,10 +60,36 @@ if (!config.databaseUrl) {
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
 const db = drizzle(pool);
 const store = createPgJobStore(db);
-const resolver = createRpcArtifactResolver({ rpcUrl: config.rpcUrl, timeoutMs: config.rpcTimeoutMs });
-const { executor, mode } = executorFromConfig(config);
-
 const log = createSafeLogger();
+
+// RPC health-check rotation: probe every configured Soroban RPC endpoint
+// (STELLAR_RPC_URLS, else STELLAR_RPC_URL) and route calls to the first
+// healthy, non-lagging one in priority order. Every URL already passed the
+// RA-10 network cross-check in configFromEnv.
+const rpcPool = createRpcPool({
+  urls: config.rpcPool.urls,
+  intervalMs: config.rpcPool.intervalMs,
+  timeoutMs: config.rpcPool.timeoutMs,
+  maxLedgerLag: config.rpcPool.maxLedgerLag,
+  onRotate(from, to, reason) {
+    log.info(`rpc endpoint rotated ${from} -> ${to} (${reason}).`);
+  },
+  onProbe(health) {
+    for (const endpoint of health) {
+      if (!endpoint.healthy) {
+        domainMetrics.rpcErrors.inc({ service: "worker-service", upstream: "soroban-rpc" });
+      }
+    }
+  },
+});
+rpcPool.start();
+
+const resolver = createRpcArtifactResolver({
+  rpcUrl: config.rpcUrl,
+  rpcPool,
+  timeoutMs: config.rpcTimeoutMs,
+});
+const { executor, mode } = executorFromConfig(config);
 
 if (mode === "stub") {
   log.info(
@@ -105,6 +132,11 @@ const metrics: WorkerMetrics = {
 const metricsApp = Fastify({ logger: false });
 registerHealth(metricsApp, "worker-service");
 registerMetrics(metricsApp, "worker-service");
+// Per-endpoint RPC health, for operators diagnosing a rotation.
+metricsApp.get("/health/rpc", async () => ({
+  current: rpcPool.current(),
+  endpoints: rpcPool.snapshot(),
+}));
 await metricsApp.listen({
   port: portFromEnv("WORKER_METRICS_PORT", 4005),
   host: "0.0.0.0",
@@ -151,6 +183,7 @@ if (config.attestorSecretKey && config.attestationRegistryId) {
   attestor = createAttestor({
     submitter: createRegistrySubmitter({
       rpcUrl: config.rpcUrl,
+      rpcPool,
       networkPassphrase: config.networkPassphrase,
       registryContractId: config.attestationRegistryId,
       attestorSecretKey: config.attestorSecretKey,
@@ -179,7 +212,9 @@ const loop = startWorkerLoop({
   metrics,
   attestor,
 });
-log.info(`build worker started (rpc=${config.rpcUrl}). Polling for submitted verifications.`);
+log.info(
+  `build worker started (rpc=${config.rpcPool.urls.join(",")}). Polling for submitted verifications.`,
+);
 
 // Consumer groups (issue #354): domain-specific consumer groups allow
 // independent scaling and monitoring. Currently we run a single verification
@@ -194,7 +229,7 @@ const verificationGroup = createVerificationGroup({
   log,
 });
 log.info(
-  `verification consumer group started (concurrency=${config.workerConcurrency ?? 1}, rpc=${config.rpcUrl}).`,
+  `verification consumer group started (concurrency=${config.workerConcurrency ?? 1}, rpc=${rpcPool.current()}).`,
 );
 
 // Reaper (M7): periodically return crashed 'building' rows to the queue, or
@@ -280,6 +315,7 @@ const shutdown = async () => {
   reaperStopped = true;
   clearTimeout(reapTimer);
   clearInterval(cleanupTimer);
+  rpcPool.stop();
   await metricsApp.close();
   await pool.end();
   process.exit(0);
