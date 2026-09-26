@@ -183,6 +183,70 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     return reply.code(201).send({ policy: record });
   });
 
+  // Batch endpoint for submitting multiple policy templates (#261)
+  const MAX_BATCH_SIZE = 50;
+  app.post("/policies/batch", async (request, reply) => {
+    const body = request.body as { templates?: Array<{ definition?: unknown; network?: string }> };
+    if (!body || !Array.isArray(body.templates) || body.templates.length === 0) {
+      return reply.code(400).send({ error: "invalid_body", message: "Expected a non-empty templates array" });
+    }
+
+    if (body.templates.length > MAX_BATCH_SIZE) {
+      return reply.code(400).send({
+        error: "batch_size_exceeded",
+        message: `Maximum batch size is ${MAX_BATCH_SIZE}`,
+      });
+    }
+
+    const results = await Promise.all(
+      body.templates.map(async (item, index) => {
+        const validation = validateDefinition(item.definition);
+        if (!validation.valid) {
+          return {
+            index,
+            success: false,
+            error: "invalid_policy",
+            details: validation.errors,
+          };
+        }
+
+        try {
+          const generated = generatePolicy(
+            item.definition as PolicyDefinition,
+            item.network,
+          );
+          const record: PolicyRecord = {
+            id: randomUUID(),
+            createdAt: now().toISOString(),
+            status: "generated",
+            ...generated,
+          };
+          await policies.insert(record);
+          return {
+            index,
+            success: true,
+            policy: record,
+          };
+        } catch (err) {
+          return {
+            index,
+            success: false,
+            error: err instanceof Error ? err.message : "generation_failed",
+          };
+        }
+      })
+    );
+
+    const hasFailures = results.some((r) => !r.success);
+    return reply.code(hasFailures ? 207 : 200).send({
+      total: results.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+      results,
+    });
+  });
+
+
   // Dry-run the instance deploy (build + simulate, no submit) so the UI can
   // confirm the deploy will succeed and show the resource cost before the user
   // commits. Same constructor args the real deploy will use.

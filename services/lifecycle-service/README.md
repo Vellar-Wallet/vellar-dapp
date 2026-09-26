@@ -72,3 +72,65 @@ of the TTL window regardless.
 A caller that constructs the service with a plain (uncached) `AccountReader`
 — every existing test in this package does this — gets no invalidation call
 at all; there's nothing to invalidate.
+
+## Cleanup Plan Response Schema (`/lifecycle/accounts/:id/cleanup-plan`)
+
+Generates a pre-flight cleanup plan for an account before executing a merge into a destination address.
+
+### Response JSON Schema
+
+```json
+{
+  "accountId": "G...",
+  "destination": "G...",
+  "blockers": [
+    {
+      "type": "balance | trustline | offer | data",
+      "description": "Human-readable description of blocker",
+      "actionRequired": "Action required before merging"
+    }
+  ],
+  "estimatedTransactions": 1,
+  "mergeReady": true
+}
+```
+
+### Example 1: Clean Account Ready to Merge
+
+```json
+{
+  "accountId": "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM",
+  "destination": "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3",
+  "blockers": [],
+  "estimatedTransactions": 1,
+  "mergeReady": true
+}
+```
+
+### Example 2: Account with Trustlines, Non-Zero Balances, and Data Entries
+
+```json
+{
+  "accountId": "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM",
+  "destination": "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3",
+  "blockers": [
+    {
+      "type": "balance",
+      "description": "Holds 50.00 USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "actionRequired": "Transfer or burn the USDC balance before removing its trustline"
+    },
+    {
+      "type": "trustline",
+      "description": "Trustline to USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "actionRequired": "Remove the USDC trustline (requires zero balance)"
+    },
+    {
+      "type": "data",
+      "description": "Managed data entry \"app_config\"",
+      "actionRequired": "Delete the \"app_config\" data entry"
+    }
+  ],
+  "estimatedTransactions": 2,
+  "mergeReady": false
+}
+```

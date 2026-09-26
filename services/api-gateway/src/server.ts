@@ -13,6 +13,7 @@ import {
   registerMetrics,
 } from "@vellar/service-kit";
 import { registerProxyRoute } from "./register-proxy-route";
+import { TokenBucketLimiter } from "./token-bucket";
 
 // Gateway (technical-doc.md §6.3, §8; idea.md §12): the single public entry
 // point, so the cross-cutting security controls live HERE (defense at the
@@ -20,6 +21,7 @@ import { registerProxyRoute } from "./register-proxy-route";
 // service). Controls in this file:
 //   - CORS: only the configured web-app origin(s) may call the API.
 //   - Rate limiting: per-IP request cap to blunt flooding/abuse.
+//   - Tenant rate limiting: token bucket per tenant/session ID (#259).
 //   - Security headers (helmet): HSTS, nosniff, frame-deny, referrer policy.
 //   - Body-size + request timeout caps: cheap abuse protection.
 //   - Content-type enforcement on mutations: the CSRF mitigation appropriate to
@@ -35,8 +37,13 @@ export interface GatewayOptions {
   rateLimitMax?: number;
   /** Rate-limit window in ms. Default 60_000; env RATE_LIMIT_WINDOW_MS. */
   rateLimitWindowMs?: number;
+  /** Token bucket capacity per tenant. Default 60; env TENANT_BUCKET_CAPACITY. */
+  tenantBucketCapacity?: number;
+  /** Token bucket refill rate (tokens/sec) per tenant. Default 10; env TENANT_BUCKET_REFILL_RATE. */
+  tenantBucketRefillRate?: number;
   /** Max request body size in bytes. Default 1 MiB; env MAX_BODY_BYTES. */
   maxBodyBytes?: number;
+
   /** Per-request timeout in ms (connection-level). Default 310_000 — must
    * stay >= the x402 payment gate's maxTimeoutSeconds (300s on
    * /lifecycle/execute and /verification/:contractId) or the gateway kills a
@@ -79,6 +86,13 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   const requestTimeoutMs = options.requestTimeoutMs ?? numEnv("REQUEST_TIMEOUT_MS", 310_000);
   const rateLimitMax = options.rateLimitMax ?? numEnv("RATE_LIMIT_MAX", 120);
   const rateLimitWindowMs = options.rateLimitWindowMs ?? numEnv("RATE_LIMIT_WINDOW_MS", 60_000);
+  const tenantBucketCapacity = options.tenantBucketCapacity ?? numEnv("TENANT_BUCKET_CAPACITY", 60);
+  const tenantBucketRefillRate = options.tenantBucketRefillRate ?? numEnv("TENANT_BUCKET_REFILL_RATE", 10);
+
+  const tenantLimiter = new TokenBucketLimiter({
+    capacity: tenantBucketCapacity,
+    refillRatePerSecond: tenantBucketRefillRate,
+  });
 
   const app = Fastify({
     logger: options.logger !== undefined ? (options.logger as never) : true,
@@ -152,6 +166,20 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     const traceHeaders = injectTraceContext(traceCtx);
     for (const [key, value] of Object.entries(traceHeaders)) {
       request.headers[key] = value;
+    }
+
+    // Per-tenant token bucket rate limit (#259)
+    const tenantId = (request.headers["x-tenant-id"] || request.headers["x-session-id"]) as string | undefined;
+    if (tenantId && request.url !== "/health") {
+      const result = tenantLimiter.tryConsume(tenantId);
+      if (!result.allowed) {
+        reply.header("Retry-After", String(result.retryAfterSeconds ?? 1));
+        return reply.code(429).send({
+          error: "too_many_requests",
+          message: "Tenant rate limit exceeded. Please retry later.",
+          retryAfter: result.retryAfterSeconds,
+        });
+      }
     }
 
     // Body-size cap (413) — reject before the body is streamed upstream.

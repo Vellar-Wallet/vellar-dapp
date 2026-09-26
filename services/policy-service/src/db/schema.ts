@@ -27,3 +27,17 @@ export const spendLedger = pgTable(
   },
   (table) => [index("spend_ledger_line_network_at_idx").on(table.line, table.network, table.at)],
 );
+
+export const policyExecutions = pgTable(
+  "policy_executions",
+  {
+    id: text("id").primaryKey(),
+    policyId: text("policy_id").notNull(),
+    walletId: text("wallet_id").notNull(),
+    status: text("status").notNull(),
+    executedAt: timestamp("executed_at", { withTimezone: true, mode: "date" }).notNull(),
+    metadata: jsonb("metadata"),
+  },
+  (table) => [index("idx_policy_executions_wallet_id").on(table.walletId)],
+);
+
