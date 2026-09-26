@@ -1,275 +1,33 @@
 import "../../lib/buffer-polyfill";
 import "./popup.css";
+import "./screens.css";
 import { useCallback, useEffect, useState } from "react";
 import { browser } from "wxt/browser";
-import { TrustBadge } from "@vellar/ui";
-import type { VerificationStatus } from "@vellar/verification-sdk";
+import type { PermissionGrant } from "@vellar/provider-sdk";
 import { browserKv } from "../../lib/browser-kv";
 import type { PendingApprovalSummary } from "../../lib/messages";
-import { loadState, revokeGrant, type ExtensionState, type PairedWallet } from "../../lib/state";
-import { formatStroops, summarizeTransaction, type TransactionSummary } from "../../lib/tx-summary";
-import { verificationClient } from "../../lib/verification";
+import { loadState, revokeGrant, type ExtensionState } from "../../lib/state";
+import { ApprovalScreen } from "./ApprovalScreen";
+import { HomeScreen } from "./HomeScreen";
 
-const NETWORK_PASSPHRASES = {
-  testnet: "Test SDF Network ; September 2015",
-  mainnet: "Public Global Stellar Network ; September 2015",
-} as const;
-
-/** Quick balance summary (§4.2 "quick access to balances"). Best-effort. */
-function useQuickBalance(wallet: PairedWallet | undefined) {
-  const [balance, setBalance] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!wallet) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [{ formatTokenAmount }, { createRpcBalanceReader, nativeToken }] = await Promise.all([
-          import("vellar-sdk/balances"),
-          import("vellar-sdk/rpc"),
-        ]);
-        const passphrase = NETWORK_PASSPHRASES[wallet.network];
-        const token = nativeToken(passphrase);
-        const reader = createRpcBalanceReader({
-          rpcUrl: wallet.rpcUrl,
-          networkPassphrase: passphrase,
-        });
-        const amount = await reader.getTokenBalance(token.contractId, wallet.address);
-        if (!cancelled) setBalance(formatTokenAmount(amount, token.decimals));
-      } catch {
-        if (!cancelled) setBalance(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [wallet]);
-
-  return balance;
-}
-
-// Popup (technical-doc.md §4.2, §7.3): "paper & signals" at popup density
-// (see popup.css). Approval prompts show the requesting origin ALWAYS (§8.2); quick
-// account view + per-origin permissions; advanced workflows deep-link out.
-
-function CopyGlyph() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="9" y="9" width="12" height="12" rx="2" />
-      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-    </svg>
-  );
-}
-
-interface RequestDescription {
-  text: string;
-  /** Long identifier shown on its own wrapping line (e.g. a wallet address). */
-  address?: string;
-}
-
-import { sanitizeString } from "../../lib/sanitization";
-
-function describeRequest(request: PendingApprovalSummary["request"]): RequestDescription {
-  switch (request.method) {
-    case "connect":
-      return { text: "wants to connect: see your address and request transaction approvals." };
-    case "pair":
-      return {
-        text: `wants to pair this extension as a device signer on ${sanitizeString(request.params.network)}. You'll confirm with your passkey next; the pairing expires automatically.`,
-        address: sanitizeString(request.params.address),
-      };
-    case "sign_transaction":
-      return {
-        text: `wants you to sign a transaction on ${sanitizeString(request.params.network)}. Approving signs it with this device's key — review the site carefully.`,
-      };
-    case "sign_auth_entry":
-      return {
-        text: `wants you to sign a Soroban authorization entry on ${sanitizeString(request.params.network)}. Approving signs it with this device's key — review the site carefully.`,
-      };
-    case "sign_message":
-      return {
-        text: `wants you to sign an off-chain message on ${sanitizeString(request.params.network)}. Approving signs it with this device's key.`,
-      };
-    default:
-      return { text: `sent a ${sanitizeString((request as { method: string }).method)} request.` };
-  }
-}
-
-/** Decode a sign_transaction request into a review summary (§8.2 — the user
- * must see WHAT they sign). stellar-sdk is loaded lazily so the popup stays
- * light; a decode failure yields a safe generic summary, never a throw. */
-function useTxSummary(approval: PendingApprovalSummary): TransactionSummary | null {
-  const [summary, setSummary] = useState<TransactionSummary | null>(null);
-  const request = approval.request;
-  useEffect(() => {
-    if (request.method !== "sign_transaction") {
-      setSummary(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const { TransactionBuilder, Address, scValToNative } = await import("@stellar/stellar-sdk");
-      const result = summarizeTransaction(request.params.xdr, request.params.network, {
-        TransactionBuilder,
-        Address,
-        scValToNative,
-      });
-      if (!cancelled) setSummary(result);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [request]);
-  return summary;
-}
-
-/** Trust signal for a contract a transaction will call (§5.5 — trust badge
- * during approval). Best-effort: a lookup failure yields "unverified" so the
- * badge degrades to a neutral "Unverified" rather than blocking the review. */
-function useContractTrust(contractId: string | undefined): VerificationStatus {
-  const [status, setStatus] = useState<VerificationStatus>("unverified");
-  useEffect(() => {
-    if (!contractId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await verificationClient().getStatus(contractId);
-        if (!cancelled) setStatus(result.status);
-      } catch {
-        if (!cancelled) setStatus("unverified");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [contractId]);
-  return status;
-}
-
-function OperationLine({ op }: { op: TransactionSummary["operations"][number] }) {
-  const contractId = op.kind === "contract-call" ? op.contract : undefined;
-  const trust = useContractTrust(contractId);
-
-  if (op.kind === "transfer") {
-    return (
-      <p className="mono" style={{ margin: "4px 0 0", fontSize: 11, wordBreak: "break-all" }}>
-        transfer <strong>{formatStroops(op.amount)}</strong> → {op.to.slice(0, 6)}…{op.to.slice(-6)}
-      </p>
-    );
-  }
-  if (op.kind === "contract-call") {
-    return (
-      <div style={{ margin: "4px 0 0" }}>
-        <p className="mono" style={{ margin: 0, fontSize: 11, wordBreak: "break-all" }}>
-          call <strong>{op.fn}</strong> on {op.contract.slice(0, 6)}…{op.contract.slice(-6)}
-        </p>
-        <div style={{ marginTop: 4 }}>
-          <TrustBadge status={trust} size="sm" />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <p className="mono" style={{ margin: "4px 0 0", fontSize: 11 }}>
-      {op.label}
-    </p>
-  );
-}
-
-function ApprovalCard({
-  approval,
-  onResolved,
-}: {
-  approval: PendingApprovalSummary;
-  onResolved: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const isSign =
-    approval.request.method === "sign_transaction" ||
-    approval.request.method === "sign_auth_entry" ||
-    approval.request.method === "sign_message";
-  const desc = describeRequest(approval.request);
-  const summary = useTxSummary(approval);
-
-  async function resolve(approved: boolean) {
-    setBusy(true);
-    await browser.runtime.sendMessage({ type: "resolve-pending", id: approval.id, approved });
-    onResolved();
-  }
-
-  return (
-    <section className="panel" aria-label="Connection request">
-      <span className="eyebrow">Request from</span>
-      <p className="origin">{approval.origin}</p>
-      <span className={isSign ? "trust warn" : "trust"}>
-        {isSign ? "⚠ Signature request" : "✓ Connection request"}
-      </span>
-      <p className="muted" style={{ fontSize: 13, margin: "10px 0 0", lineHeight: 1.5 }}>
-        {desc.text}
-      </p>
-      {desc.address && (
-        <div className="well" style={{ marginTop: 8 }}>
-          <span className="eyebrow" style={{ fontSize: 9 }}>
-            Wallet
-          </span>
-          <p className="mono" style={{ margin: "4px 0 0", fontSize: 11, wordBreak: "break-all" }}>
-            {desc.address}
-          </p>
-        </div>
-      )}
-
-      {isSign && summary && (
-        <div className="well" style={{ marginTop: 8 }}>
-          <span className="eyebrow" style={{ fontSize: 9 }}>
-            {summary.undecoded ? "Transaction" : "This transaction will"}
-          </span>
-          {summary.operations.map((op, i) => (
-            <OperationLine key={i} op={op} />
-          ))}
-          {summary.movesValue && (
-            <p className="muted" style={{ margin: "8px 0 0", fontSize: 11, lineHeight: 1.45 }}>
-              This moves value. Any spending-limit policy on your account applies to this device and
-              can reject or cap it on-chain — review your policies in the Vellar app.
-            </p>
-          )}
-        </div>
-      )}
-
-      <div className="btn-row" style={{ marginTop: 14 }}>
-        <button className="btn btn-sun" disabled={busy} onClick={() => void resolve(true)}>
-          Approve
-        </button>
-        <button className="btn btn-outline" disabled={busy} onClick={() => void resolve(false)}>
-          Reject
-        </button>
-      </div>
-    </section>
-  );
-}
+// Popup (technical-doc.md §4.2, §7.3; design.md §8): a pending approval takes
+// over the whole frame, one at a time, with the requesting origin ALWAYS shown
+// (§8.2). With nothing pending, the popup home renders.
 
 export function App() {
   const [state, setState] = useState<ExtensionState | null>(null);
   const [approvals, setApprovals] = useState<PendingApprovalSummary[]>([]);
-  const [copied, setCopied] = useState(false);
-  const wallet = state?.pairedWallet;
-  const balance = useQuickBalance(wallet);
+  const [total, setTotal] = useState(0);
 
   const refresh = useCallback(async () => {
     setState(await loadState(browserKv));
-    const pending = (await browser.runtime.sendMessage({
+    const pending = ((await browser.runtime.sendMessage({
       type: "list-pending",
-    })) as PendingApprovalSummary[];
-    setApprovals(pending ?? []);
+    })) ?? []) as PendingApprovalSummary[];
+    setApprovals(pending);
+    // Queue size only grows while requests arrive; resets once drained.
+    setTotal((t) => (pending.length === 0 ? 0 : Math.max(t, pending.length)));
+    return pending;
   }, []);
 
   useEffect(() => {
@@ -279,105 +37,28 @@ export function App() {
   const isApprovalWindow = new URLSearchParams(window.location.search).has("approval");
 
   async function onResolved() {
-    await refresh();
-    const remaining = (await browser.runtime.sendMessage({
-      type: "list-pending",
-    })) as PendingApprovalSummary[];
-    if (isApprovalWindow && (remaining ?? []).length === 0) window.close();
+    const remaining = await refresh();
+    if (isApprovalWindow && remaining.length === 0) window.close();
   }
 
-  async function revoke(origin: string, network: string) {
-    await revokeGrant(browserKv, origin, network);
+  async function revoke(grant: PermissionGrant) {
+    await revokeGrant(browserKv, grant.origin, grant.network);
     await refresh();
   }
 
-  function copyAddress() {
-    if (!wallet) return;
-    void navigator.clipboard.writeText(wallet.address).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+  const current = approvals[0];
+  if (current) {
+    return (
+      <ApprovalScreen
+        key={current.id}
+        approval={current}
+        position={total - approvals.length + 1}
+        total={total}
+        wallet={state?.pairedWallet}
+        onResolved={() => void onResolved()}
+      />
+    );
   }
 
-  return (
-    <main className="pop">
-      <div className="topbar">
-        <img className="brand" src="/logo-mark.png" alt="Vellar" />
-        {wallet && <span className="netpill">{wallet.network}</span>}
-      </div>
-
-      {approvals.map((approval) => (
-        <ApprovalCard key={approval.id} approval={approval} onResolved={() => void onResolved()} />
-      ))}
-
-      {wallet ? (
-        <>
-          <section className="panel">
-            <div style={{ textAlign: "center" }}>
-              <span className="eyebrow">Balance</span>
-            </div>
-            <div className="bal">
-              {balance ?? "—"} <small>XLM</small>
-            </div>
-            <div className="qa">
-              <button onClick={copyAddress}>
-                <i>{copied ? "✓" : <CopyGlyph />}</i>
-                {copied ? "Copied" : "Address"}
-              </button>
-              {wallet.webAppOrigin && (
-                <button onClick={() => window.open(`${wallet.webAppOrigin}/dashboard`, "_blank")}>
-                  <i>↑</i>Send
-                </button>
-              )}
-            </div>
-          </section>
-
-          <div className="well">
-            <span className="eyebrow">Smart account</span>
-            <p className="mono" style={{ margin: "6px 0 0", fontSize: 11, wordBreak: "break-all" }}>
-              {wallet.address}
-            </p>
-          </div>
-
-          {wallet.webAppOrigin && (
-            <a
-              className="link"
-              href={`${wallet.webAppOrigin}/dashboard`}
-              target="_blank"
-              rel="noreferrer"
-              style={{ textAlign: "center" }}
-            >
-              Open web app for payments, policies &amp; settings →
-            </a>
-          )}
-        </>
-      ) : (
-        <section className="panel">
-          <span className="eyebrow">Not paired</span>
-          <p className="muted" style={{ fontSize: 13, margin: "8px 0 0", lineHeight: 1.55 }}>
-            Open the Vellar web app, sign in, and choose Settings → Pair extension to get started.
-          </p>
-        </section>
-      )}
-
-      {state && state.grants.length > 0 && (
-        <section className="panel" aria-label="Connected dApps">
-          <span className="eyebrow">Connected dApps</span>
-          <div style={{ marginTop: 4 }}>
-            {state.grants.map((grant) => (
-              <div key={`${grant.origin}-${grant.network}`} className="dapp">
-                <span style={{ wordBreak: "break-all" }}>{grant.origin}</span>
-                <button
-                  className="btn btn-outline"
-                  onClick={() => void revoke(grant.origin, grant.network)}
-                >
-                  Revoke
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-    </main>
-  );
+  return <HomeScreen state={state} onRevoke={(grant) => void revoke(grant)} />;
 }
