@@ -964,7 +964,12 @@
   flex-direction: column;
   gap: var(--lp-sp-3);
   padding: var(--lp-sp-6);
-  min-height: 100%;
+  /* height, not min-height: 100% of a grid item's stretched size is
+     inconsistent across engines and inconsistently applied to an <a> box
+     specifically, which has produced mismatched card heights in some
+     browsers/zoom levels even though the grid item itself is correctly
+     stretched (confirmed via direct measurement in Chromium). */
+  height: 100%;
   /* Cut-corner border, drawn the same two-layer way as .lp-vsshot: a plain
      `border` on a clip-path'd box leaves the border's straight edge crossing
      the diagonal cut, producing a stray triangle at the corner. This paints
@@ -1023,6 +1028,11 @@
   line-height: 1.15;
 }
 .lp .lp-proofcard-go {
+  /* Pinned to the card's bottom edge instead of following the value text in
+     normal flow: the value wraps to two lines on some cards and one on
+     others, so without this "Verify ->" would sit at a different height on
+     each card instead of lining up across the row on hover. */
+  margin-top: auto;
   font-family: var(--lp-mono);
   font-size: 0.75rem;
   font-weight: 600;
