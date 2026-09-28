@@ -23,7 +23,10 @@ export function TwoSides() {
               </MonoRows>
             </div>
             <div className="lp-cta-row">
-              <LpButton href="https://docs.vellar.xyz/docs/sellers/charge-for-an-endpoint" variant="forest">
+              <LpButton
+                href="https://docs.vellar.xyz/docs/sellers/charge-for-an-endpoint"
+                variant="forest"
+              >
                 Seller quickstart
               </LpButton>
             </div>
@@ -37,7 +40,7 @@ export function TwoSides() {
             </p>
             <div className="mini">
               <MonoRows>
-                <MonoRow label="$ npx vellar-cli search &quot;weather&quot;" />
+                <MonoRow label='$ npx vellar-cli search "weather"' />
                 <MonoRow label="$ npx vellar-cli pay <url>" value="✓ paid" tone="ok" />
               </MonoRows>
             </div>

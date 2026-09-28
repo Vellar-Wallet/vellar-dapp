@@ -308,9 +308,9 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
     delete process.env.RENDER_EXTERNAL_URL;
     try {
       const reader: AccountReader = { getAccount: vi.fn() };
-      expect(() =>
-        buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() }),
-      ).toThrow(/No public base URL configured/);
+      expect(() => buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() })).toThrow(
+        /No public base URL configured/,
+      );
     } finally {
       if (previous === undefined) delete process.env.RENDER_EXTERNAL_URL;
       else process.env.RENDER_EXTERNAL_URL = previous;
@@ -327,9 +327,9 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
     process.env.RENDER_EXTERNAL_URL = "http://localhost:4002";
     try {
       const reader: AccountReader = { getAccount: vi.fn() };
-      expect(() =>
-        buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() }),
-      ).toThrow(/localhost:4002/);
+      expect(() => buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() })).toThrow(
+        /localhost:4002/,
+      );
     } finally {
       if (previous === undefined) delete process.env.RENDER_EXTERNAL_URL;
       else process.env.RENDER_EXTERNAL_URL = previous;
@@ -341,9 +341,9 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
     process.env.RENDER_EXTERNAL_URL = "https://localhost:4002";
     try {
       const reader: AccountReader = { getAccount: vi.fn() };
-      expect(() =>
-        buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() }),
-      ).toThrow(/loopback\/local/);
+      expect(() => buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() })).toThrow(
+        /loopback\/local/,
+      );
     } finally {
       if (previous === undefined) delete process.env.RENDER_EXTERNAL_URL;
       else process.env.RENDER_EXTERNAL_URL = previous;

@@ -9,7 +9,6 @@ import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server
 import type { SupportedResponse } from "@x402/core/types";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
-
 // Verification API (idea.md §11, technical-doc.md §5.5/§7.6): a developer submits
 // a contract's source (repo+commit or upload) and build metadata; the service
 // stores a VerificationRecord and enqueues a deterministic-rebuild job. A build
@@ -185,7 +184,12 @@ export interface VerificationServiceDeps {
 function capturedSupportedResponse(): SupportedResponse {
   return {
     kinds: [
-      { x402Version: 2, scheme: "exact", network: "stellar:pubnet", extra: { areFeesSponsored: true } },
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network: "stellar:pubnet",
+        extra: { areFeesSponsored: true },
+      },
       {
         x402Version: 2,
         scheme: "upto",
@@ -222,10 +226,14 @@ export function fakeFacilitatorClient(): FacilitatorClient {
       return capturedSupportedResponse();
     },
     async verify() {
-      throw new Error("fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.",
+      );
     },
     async settle() {
-      throw new Error("fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.",
+      );
     },
   };
 }

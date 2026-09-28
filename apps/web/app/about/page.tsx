@@ -6,7 +6,8 @@ import { PersonaImage } from "./persona-image";
 
 export const metadata: Metadata = {
   title: "About · Vellar",
-  description: "About Vellar, the open-source x402 facilitator for Stellar, and the person building it.",
+  description:
+    "About Vellar, the open-source x402 facilitator for Stellar, and the person building it.",
 };
 
 export default function About() {
@@ -43,19 +44,23 @@ export default function About() {
             <div className="lp-about-layer">
               <span className="num">03</span>
               <h4>Buyer tools</h4>
-              <p>Search and pay for a resource in one step, with an MCP discovery server for agents.</p>
+              <p>
+                Search and pay for a resource in one step, with an MCP discovery server for agents.
+              </p>
             </div>
             <div className="lp-about-layer">
               <span className="num">04</span>
               <h4>Seller tools</h4>
-              <p>Point a resource server at the facilitator and gate any route with a 402 challenge.</p>
+              <p>
+                Point a resource server at the facilitator and gate any route with a 402 challenge.
+              </p>
             </div>
           </div>
           <div className="lp-about-note" data-reveal>
             <p className="lp-lead">
-              Every claim here is meant to be checkable: the facilitator is open source, its
-              testnet settlements resolve independently on the Stellar ledger, and it&apos;s listed
-              in Stellar&apos;s own x402 documentation as a community facilitator.
+              Every claim here is meant to be checkable: the facilitator is open source, its testnet
+              settlements resolve independently on the Stellar ledger, and it&apos;s listed in
+              Stellar&apos;s own x402 documentation as a community facilitator.
             </p>
             <Chips
               items={[

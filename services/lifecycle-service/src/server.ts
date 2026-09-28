@@ -16,7 +16,6 @@ import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server
 import type { SupportedResponse } from "@x402/core/types";
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from "@x402/extensions/bazaar";
 
-
 // Lifecycle API (idea.md §11): inspect + plan. Execute/merge land with the
 // signing-flow decision (see BUILD-PLAN — docs are ambiguous on who signs
 // classic-account cleanup transactions in a passkey wallet).
@@ -45,7 +44,12 @@ export interface LifecycleServiceDeps {
 function capturedSupportedResponse(): SupportedResponse {
   return {
     kinds: [
-      { x402Version: 2, scheme: "exact", network: "stellar:pubnet", extra: { areFeesSponsored: true } },
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network: "stellar:pubnet",
+        extra: { areFeesSponsored: true },
+      },
       {
         x402Version: 2,
         scheme: "upto",
@@ -82,10 +86,14 @@ export function fakeFacilitatorClient(): FacilitatorClient {
       return capturedSupportedResponse();
     },
     async verify() {
-      throw new Error("fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: verify() is not supported — inject a real client to test payment.",
+      );
     },
     async settle() {
-      throw new Error("fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.");
+      throw new Error(
+        "fakeFacilitatorClient: settle() is not supported — inject a real client to test payment.",
+      );
     },
   };
 }

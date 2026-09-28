@@ -16,7 +16,11 @@ export function SdkCta() {
           <LpButton href="https://docs.vellar.xyz/" variant="sun" size="lg">
             Read the docs
           </LpButton>
-          <LpButton href="https://github.com/Vellar-Wallet/vellar-facilitator" variant="ghost" size="lg">
+          <LpButton
+            href="https://github.com/Vellar-Wallet/vellar-facilitator"
+            variant="ghost"
+            size="lg"
+          >
             View on GitHub
           </LpButton>
         </div>

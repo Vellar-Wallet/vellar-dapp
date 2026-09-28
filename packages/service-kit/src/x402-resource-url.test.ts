@@ -132,9 +132,9 @@ describe("publicBaseUrlFromEnv", () => {
   });
 
   it("uses RENDER_EXTERNAL_URL when PUBLIC_BASE_URL is absent", () => {
-    expect(publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com" })).toBe(
-      "https://vellar-backend.onrender.com",
-    );
+    expect(
+      publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com" }),
+    ).toBe("https://vellar-backend.onrender.com");
   });
 
   it("prefers an explicit PUBLIC_BASE_URL over RENDER_EXTERNAL_URL", () => {
@@ -147,9 +147,9 @@ describe("publicBaseUrlFromEnv", () => {
   });
 
   it("strips a trailing slash", () => {
-    expect(publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com/" })).toBe(
-      "https://vellar-backend.onrender.com",
-    );
+    expect(
+      publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com/" }),
+    ).toBe("https://vellar-backend.onrender.com");
   });
 
   it("still rejects a loopback value even if someone sets it explicitly", () => {

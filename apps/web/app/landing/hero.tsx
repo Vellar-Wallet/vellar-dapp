@@ -23,7 +23,11 @@ export function Hero() {
           and pay in USDC. Open source, non-custodial, fees sponsored.
         </p>
         <div className="lp-cta-row" data-hero-fade>
-          <LpButton href="https://docs.vellar.xyz/docs/getting-started/quickstart" variant="sun" size="lg">
+          <LpButton
+            href="https://docs.vellar.xyz/docs/getting-started/quickstart"
+            variant="sun"
+            size="lg"
+          >
             Read the docs
           </LpButton>
           <LpButton
@@ -59,7 +63,13 @@ export function Hero() {
                 token={<TokenPill usdc label="USDC" />}
                 sub={<span>Payment Required</span>}
               />
-              <Chips items={[{ label: "exact", on: true }, { label: "upto" }, { label: "Bazaar-listed" }]} />
+              <Chips
+                items={[
+                  { label: "exact", on: true },
+                  { label: "upto" },
+                  { label: "Bazaar-listed" },
+                ]}
+              />
             </div>
           </Frame>
 

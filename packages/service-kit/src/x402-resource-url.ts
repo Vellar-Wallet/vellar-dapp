@@ -30,9 +30,7 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 /** URL.hostname keeps IPv6 literals bracketed (e.g. "[::1]", "[fe80::1]");
  * strip that once so every check below can match the bare address. */
 function stripIpv6Brackets(hostname: string): string {
-  return hostname.startsWith("[") && hostname.endsWith("]")
-    ? hostname.slice(1, -1)
-    : hostname;
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
 function isLoopbackOrLocal(hostname: string): boolean {
@@ -126,9 +124,7 @@ export function validatePublicResourceUrl(
  * fallback to a bind host/port, because that fallback is exactly the bug
  * this guard exists to prevent.
  */
-export function publicBaseUrlFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function publicBaseUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.PUBLIC_BASE_URL?.trim();
   const renderExternal = env.RENDER_EXTERNAL_URL?.trim();
   const base = explicit || renderExternal;
