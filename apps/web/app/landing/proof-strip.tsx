@@ -29,7 +29,7 @@ const PROOFS = [
  *  rotation so it carries the same weight as the "how it works" section. */
 export function ProofStrip() {
   return (
-    <section className="lp-sec lp-sec--tight" id="proof" aria-label="Verifiable proofs">
+    <section className="lp-sec" id="proof" aria-label="Verifiable proofs">
       <div className="lp-wrap">
         <SectionHead
           eyebrow="Track record"
