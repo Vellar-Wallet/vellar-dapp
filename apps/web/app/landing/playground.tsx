@@ -8,8 +8,8 @@ const LABS = [
   },
   {
     tone: "coral",
-    title: "Break it",
-    body: "Corrupt a payment five different ways, or try to poison the Bazaar catalog, and watch the facilitator refuse every one.",
+    title: "Break payments",
+    body: "Five deliberate corruptions of a real signed payment, every one refused by the facilitator.",
   },
   {
     tone: "lime",
@@ -19,12 +19,12 @@ const LABS = [
   {
     tone: "sun",
     title: "Quest mode",
-    body: "Five levels that walk the whole protocol, from your first payment to bonds and settlement.",
+    body: "A five-level challenge track through everything above.",
   },
 ] as const;
 
-/** Playground — the whole stack running live on testnet, framed around
- *  the break-it labs (refusing bad payments is the product working). */
+/** Playground — a real, live testnet instance you can try without
+ *  installing anything, framed around the break-it labs. */
 export function Playground() {
   return (
     <section className="lp-sec" id="playground">
@@ -36,7 +36,7 @@ export function Playground() {
               Don&apos;t take our word for it, <em>go break it.</em>
             </>
           }
-          lead="The playground runs the whole Vellar stack live on Stellar testnet. Your first payment funds a real wallet for you, then every settlement, every budget check, and every refusal happens on-chain, and you can inspect all of it."
+          lead="A playground for external developers to visually try out the Vellar x402 payment facilitator on Stellar testnet. Get a real funded testnet account, then work through the lessons below, real settlements, real refusals, everything inspectable."
         />
         <div className="lp-play" data-reveal-group>
           <div className="lp-playgrid">
@@ -50,14 +50,14 @@ export function Playground() {
           <Frame corner="br" color="coral">
             <div className="lp-pcard">
               <div className="lp-pcard-top">
-                <span>Break it, live</span>
+                <span>Break payments, live · Example</span>
                 <span>⌁</span>
               </div>
               <Chips
                 items={[
                   { label: "Tamper signature", on: true },
                   { label: "Reuse nonce" },
-                  { label: "Overspend" },
+                  { label: "5 corruptions total" },
                 ]}
               />
               <MonoRows>
@@ -66,7 +66,7 @@ export function Playground() {
                 <MonoRow label="facilitator verify" value="✗ refused" tone="bad" />
                 <MonoRow label="funds moved" value="0.00" tone="ok" />
               </MonoRows>
-              <span className="lp-verified">✓ Nothing charged, that&apos;s the point</span>
+              <span className="lp-verified">Nothing charged, that&apos;s the point</span>
             </div>
           </Frame>
         </div>

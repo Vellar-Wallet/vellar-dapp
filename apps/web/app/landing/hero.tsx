@@ -2,32 +2,36 @@ import { Chips, Field, Frame, LpButton, MonoRow, MonoRows, TokenPill } from "./u
 import { HeroWaves } from "./hero-waves";
 
 const BAZAAR = [
-  { name: "Weather API", meta: "0.05 USDC · verified" },
-  { name: "Translate API", meta: "0.02 USDC · verified" },
-  { name: "GPU Inference", meta: "0.25 USDC · 1.2k settlements" },
+  { name: "Weather API", meta: "0.05 USDC" },
+  { name: "Translate API", meta: "0.02 USDC" },
+  { name: "GPU Inference", meta: "0.25 USDC" },
 ];
 
-/** Landing hero: the statement headline plus the three product cards
- *  (agent key, autonomous payment, Bazaar). */
+/** Landing hero: the statement headline plus the three mock cards
+ *  (seller, facilitator, Bazaar). */
 export function Hero() {
   return (
     <header className="lp-hero">
       <HeroWaves />
       <div className="lp-wrap">
         <h1 data-split>
-          Give your agent a budget, <em>not your keys.</em>
+          Let agents <em>pay</em> your API.
         </h1>
         <p className="lp-lead" data-hero-fade>
-          Vellar is building the agent-payments stack for Stellar on x402, smart accounts that pay
-          HTTP-402 APIs autonomously, budgets enforced on-chain, and trust-ranked discovery. Secured
-          by passkeys, not seed phrases.
+          Vellar verifies and settles x402 payments on Stellar and lists every paid endpoint in a
+          searchable Bazaar. Charge per request for any API or MCP tool, and let AI agents find you
+          and pay in USDC. Open source, non-custodial, fees sponsored.
         </p>
         <div className="lp-cta-row" data-hero-fade>
-          <LpButton href="/app" variant="sun" size="lg">
-            Launch web app →
+          <LpButton href="https://docs.vellar.xyz/docs/getting-started/quickstart" variant="sun" size="lg">
+            Read the docs
           </LpButton>
-          <LpButton href="https://docs.vellar.xyz/" variant="outline" size="lg">
-            Build with the SDK
+          <LpButton
+            href="https://github.com/Vellar-Wallet/vellar-facilitator"
+            variant="outline"
+            size="lg"
+          >
+            Facilitator on GitHub
           </LpButton>
         </div>
 
@@ -35,53 +39,41 @@ export function Hero() {
           <Frame>
             <div className="lp-pcard">
               <div className="lp-pcard-top">
-                <span>Agent key</span>
+                <span>Seller · Example</span>
                 <span>◇</span>
               </div>
               <Field
-                label="AGENT"
-                amount="research-bot"
+                label="GET /v1/research"
+                amount="402"
                 amountStyle={{ fontSize: 18 }}
-                token={<TokenPill usdc label="USDC" />}
                 sub={
                   <>
-                    <span>session key GDW3…K7QP</span>
-                    <span>expires in 7d</span>
+                    <span>price 0.05 USDC</span>
+                    <span>scheme exact</span>
                   </>
                 }
               />
               <Field
-                label="BUDGET USED"
-                amount="3.20"
-                token={<TokenPill usdc label="/ 25 USDC" />}
-                sub={
-                  <>
-                    <span>12 payments</span>
-                    <span>enforced on-chain</span>
-                  </>
-                }
+                label="NETWORK"
+                amount="stellar:pubnet"
+                token={<TokenPill usdc label="USDC" />}
+                sub={<span>Payment Required</span>}
               />
-              <Chips
-                items={[
-                  { label: "Spend limit", on: true },
-                  { label: "Verified only", on: true },
-                  { label: "Revoke" },
-                ]}
-              />
+              <Chips items={[{ label: "exact", on: true }, { label: "upto" }, { label: "Bazaar-listed" }]} />
             </div>
           </Frame>
 
           <Frame corner="tr" color="sun">
             <div className="lp-pcard">
               <div className="lp-pcard-top">
-                <span>Autonomous payment</span>
+                <span>Facilitator</span>
                 <span>⚡</span>
               </div>
               <MonoRows>
-                <MonoRow label="GET /v1/research" value="402" tone="bad" />
-                <MonoRow label="policy check" value="✓ under budget" tone="ok" />
-                <MonoRow label="PAYMENT-SIGNATURE" value="✓ signed" tone="ok" />
-                <MonoRow label="settled on-chain" value="200 OK" tone="ok" />
+                <MonoRow label="/verify" value="✓ valid" tone="ok" />
+                <MonoRow label="/settle" value="✓ fee sponsored" tone="ok" />
+                <MonoRow label="tx hash" value="9a3c…e1f0" />
+                <MonoRow label="resource" value="200 OK" tone="ok" />
               </MonoRows>
             </div>
           </Frame>
@@ -89,10 +81,10 @@ export function Hero() {
           <Frame corner="br" color="lime">
             <div className="lp-pcard">
               <div className="lp-pcard-top">
-                <span>Bazaar</span>
+                <span>Bazaar · Example</span>
                 <span>◎</span>
               </div>
-              <span className="lp-verified">✓ Trust-ranked</span>
+              <span className="lp-verified">Searchable catalog</span>
               <div className="lp-rlist">
                 {BAZAAR.map((r) => (
                   <div className="lp-rrow" key={r.name}>
