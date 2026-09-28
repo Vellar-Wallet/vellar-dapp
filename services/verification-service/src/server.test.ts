@@ -201,7 +201,11 @@ describe("POST /verification/submit", () => {
         throw new Error("queue down");
       },
     };
-    app = buildServer({ records, queue: failingQueue, x402FacilitatorClient: fakeFacilitatorClient() });
+    app = buildServer({
+      records,
+      queue: failingQueue,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     const res = await app.inject({
       method: "POST",
       url: "/verification/submit",
@@ -253,7 +257,11 @@ describe("POST /verification/submit — queue controls (M7)", () => {
 
   it("queue-depth cap: rejects (429) once active records reach maxActiveQueue", async () => {
     const records = createMemoryVerificationRepository();
-    app = buildServer({ records, maxActiveQueue: 2, x402FacilitatorClient: fakeFacilitatorClient() });
+    app = buildServer({
+      records,
+      maxActiveQueue: 2,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
     // Two distinct contracts fill the queue to the cap.
     expect((await submit(app, C1)).statusCode).toBe(201);
     expect((await submit(app, C2)).statusCode).toBe(201);
@@ -288,7 +296,11 @@ describe("GET /verification/:contractId", () => {
   it.skip("returns the full history newest-first", async () => {
     const records = createMemoryVerificationRepository();
     let clock = 1000;
-    app = buildServer({ records, now: () => new Date(clock), x402FacilitatorClient: fakeFacilitatorClient() });
+    app = buildServer({
+      records,
+      now: () => new Date(clock),
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
 
     const first = await app.inject({
       method: "POST",

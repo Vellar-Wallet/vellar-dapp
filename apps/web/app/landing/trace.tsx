@@ -2,10 +2,10 @@ import { Eyebrow } from "./ui";
 
 const ROWS = [
   { label: "GET /v1/research", value: "402", tone: "bad" },
-  { label: "price", value: "0.10 USDC" },
-  { label: "policy check", value: "✓ under budget", tone: "ok" },
-  { label: "PAYMENT-SIGNATURE", value: "✓ signed", tone: "ok" },
-  { label: "settled on-chain", value: "200 OK", tone: "ok" },
+  { label: "price", value: "0.05 USDC" },
+  { label: "/verify", value: "✓ valid", tone: "ok" },
+  { label: "/settle", value: "✓ fee sponsored", tone: "ok" },
+  { label: "resource", value: "200 OK", tone: "ok" },
 ] as const;
 
 /** The pinned 402 → 200 moment: motion.tsx scrubs the rows and the
@@ -18,17 +18,17 @@ export function TraceSection() {
           <div>
             <Eyebrow>One request, end to end</Eyebrow>
             <h2 className="mt-[var(--lp-sp-4)]!">
-              Your agent hits a paywall. <em>It pays it.</em>
+              An agent hits a paywall. <em>Vellar settles it.</em>
             </h2>
             <p className="lp-lead">
-              One call handles the whole challenge: parse the 402, check the on-chain budget, sign
-              headlessly, retry, settle on Stellar. Over budget? The chain refuses before any money
-              moves.
+              The resource server returns 402 with a payment challenge. The agent signs a payment
+              authorization and retries. Vellar verifies the signature, settles the transaction on
+              Stellar, and sponsors the network fee, then the resource server returns 200.
             </p>
           </div>
           <div className="lp-trace-panel">
             <div className="head">
-              <span>research-bot · autonomous</span>
+              <span>buyer → seller · x402</span>
               <span>402 → 200</span>
             </div>
             {ROWS.map((r) => (

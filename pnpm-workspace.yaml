@@ -45,7 +45,9 @@ overrides:
   # Dev-only toolchain highs (WXT extension build; never shipped to runtime).
   # Clean same-major patches — pin so `pnpm audit --audit-level=high` is green.
   tmp@<0.2.6: ">=0.2.6"
-  adm-zip@<0.6.0: ">=0.6.0"
+  # adm-zip's advisory floor moved from 0.6.0 to 0.6.1 (2026-09) after this
+  # pin was first written; bump to match or the audit gate fails again.
+  adm-zip@<0.6.1: ">=0.6.1"
   brace-expansion@<1.1.18: ">=1.1.18"
   nanoid@<3.3.17: ">=3.3.17"
   # Dev-only (2026-09-07). None of the three reaches runtime:
@@ -67,6 +69,10 @@ overrides:
   # of a transitive we do not control, so it is verified two ways below rather
   # than assumed: the export surface stays `parse`, and the full suite is green.
   toml@<4.2.0: ">=4.2.0"
+  # smol-toml reaches runtime the same way toml above does: passkey-kit's
+  # @stellar/stellar-sdk chain (26 resolution paths). <=1.7.0 carries a
+  # malformed-TOML DoS advisory; 1.7.1 is the fix line.
+  smol-toml@<=1.7.0: ">=1.7.1"
 
 # @hookform/resolvers 5.x imports `zod/v4/core` at runtime but declares only
 # react-hook-form as a peer. Under pnpm's strict linking zod is never placed
