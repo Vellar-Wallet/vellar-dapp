@@ -951,7 +951,7 @@
   line-height: 1.6;
 }
 
-/* ---- Proof strip — linked, checkable claims --------------------- */
+/* ---- Proof strip — the track record, made to be skimmed ---------- */
 
 .lp .lp-proofstrip {
   display: grid;
@@ -962,20 +962,32 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--lp-sp-2);
-  padding: var(--lp-sp-4);
+  gap: var(--lp-sp-3);
+  padding: var(--lp-sp-6) var(--lp-sp-5);
+  min-height: 100%;
   /* Cut-corner border, drawn the same two-layer way as .lp-vsshot: a plain
      `border` on a clip-path'd box leaves the border's straight edge crossing
      the diagonal cut, producing a stray triangle at the corner. This paints
      the border as a ::before behind the card, clipped to the OUTER shape;
      the card's own background is clipped to the matching INSET shape, so the
      1px gap between the two shapes is all that shows of the ::before. */
-  background: var(--lp-paper-tint);
+  background: var(--lp-mint-soft);
   clip-path: var(--lp-clip-tl-sm-in1);
   text-decoration: none;
   transition:
-    background 0.15s ease,
-    transform 0.15s ease;
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+/* Same color rotation as .lp-pillar, so this section reads as the same
+   weight of "real thing" rather than a lighter afterthought. */
+.lp .lp-proofcard:nth-child(2) {
+  background: var(--lp-sun-soft);
+}
+.lp .lp-proofcard:nth-child(3) {
+  background: var(--lp-lime-soft);
+}
+.lp .lp-proofcard:nth-child(4) {
+  background: var(--lp-ink);
 }
 .lp .lp-proofcard::before {
   content: "";
@@ -985,9 +997,12 @@
   background: var(--lp-line);
   clip-path: var(--lp-clip-tl-sm);
 }
+.lp .lp-proofcard:nth-child(4)::before {
+  background: var(--lp-ink);
+}
 .lp .lp-proofcard:hover {
-  background: var(--lp-mint-soft);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(12, 59, 49, 0.12);
 }
 .lp .lp-proofcard-label {
   font-family: var(--lp-mono);
@@ -997,10 +1012,39 @@
   color: var(--lp-ink-faint);
 }
 .lp .lp-proofcard-value {
-  font-weight: 700;
-  font-size: var(--lp-fs-sm);
+  font-family: var(--lp-display);
+  font-weight: 800;
+  font-size: var(--lp-fs-h4);
+  letter-spacing: -0.01em;
   color: var(--lp-ink);
-  line-height: 1.4;
+  line-height: 1.15;
+}
+.lp .lp-proofcard-go {
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--lp-ink-soft);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+.lp .lp-proofcard:hover .lp-proofcard-go {
+  opacity: 1;
+  transform: translateX(0);
+}
+/* Fourth card (mainnet) sits on --lp-ink like the inverted sections do — every
+   text color on it needs to flip along with the background. */
+.lp .lp-proofcard:nth-child(4) .lp-proofcard-label {
+  color: rgba(255, 255, 255, 0.62);
+}
+.lp .lp-proofcard:nth-child(4) .lp-proofcard-value {
+  color: var(--lp-paper);
+}
+.lp .lp-proofcard:nth-child(4) .lp-proofcard-go {
+  color: rgba(255, 255, 255, 0.72);
 }
 
 /* ---- Playground — live testnet labs ---------------------------- */
