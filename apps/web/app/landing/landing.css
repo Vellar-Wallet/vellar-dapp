@@ -963,7 +963,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--lp-sp-3);
-  padding: var(--lp-sp-6) var(--lp-sp-5);
+  padding: var(--lp-sp-6);
   min-height: 100%;
   /* Cut-corner border, drawn the same two-layer way as .lp-vsshot: a plain
      `border` on a clip-path'd box leaves the border's straight edge crossing
@@ -1014,7 +1014,10 @@
 .lp .lp-proofcard-value {
   font-family: var(--lp-display);
   font-weight: 800;
-  font-size: var(--lp-fs-h4);
+  /* Fluid, not the fixed --lp-fs-h4: at 4-up this grid is tight enough that
+     the longest value ("First payments settled Sept 2026") wraps to a second
+     line while its siblings sit on one, breaking the row's shared baseline. */
+  font-size: clamp(1.0625rem, 0.85rem + 0.7vw, 1.1875rem);
   letter-spacing: -0.01em;
   color: var(--lp-ink);
   line-height: 1.15;
