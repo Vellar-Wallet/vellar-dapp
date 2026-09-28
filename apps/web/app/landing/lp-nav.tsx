@@ -7,8 +7,8 @@ import { scrollToSection, useScrollSpy } from "./use-scroll-spy";
 
 /** Landing sections the nav tracks for scroll-spy highlighting. */
 const SECTIONS = [
-  { id: "agents", label: "x402" },
-  { id: "wallet", label: "Wallet" },
+  { id: "how", label: "How it works" },
+  { id: "bazaar", label: "Bazaar" },
 ] as const;
 
 const SECTION_IDS = SECTIONS.map((s) => s.id);
@@ -17,7 +17,7 @@ const SECTION_IDS = SECTIONS.map((s) => s.id);
 const DEV_LINKS = [
   { href: "https://docs.vellar.xyz/", label: "Docs" },
   { href: "https://playground.vellar.xyz/", label: "Playground" },
-  { href: "https://explorer.vellar.xyz/", label: "Explorer" },
+  { href: "https://github.com/Vellar-Wallet/vellar-facilitator", label: "GitHub" },
 ] as const;
 
 /** Sticky paper nav for all .lp marketing pages. */
@@ -106,9 +106,9 @@ export function LpNav() {
             About
           </Link>
         </div>
-        <Link href="/app" className="lp-btn lp-btn--forest">
-          Launch app
-        </Link>
+        <a href="https://docs.vellar.xyz/" className="lp-btn lp-btn--forest">
+          Read the docs
+        </a>
         <button
           className="lp-nav-toggle"
           onClick={() => setOpen(!open)}

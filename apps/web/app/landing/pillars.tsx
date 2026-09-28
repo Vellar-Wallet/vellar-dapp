@@ -3,39 +3,39 @@ import { LpButton, SectionHead } from "./ui";
 const PILLARS = [
   {
     num: "01",
-    title: "Agent keys with on-chain budgets",
-    body: "One passkey tap mints your agent a scoped session key, locked to the tokens you choose, capped by a spending-limit policy. The budget lives in a contract, not in code the agent could bypass, and you can revoke the key remotely any time.",
+    title: "Verify and settle",
+    body: "Point your resource server at the Vellar facilitator and it handles the rest: verifying a signed payment, settling it on Stellar, and sponsoring the network fee through a pool of channel accounts. Buyers sign a payment authorization and never hand over keys.",
   },
   {
     num: "02",
-    title: "Autonomous payments via the SDK",
-    body: "The first x402 client built for Stellar smart accounts. One call handles the 402 challenge, sign headlessly, pay, get the resource. An over-budget payment fails on-chain before any money moves.",
+    title: "Bazaar discovery",
+    body: "A settlement carrying the discovery extension can list your endpoint in the Bazaar, searchable by keyword and semantic ranking. Listing isn't automatic: the settlement has to succeed, and the discovery data, payTo binding and ownership checks all have to pass, so the catalog can't be spammed for free.",
   },
   {
     num: "03",
-    title: "Facilitator + trust-ranked Bazaar",
-    body: "Our open-source facilitator verifies and settles x402 payments, including policy-governed smart accounts other facilitators reject, and its Bazaar lets agents discover payable APIs ranked by real settlement data and contract verification.",
+    title: "Built to be checked",
+    body: "The facilitator is open source. Its published testnet settlements, including a canonical conformance run with unmodified clients, resolve independently on the Stellar ledger, so nothing here has to be taken on trust.",
   },
 ];
 
-/** "Building on x402" — the three-pillar product story. */
+/** "Building on x402" — the three-pillar facilitator story. */
 export function X402Pillars() {
   return (
-    <section className="lp-sec" id="agents">
+    <section className="lp-sec" id="how">
       <div className="lp-wrap">
         <SectionHead
           eyebrow="Building on x402"
           title={
             <>
-              The <em>agent-payments</em> stack for Stellar.
+              The <em>facilitator</em> for x402 on Stellar.
             </>
           }
           lead={
             <>
               <a href="https://x402.org">x402</a> is the open protocol that turns HTTP 402 into
-              machine-payable APIs. We&apos;re building every layer of it on Stellar: the payer,
-              smart accounts with scoped agent keys, the settlement rails, and trust-ranked
-              discovery so agents pay the right services.
+              machine-payable APIs. Vellar is the piece that sits between a paying agent and a
+              seller&apos;s API: it verifies signed payments, settles them on Stellar, and catalogs
+              paid endpoints so agents can find them.
             </>
           }
         />
@@ -49,8 +49,8 @@ export function X402Pillars() {
           ))}
         </div>
         <div className="lp-cta-row" data-reveal>
-          <LpButton href="https://docs.vellar.xyz/docs/agent-keys" variant="forest">
-            Read the agent-keys guide
+          <LpButton href="https://docs.vellar.xyz/docs/getting-started/quickstart" variant="forest">
+            Quickstart
           </LpButton>
           <LpButton href="https://github.com/Vellar-Wallet/vellar-facilitator" variant="outline">
             Facilitator on GitHub

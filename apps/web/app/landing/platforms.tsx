@@ -1,49 +1,49 @@
 import { LpButton, MonoRow, MonoRows } from "./ui";
 
-/** Web-first + Developer SDK platform cards. */
-export function Platforms() {
+/** Sellers list an endpoint, agents find and pay it — the two sides of
+ *  the Bazaar. */
+export function TwoSides() {
   return (
-    <section className="lp-sec lp-sec--tight" id="platforms">
+    <section className="lp-sec lp-sec--tight" id="bazaar">
       <div className="lp-wrap">
         <div className="lp-plat" data-reveal-group>
           <div className="lp-platcard lp-platcard--paper">
-            <h3>Web-first</h3>
+            <h3>For sellers</h3>
             <p>
-              Create and use your smart wallet straight from the browser, no download, no seed
-              phrase. Just a passkey.
+              Point your resource server at the Vellar facilitator and gate any route with a 402
+              challenge. Settlement, fee sponsorship and Bazaar cataloging come for free, no Soroban
+              code in your app.
             </p>
             <div className="mini">
               <MonoRows>
-                <MonoRow label="You are sending" value="166.6 XLM" />
-                <MonoRow label="Fee" value="Sponsored" />
-                <MonoRow label="Policy" value="✓ OK" tone="ok" />
-                <MonoRow label="Signed with" value="Passkey" />
+                <MonoRow label="FACILITATOR_URL=" />
+                <MonoRow label="https://vellar-facilitator.onrender.com" />
+                <MonoRow label="npm install @x402/core @x402/stellar" />
+                <MonoRow label="register('stellar:testnet', exact)" value="✓" tone="ok" />
               </MonoRows>
             </div>
             <div className="lp-cta-row">
-              <LpButton href="/app" variant="forest">
-                Launch web app
+              <LpButton href="https://docs.vellar.xyz/docs/sellers/charge-for-an-endpoint" variant="forest">
+                Seller quickstart
               </LpButton>
             </div>
           </div>
           <div className="lp-platcard lp-platcard--dark">
-            <h3>Developer SDK</h3>
+            <h3>For agents</h3>
             <p>
-              Add passkey login and a Stellar smart wallet to your app in minutes, self-custodial,
-              fee-sponsored, no seed phrases.
+              Search the Bazaar for a payable endpoint, then pay and call it in one step, no
+              pre-shared API key. AI agents can also query the catalog through an MCP discovery
+              server, or reach for the CLI.
             </p>
             <div className="mini">
               <MonoRows>
-                <MonoRow label="$ npm install vellar-sdk" />
-                <MonoRow label="import { createVellarWallet }" />
-                <MonoRow label="await vellar.create()" value="✓ passkey" tone="ok" />
-                <MonoRow label="await vellar.pay()" value="✓ sent" tone="ok" />
-                <MonoRow label="await vellar.x402.fetch(url)" value="✓ paid" tone="ok" />
+                <MonoRow label="$ npx vellar-cli search &quot;weather&quot;" />
+                <MonoRow label="$ npx vellar-cli pay <url>" value="✓ paid" tone="ok" />
               </MonoRows>
             </div>
             <div className="lp-cta-row">
-              <LpButton href="https://docs.vellar.xyz/" variant="sun">
-                Read the docs
+              <LpButton href="https://docs.vellar.xyz/docs/buyers/discover-services" variant="sun">
+                Buyer tools
               </LpButton>
             </div>
           </div>

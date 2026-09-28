@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const title = "Vellar, the agent-payments stack for Stellar, built on x402";
+const title = "Vellar, the x402 facilitator for Stellar";
 const description =
-  "Give your agent a budget, not your keys. Smart accounts that pay x402 APIs autonomously, with budgets enforced on-chain, on a passkey smart wallet with programmable policies and contract trust signals. No seed phrases.";
+  "Vellar verifies and settles x402 payments on Stellar and lists every paid endpoint in a searchable Bazaar. Charge per request for any API or MCP tool, and let AI agents find you and pay in USDC. Open source, non-custodial, fees sponsored.";
 // The hero itself, cropped to the canonical 1200x630 social-card size.
 const ogImage = {
   url: "https://vellar.xyz/og-image.png",

@@ -932,6 +932,44 @@
   line-height: 1.6;
 }
 
+/* ---- Proof strip — linked, checkable claims --------------------- */
+
+.lp .lp-proofstrip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--lp-sp-4);
+}
+.lp .lp-proofcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-sp-2);
+  padding: var(--lp-sp-4);
+  clip-path: var(--lp-clip-tl-md);
+  background: var(--lp-paper-tint);
+  border: 1px solid var(--lp-line);
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+.lp .lp-proofcard:hover {
+  background: var(--lp-mint-soft);
+  transform: translateY(-2px);
+}
+.lp .lp-proofcard-label {
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lp-ink-faint);
+}
+.lp .lp-proofcard-value {
+  font-weight: 700;
+  font-size: var(--lp-fs-sm);
+  color: var(--lp-ink);
+  line-height: 1.4;
+}
+
 /* ---- Playground — live testnet labs ---------------------------- */
 
 .lp .lp-play {
@@ -1752,7 +1790,8 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
   .lp .lp-pillars,
-  .lp .lp-steps {
+  .lp .lp-steps,
+  .lp .lp-proofstrip {
     grid-template-columns: 1fr 1fr;
   }
   .lp .lp-trace-grid {
@@ -1773,6 +1812,7 @@
   .lp .lp-faq-grid,
   .lp .lp-plat,
   .lp .lp-vscode,
+  .lp .lp-proofstrip,
   .lp .lp-foot-top {
     grid-template-columns: 1fr;
   }

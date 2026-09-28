@@ -2,30 +2,30 @@ import { Eyebrow } from "./ui";
 
 const FAQS = [
   {
-    q: "Can my AI agent spend from my wallet?",
-    a: "Yes, that's what agent keys are for. Mint your agent a scoped session key with an on-chain spending limit and it can pay x402-enabled APIs autonomously, no passkey prompt needed. The budget is enforced by a policy contract inside your wallet, not by the agent's code. Go over it and the chain refuses to settle. Revoke the key at any time.",
+    q: "What does Vellar actually do?",
+    a: "Vellar is an x402 facilitator for Stellar. It verifies signed payments, settles them on-chain, sponsors the network fee, and catalogs paid endpoints in a searchable Bazaar so agents can find them.",
   },
   {
     q: "Is Vellar custodial?",
-    a: "No. Vellar is fully self-custodial, your account and keys live on Stellar and in your device's secure enclave. We never hold your funds or your passkeys.",
+    a: "No. Buyers sign a payment authorization and never hand over keys. Vellar verifies and settles the signed payment, it never holds buyer funds or private keys.",
   },
   {
-    q: "What happens if I lose my device?",
-    a: "Register multiple passkeys across devices, and use account policies to add recovery co-signers. Losing one device doesn't lock you out, which is the whole point of moving past single seed phrases.",
+    q: "What networks and tokens does it support?",
+    a: "Stellar testnet today. Vellar settled its first payments on Stellar mainnet in September 2026. Any SEP-41 or Stellar Asset Contract token works; USDC is the default.",
   },
   {
-    q: "Do I need the browser extension?",
-    a: "Not to get started, Vellar is web-first. The extension is there when you want one-click connections to Stellar dApps with the same passkey and policies you've already set.",
+    q: "What's the difference between exact and upto?",
+    a: "exact settles a fixed, pre-agreed amount. upto settles a metered amount up to a signed ceiling, useful for usage-based pricing. upto is testnet-only for now.",
   },
   {
-    q: "What are programmable policies, exactly?",
-    a: "On-chain rules enforced by the network: spending limits, required co-signers, time locks and allow-lists. They apply to every transaction automatically, so a compromised session still can't drain the account.",
+    q: "How does a resource get listed in the Bazaar?",
+    a: "Only after a real settlement carrying the discovery extension, and only if the discovery data is valid, the payTo is bound correctly, and the ownership checks against the resource's own 402 challenge pass. It can't be spammed for free.",
   },
   {
-    q: "Is it ready for teams and developers?",
-    a: "Yes. Teams get multi-signer policies and shared controls; developers get an SDK, contract-verification tooling and the extension's connect API.",
+    q: "Has Vellar been audited?",
+    a: "Not independently, not yet. It's testnet-only and pre-production; an external security audit is planned before a production release tag.",
   },
-];
+] as const;
 
 /** FAQ: aside + native details/summary accordion. */
 export function FaqSection() {
@@ -37,7 +37,7 @@ export function FaqSection() {
           <h2 className="mt-[var(--lp-sp-4)]!">Frequently asked questions</h2>
           <p className="mt-[var(--lp-sp-4)]! text-[length:var(--lp-fs-sm)] leading-relaxed text-[var(--lp-ink-soft)]">
             Still curious? Reach us at <a href="mailto:hello@vellar.xyz">hello@vellar.xyz</a> or
-            read the <a href="https://docs.vellar.xyz/">developer docs</a>.
+            read the <a href="https://docs.vellar.xyz/">facilitator docs</a>.
           </p>
         </div>
         <div data-reveal-group>

@@ -9,29 +9,30 @@ export function LpFooter() {
         <div className="lp-foot-top">
           <div className="lp-foot-brand">
             <p>
-              The agent-payments stack for Stellar, built on x402, with passkey smart wallets,
-              programmable policies and trust signals, for people and their agents.
+              Vellar is an open-source x402 facilitator for Stellar: verify and settle payments,
+              sponsor the fee, and list every paid endpoint in a searchable Bazaar.
             </p>
           </div>
           <div className="lp-foot-cols">
             <div className="lp-foot-col">
               <h4>Product</h4>
-              <Link href="/app">Wallet</Link>
-              <a href="#extension">Extension</a>
-              <a href="#agents">Agent payments</a>
+              <a href="https://github.com/Vellar-Wallet/vellar-facilitator">Facilitator</a>
+              <a href="#bazaar">Bazaar</a>
+              <a href="https://playground.vellar.xyz/">Playground</a>
+              <a href="https://marketplace.visualstudio.com/items?itemName=VellarWallet.vellar-x402">
+                VS Code extension
+              </a>
               <a href="#faq">FAQ</a>
             </div>
             <div className="lp-foot-col">
               <h4>Developers</h4>
               <a href="https://docs.vellar.xyz/">Documentation</a>
-              <a href="https://docs.vellar.xyz/docs/quickstart">Quickstart</a>
-              <a href="https://docs.vellar.xyz/docs/api-reference">SDK reference</a>
-              <a href="https://github.com/Vellar-Wallet/vellar-sdk">GitHub</a>
+              <a href="https://docs.vellar.xyz/docs/getting-started/quickstart">Quickstart</a>
+              <a href="https://github.com/Vellar-Wallet/vellar-facilitator">GitHub</a>
             </div>
             <div className="lp-foot-col">
               <h4>Company</h4>
               <Link href="/about">About</Link>
-              <a href="https://docs.vellar.xyz/docs/security">Security</a>
               <a href="mailto:hello@vellar.xyz">Contact</a>
             </div>
           </div>
@@ -40,7 +41,7 @@ export function LpFooter() {
         <img src="/logo-mark.png" alt="" aria-hidden className="lp-foot-logo" />
         <div className="lp-foot-bot">
           <span>© 2026 Vellar · Built on Stellar</span>
-          <span>passkeys · policies · trust · agents</span>
+          <span>open source · non-custodial · x402</span>
         </div>
       </div>
     </footer>
