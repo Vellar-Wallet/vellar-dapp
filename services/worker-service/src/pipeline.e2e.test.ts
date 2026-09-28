@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
   buildServer,
   createMemoryVerificationRepository,
   createNoopBuildJobQueue,
+  fakeFacilitatorClient,
+  toPublic,
   type VerificationRepository,
 } from "@vellar/verification-service/server";
 import { stubBuildExecutor } from "./executor";
@@ -25,6 +27,23 @@ import type { VerificationJobStore } from "./job-store";
 
 const C_MATCH = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
 const C_MISMATCH = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+// buildServer() calls publicBaseUrlFromEnv() at construction time (see
+// packages/service-kit/src/x402-resource-url.ts — fails closed on purpose so a
+// missing public URL never falls back to publishing an internal bind address).
+// Self-contained per verification-service/src/server.test.ts's own convention,
+// rather than relying on a CI-wide env var another package's tests don't expect.
+const PREVIOUS_RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
+beforeAll(() => {
+  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend.onrender.com";
+});
+afterAll(() => {
+  if (PREVIOUS_RENDER_EXTERNAL_URL === undefined) {
+    delete process.env.RENDER_EXTERNAL_URL;
+  } else {
+    process.env.RENDER_EXTERNAL_URL = PREVIOUS_RENDER_EXTERNAL_URL;
+  }
+});
 
 let app: FastifyInstance | undefined;
 afterEach(async () => {
@@ -116,7 +135,11 @@ async function status(server: FastifyInstance, contractId: string) {
 describe("verify contract source — full pipeline (idea.md §15)", () => {
   it("submit → worker build → hash match → verified, reflected in the status API", async () => {
     const records = createMemoryVerificationRepository();
-    app = buildServer({ records, queue: createNoopBuildJobQueue() });
+    app = buildServer({
+      records,
+      queue: createNoopBuildJobQueue(),
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
 
     // Deployed hash == what the stub build produces for this job ⇒ a real match.
     const executor = stubBuildExecutor();
@@ -141,7 +164,11 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
 
   it("submit → build → hash mismatch → failed, with both hashes in the record", async () => {
     const records = createMemoryVerificationRepository();
-    app = buildServer({ records, queue: createNoopBuildJobQueue() });
+    app = buildServer({
+      records,
+      queue: createNoopBuildJobQueue(),
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
 
     const resolver = createStaticArtifactResolver({ [C_MISMATCH]: "d".repeat(64) });
     const store = jobStoreOver(records, [C_MISMATCH]);
@@ -151,19 +178,26 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
 
     expect(await status(app, C_MISMATCH)).toBe("failed");
 
-    const history = await app.inject({ method: "GET", url: `/verification/${C_MISMATCH}` });
-    const record = history.json().records[0];
-    expect(record.status).toBe("failed");
-    expect(record.deployedHash).toBe("d".repeat(64));
-    expect(record.outputHash).toBeTruthy();
+    // GET /verification/:contractId is x402-gated (§5.5), so an unauthenticated
+    // test request can no longer reach toPublic() through the HTTP layer — read
+    // the repository directly instead, the same seam the route itself uses.
+    const [record] = (await records.findByContract(C_MISMATCH)).map(toPublic);
+    expect(record).toBeDefined();
+    expect(record!.status).toBe("failed");
+    expect(record!.deployedHash).toBe("d".repeat(64));
+    expect(record!.outputHash).toBeTruthy();
     // Public API exposes the sanitized statusDetail, not the raw log (H3/FIX 6).
-    expect(record.statusDetail).toContain("does not match");
-    expect(record.log).toBeUndefined();
+    expect(record!.statusDetail).toContain("does not match");
+    expect("log" in record!).toBe(false);
   });
 
   it("a contract that can't be resolved on-chain fails with a clear reason (no build)", async () => {
     const records = createMemoryVerificationRepository();
-    app = buildServer({ records, queue: createNoopBuildJobQueue() });
+    app = buildServer({
+      records,
+      queue: createNoopBuildJobQueue(),
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
 
     const resolver = createStaticArtifactResolver({}); // nothing resolves
     const store = jobStoreOver(records, [C_MATCH]);
@@ -172,8 +206,9 @@ describe("verify contract source — full pipeline (idea.md §15)", () => {
     await runWorkerTick({ store, executor: stubBuildExecutor(), resolver });
 
     expect(await status(app, C_MATCH)).toBe("failed");
-    const history = await app.inject({ method: "GET", url: `/verification/${C_MATCH}` });
-    expect(history.json().records[0].statusDetail).toContain("Could not resolve");
-    expect(history.json().records[0].log).toBeUndefined();
+    const [record] = (await records.findByContract(C_MATCH)).map(toPublic);
+    expect(record).toBeDefined();
+    expect(record!.statusDetail).toContain("Could not resolve");
+    expect("log" in record!).toBe(false);
   });
 });
