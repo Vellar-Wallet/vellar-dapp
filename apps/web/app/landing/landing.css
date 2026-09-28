@@ -122,6 +122,15 @@
     calc(100% - 1px) calc(100% - 1px),
     1px calc(100% - 1px)
   );
+  /* tl-md inset by a 1px border (same 28px cut, top-left corner, same
+     derivation as tl-lg-in1 above at the smaller cut size). */
+  --lp-clip-tl-md-in1: polygon(
+    1px 28.41px,
+    28.41px 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - 1px),
+    1px calc(100% - 1px)
+  );
   /* 2px outline frames (offset behind cards — the depth system) */
   --lp-frame-tl-md: polygon(
     0 28px,
@@ -940,17 +949,31 @@
   gap: var(--lp-sp-4);
 }
 .lp .lp-proofcard {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--lp-sp-2);
   padding: var(--lp-sp-4);
-  clip-path: var(--lp-clip-tl-md);
+  /* Cut-corner border, drawn the same two-layer way as .lp-vsshot: a plain
+     `border` on a clip-path'd box leaves the border's straight edge crossing
+     the diagonal cut, producing a stray triangle at the corner. This paints
+     the border as a ::before behind the card, clipped to the OUTER shape;
+     the card's own background is clipped to the matching INSET shape, so the
+     1px gap between the two shapes is all that shows of the ::before. */
   background: var(--lp-paper-tint);
-  border: 1px solid var(--lp-line);
+  clip-path: var(--lp-clip-tl-md-in1);
   text-decoration: none;
   transition:
     background 0.15s ease,
     transform 0.15s ease;
+}
+.lp .lp-proofcard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--lp-line);
+  clip-path: var(--lp-clip-tl-md);
 }
 .lp .lp-proofcard:hover {
   background: var(--lp-mint-soft);
