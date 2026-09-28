@@ -35,12 +35,14 @@ export function ProofStrip() {
           eyebrow="Track record"
           title={
             <>
-              Not a pitch. <em>A paper trail.</em>
+              Not a pitch.
+              <br />
+              <em>A paper trail.</em>
             </>
           }
           lead="Every line below links to the ledger, the doc, or the repo that proves it. Nothing here is asserted without something you can go check yourself."
         />
-        <div className="lp-proofstrip" data-reveal-group>
+        <div className="lp-proofstrip" data-reveal>
           {PROOFS.map((p) => (
             <a className="lp-proofcard" href={p.href} key={p.label}>
               <span className="lp-proofcard-label">{p.label}</span>

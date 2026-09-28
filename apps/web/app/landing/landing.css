@@ -133,10 +133,15 @@
     1px calc(100% - 1px)
   );
   /* tl-sm inset by a 1px border (same 12px cut, top-left corner, same
-     derivation as tl-lg-in1 above at the smallest cut size). */
+     derivation as tl-lg-in1 above at the smallest cut size). Rounded to a
+     whole pixel (13px, not 13.41px) rather than the exact w*sqrt(2) offset:
+     the fractional value visibly rasterized with a ~1px height discrepancy
+     between cards in Safari, most likely from clip-path's percentage
+     terms (100% 100%) resolving against a fractional computed card height
+     combined with a fractional inset value. */
   --lp-clip-tl-sm-in1: polygon(
-    1px 13.41px,
-    13.41px 1px,
+    1px 13px,
+    13px 1px,
     calc(100% - 1px) 1px,
     calc(100% - 1px) calc(100% - 1px),
     1px calc(100% - 1px)
@@ -954,22 +959,17 @@
 /* ---- Proof strip — the track record, made to be skimmed ---------- */
 
 .lp .lp-proofstrip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
   gap: var(--lp-sp-4);
 }
 .lp .lp-proofcard {
+  flex: 1 1 0;
   position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--lp-sp-3);
   padding: var(--lp-sp-6);
-  /* height, not min-height: 100% of a grid item's stretched size is
-     inconsistent across engines and inconsistently applied to an <a> box
-     specifically, which has produced mismatched card heights in some
-     browsers/zoom levels even though the grid item itself is correctly
-     stretched (confirmed via direct measurement in Chromium). */
-  height: 100%;
+  box-sizing: border-box;
   /* Cut-corner border, drawn the same two-layer way as .lp-vsshot: a plain
      `border` on a clip-path'd box leaves the border's straight edge crossing
      the diagonal cut, producing a stray triangle at the corner. This paints
@@ -1880,9 +1880,14 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
   .lp .lp-pillars,
-  .lp .lp-steps,
-  .lp .lp-proofstrip {
+  .lp .lp-steps {
     grid-template-columns: 1fr 1fr;
+  }
+  .lp .lp-proofstrip {
+    flex-wrap: wrap;
+  }
+  .lp .lp-proofcard {
+    flex-basis: calc(50% - var(--lp-sp-4) / 2);
   }
   .lp .lp-trace-grid {
     grid-template-columns: 1fr;
@@ -1902,9 +1907,14 @@
   .lp .lp-faq-grid,
   .lp .lp-plat,
   .lp .lp-vscode,
-  .lp .lp-proofstrip,
   .lp .lp-foot-top {
     grid-template-columns: 1fr;
+  }
+  .lp .lp-proofstrip {
+    flex-direction: column;
+  }
+  .lp .lp-proofcard {
+    flex-basis: auto;
   }
   /* Two-up compact grids — the mobile pattern for stacked card sections */
   .lp .lp-playgrid {
