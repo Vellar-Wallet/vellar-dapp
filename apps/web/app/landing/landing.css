@@ -90,6 +90,7 @@
   --lp-cut-md: 28px;
   --lp-cut-lg: 44px;
   --lp-clip-br-sm: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+  --lp-clip-tl-sm: polygon(0 12px, 12px 0, 100% 0, 100% 100%, 0 100%);
   --lp-clip-tl-md: polygon(0 28px, 28px 0, 100% 0, 100% 100%, 0 100%);
   --lp-clip-br-md: polygon(0 0, 100% 0, 100% calc(100% - 28px), calc(100% - 28px) 100%, 0 100%);
   --lp-clip-tr-md: polygon(0 0, calc(100% - 28px) 0, 100% 28px, 100% 100%, 0 100%);
@@ -127,6 +128,15 @@
   --lp-clip-tl-md-in1: polygon(
     1px 28.41px,
     28.41px 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - 1px),
+    1px calc(100% - 1px)
+  );
+  /* tl-sm inset by a 1px border (same 12px cut, top-left corner, same
+     derivation as tl-lg-in1 above at the smallest cut size). */
+  --lp-clip-tl-sm-in1: polygon(
+    1px 13.41px,
+    13.41px 1px,
     calc(100% - 1px) 1px,
     calc(100% - 1px) calc(100% - 1px),
     1px calc(100% - 1px)
@@ -961,7 +971,7 @@
      the card's own background is clipped to the matching INSET shape, so the
      1px gap between the two shapes is all that shows of the ::before. */
   background: var(--lp-paper-tint);
-  clip-path: var(--lp-clip-tl-md-in1);
+  clip-path: var(--lp-clip-tl-sm-in1);
   text-decoration: none;
   transition:
     background 0.15s ease,
@@ -973,7 +983,7 @@
   inset: 0;
   z-index: -1;
   background: var(--lp-line);
-  clip-path: var(--lp-clip-tl-md);
+  clip-path: var(--lp-clip-tl-sm);
 }
 .lp .lp-proofcard:hover {
   background: var(--lp-mint-soft);
