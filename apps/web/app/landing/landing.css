@@ -575,34 +575,63 @@
   border-bottom: none;
   transition: background var(--lp-dur-fast) ease;
 }
-/* GitHub row carries a star count, so it lays out as a row rather than a
-   plain block link. Defined after the .lp-nav-dd-card a rules above so the
-   display:flex wins over their display:block. */
-.lp .lp-nav-links .lp-nav-dd-card a.lp-nav-gh {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--lp-sp-2);
+/* ---- GitHub star button (top-level nav) ------------------------
+   Two-part button in GitHub's own idiom: a "Star" face and a count box
+   divided by a hairline. Sits on the nav bar rather than inside the
+   Developers dropdown — social proof behind a hover menu is social proof
+   nobody sees. */
+.lp .lp-star-btn {
+  display: inline-flex;
+  align-items: stretch;
+  height: 40px;
+  flex: 0 0 auto;
+  text-decoration: none;
+  color: var(--lp-ink);
+  border: 1.5px solid var(--lp-ink);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--lp-paper);
+  transition:
+    background var(--lp-dur-fast) ease,
+    color var(--lp-dur-fast) ease;
 }
-/* The count itself: a quiet pill, not a shouty badge — it sits inside a nav
-   dropdown, so it should read as metadata on the link, not compete with it. */
-.lp .lp-nav-stars {
+.lp .lp-star-btn-face {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: var(--lp-fs-sm);
+  font-weight: 700;
   line-height: 1;
-  padding: 3px 7px;
-  color: var(--lp-ink-soft);
-  background: var(--lp-paper-tint);
-  border: 1px solid var(--lp-line);
-  border-radius: 999px;
 }
-.lp .lp-nav-stars svg {
+/* The count sits in its own cell, separated by the same hairline as the
+   border — reads as one control, not a button with a sticker on it. */
+.lp .lp-star-btn-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  font-size: var(--lp-fs-sm);
+  font-weight: 700;
+  line-height: 1;
+  /* tabular-nums: the count stays put when it ticks 28 -> 29 rather than
+     reflowing the whole button. */
+  font-variant-numeric: tabular-nums;
+  border-left: 1.5px solid var(--lp-ink);
+  background: var(--lp-paper-tint);
+}
+.lp .lp-star-btn:hover {
+  background: var(--lp-ink);
+  color: var(--lp-on-dark);
+}
+.lp .lp-star-btn:hover .lp-star-btn-count {
+  background: rgba(255, 255, 255, 0.12);
+  border-left-color: var(--lp-on-dark);
+}
+.lp .lp-star-btn .lp-star-ico {
   /* Optical: the star's visual centre sits slightly above its box centre. */
   margin-top: -1px;
-  opacity: 0.75;
+  color: var(--lp-sun);
 }
 
 .lp .lp-nav-links .lp-nav-dd-card a:hover {
@@ -650,6 +679,30 @@
   .lp .lp-nav-dd-btn {
     display: none;
   }
+  /* Narrow bars fit brand + star + "Read the docs" + hamburger only if the
+     star button gives up its word. The COUNT is the point, so that stays and
+     the "Star" label goes — an icon plus a number still reads correctly. */
+  .lp .lp-star-btn {
+    height: 36px;
+  }
+  .lp .lp-star-btn-label {
+    display: none;
+  }
+  .lp .lp-star-btn-face {
+    padding: 0 9px;
+  }
+  .lp .lp-star-btn-count {
+    padding: 0 9px;
+  }
+  /* The nav CTA was already wrapping to two lines at this width before the
+     star button existed (measured: 144x63 at 390px); adding a second control
+     pushed it to three. Keep it on one line and let it shrink instead — a
+     wrapped pill in a 64px bar reads as broken. */
+  .lp .lp-nav > .lp-btn {
+    white-space: nowrap;
+    padding-inline: 14px;
+    font-size: 0.8125rem;
+  }
   .lp .lp-nav-dd-card::before {
     content: none;
   }
@@ -661,11 +714,6 @@
   }
   .lp .lp-nav-links .lp-nav-dd-card a:hover {
     border-bottom-color: var(--lp-sun);
-  }
-  /* Flattened nav (display:contents above): the GitHub row is a plain link
-     again, so don't stretch the count to the far edge of the viewport. */
-  .lp .lp-nav-links .lp-nav-dd-card a.lp-nav-gh {
-    justify-content: flex-start;
   }
 }
 

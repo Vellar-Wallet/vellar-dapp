@@ -17,19 +17,65 @@ const SECTION_IDS = SECTIONS.map((s) => s.id);
 const GITHUB_URL = `https://github.com/${STARS_REPO}`;
 
 /** Developer surfaces, grouped under one dropdown so the bar stays short.
- *  GitHub is rendered separately (below) so it can carry the star count. */
+ *  GitHub also gets its own top-level nav button (below) carrying the star
+ *  count — social proof buried in a hover menu is social proof nobody sees. */
 const DEV_LINKS = [
   { href: "https://docs.vellar.xyz/", label: "Docs" },
   { href: "https://playground.vellar.xyz/", label: "Playground" },
+  { href: GITHUB_URL, label: "GitHub" },
 ] as const;
 
 /** Filled star, matching GitHub's own affordance so the count reads as a star
  *  count without needing a label. */
-function StarIcon() {
+function StarIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      className="lp-star-ico"
+    >
       <path d="M8 .25l2.06 4.18 4.61.67-3.33 3.25.78 4.6L8 10.78l-4.12 2.17.78-4.6L1.33 5.1l4.61-.67z" />
     </svg>
+  );
+}
+
+/** GitHub's own mark — without it the button reads as a generic "star this",
+ *  with it the destination is obvious before the click. */
+function GitHubIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  );
+}
+
+/** Top-level GitHub star button. Renders as a plain link when the count is
+ *  unknown, so a GitHub outage degrades to a normal link rather than a
+ *  half-empty button. */
+function StarButton({ stars }: { stars?: number | null }) {
+  const has = typeof stars === "number";
+  return (
+    <a
+      href={GITHUB_URL}
+      className="lp-star-btn"
+      target="_blank"
+      rel="noreferrer"
+      aria-label={has ? `Star vellar-facilitator on GitHub — ${stars} stars` : "Vellar on GitHub"}
+    >
+      <span className="lp-star-btn-face">
+        <GitHubIcon />
+        <span className="lp-star-btn-label">Star</span>
+      </span>
+      {has && (
+        <span className="lp-star-btn-count">
+          <StarIcon />
+          {formatStars(stars)}
+        </span>
+      )}
+    </a>
   );
 }
 
@@ -117,15 +163,6 @@ export function LpNav({ stars }: { stars?: number | null }) {
                     {l.label}
                   </a>
                 ))}
-                <a href={GITHUB_URL} onClick={close} className="lp-nav-gh">
-                  GitHub
-                  {typeof stars === "number" && (
-                    <span className="lp-nav-stars">
-                      <StarIcon />
-                      {formatStars(stars)}
-                    </span>
-                  )}
-                </a>
               </div>
             </div>
           </div>
@@ -133,6 +170,7 @@ export function LpNav({ stars }: { stars?: number | null }) {
             About
           </Link>
         </div>
+        <StarButton stars={stars} />
         <a href="https://docs.vellar.xyz/" className="lp-btn lp-btn--forest">
           Read the docs
         </a>
