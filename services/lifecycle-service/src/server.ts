@@ -182,7 +182,7 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
 
   const x402FacilitatorClient =
     deps.x402FacilitatorClient ??
-    new HTTPFacilitatorClient({ url: "https://vellar-facilitator.onrender.com" });
+    new HTTPFacilitatorClient({ url: "https://vellar-facilitator-production.up.railway.app" });
   const x402Server = new x402ResourceServer(x402FacilitatorClient)
     .register("stellar:pubnet", new ExactStellarScheme())
     .registerExtension(bazaarResourceServerExtension);

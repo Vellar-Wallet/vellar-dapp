@@ -17,7 +17,7 @@ export function TwoSides() {
             <div className="mini">
               <MonoRows>
                 <MonoRow label="FACILITATOR_URL=" />
-                <MonoRow label="https://vellar-facilitator.onrender.com" />
+                <MonoRow label="https://vellar-facilitator-production.up.railway.app" />
                 <MonoRow label="npm install @x402/core @x402/stellar" />
                 <MonoRow label="register('stellar:testnet', exact)" value="✓" tone="ok" />
               </MonoRows>
