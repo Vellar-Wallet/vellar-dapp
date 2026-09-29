@@ -60,7 +60,15 @@ export default function About() {
             <p className="lp-lead">
               Every claim here is meant to be checkable: the facilitator is open source, its testnet
               settlements resolve independently on the Stellar ledger, and it&apos;s listed in
-              Stellar&apos;s own x402 documentation as a community facilitator.
+              Stellar&apos;s own x402 documentation as a{" "}
+              <a
+                href="https://developers.stellar.org/docs/build/agentic-payments/x402#community-facilitators"
+                target="_blank"
+                rel="noreferrer"
+              >
+                community facilitator
+              </a>
+              .
             </p>
             <Chips
               items={[

@@ -4,7 +4,7 @@ const PROOFS = [
   {
     label: "Listed in Stellar's docs",
     value: "Community facilitator",
-    href: "https://developers.stellar.org/docs/build/agentic-payments/x402",
+    href: "https://developers.stellar.org/docs/build/agentic-payments/x402#community-facilitators",
   },
   {
     label: "On-ledger proofs",
@@ -44,7 +44,13 @@ export function ProofStrip() {
         />
         <div className="lp-proofstrip" data-reveal>
           {PROOFS.map((p) => (
-            <a className="lp-proofcard" href={p.href} key={p.label}>
+            <a
+              className="lp-proofcard"
+              href={p.href}
+              key={p.label}
+              target="_blank"
+              rel="noreferrer"
+            >
               <span className="lp-proofcard-label">{p.label}</span>
               <span className="lp-proofcard-value">{p.value}</span>
               <span className="lp-proofcard-go" aria-hidden="true">
