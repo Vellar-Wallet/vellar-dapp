@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { scrollToSection, useScrollSpy } from "./use-scroll-spy";
+import { formatStars, STARS_REPO } from "./github-stars";
 
 /** Landing sections the nav tracks for scroll-spy highlighting. */
 const SECTIONS = [
@@ -13,15 +14,32 @@ const SECTIONS = [
 
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 
-/** Developer surfaces, grouped under one dropdown so the bar stays short. */
+const GITHUB_URL = `https://github.com/${STARS_REPO}`;
+
+/** Developer surfaces, grouped under one dropdown so the bar stays short.
+ *  GitHub is rendered separately (below) so it can carry the star count. */
 const DEV_LINKS = [
   { href: "https://docs.vellar.xyz/", label: "Docs" },
   { href: "https://playground.vellar.xyz/", label: "Playground" },
-  { href: "https://github.com/Vellar-Wallet/vellar-facilitator", label: "GitHub" },
 ] as const;
 
-/** Sticky paper nav for all .lp marketing pages. */
-export function LpNav() {
+/** Filled star, matching GitHub's own affordance so the count reads as a star
+ *  count without needing a label. */
+function StarIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 .25l2.06 4.18 4.61.67-3.33 3.25.78 4.6L8 10.78l-4.12 2.17.78-4.6L1.33 5.1l4.61-.67z" />
+    </svg>
+  );
+}
+
+/** Sticky paper nav for all .lp marketing pages.
+ *
+ *  `stars` is passed in from LpShell (a server component) rather than fetched
+ *  here: this is a client component, and a per-visitor GitHub call would hit
+ *  the unauthenticated 60/hour-per-IP limit. `null` means "unknown" — the
+ *  badge is omitted entirely rather than rendering a misleading zero. */
+export function LpNav({ stars }: { stars?: number | null }) {
   const [open, setOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
   const close = () => {
@@ -99,6 +117,15 @@ export function LpNav() {
                     {l.label}
                   </a>
                 ))}
+                <a href={GITHUB_URL} onClick={close} className="lp-nav-gh">
+                  GitHub
+                  {typeof stars === "number" && (
+                    <span className="lp-nav-stars">
+                      <StarIcon />
+                      {formatStars(stars)}
+                    </span>
+                  )}
+                </a>
               </div>
             </div>
           </div>

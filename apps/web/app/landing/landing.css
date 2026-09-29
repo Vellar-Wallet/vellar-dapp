@@ -575,6 +575,36 @@
   border-bottom: none;
   transition: background var(--lp-dur-fast) ease;
 }
+/* GitHub row carries a star count, so it lays out as a row rather than a
+   plain block link. Defined after the .lp-nav-dd-card a rules above so the
+   display:flex wins over their display:block. */
+.lp .lp-nav-links .lp-nav-dd-card a.lp-nav-gh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lp-sp-2);
+}
+/* The count itself: a quiet pill, not a shouty badge — it sits inside a nav
+   dropdown, so it should read as metadata on the link, not compete with it. */
+.lp .lp-nav-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 3px 7px;
+  color: var(--lp-ink-soft);
+  background: var(--lp-paper-tint);
+  border: 1px solid var(--lp-line);
+  border-radius: 999px;
+}
+.lp .lp-nav-stars svg {
+  /* Optical: the star's visual centre sits slightly above its box centre. */
+  margin-top: -1px;
+  opacity: 0.75;
+}
+
 .lp .lp-nav-links .lp-nav-dd-card a:hover {
   border-bottom: none;
   background: var(--lp-mint-soft);
@@ -631,6 +661,11 @@
   }
   .lp .lp-nav-links .lp-nav-dd-card a:hover {
     border-bottom-color: var(--lp-sun);
+  }
+  /* Flattened nav (display:contents above): the GitHub row is a plain link
+     again, so don't stretch the count to the far edge of the viewport. */
+  .lp .lp-nav-links .lp-nav-dd-card a.lp-nav-gh {
+    justify-content: flex-start;
   }
 }
 
