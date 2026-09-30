@@ -15,6 +15,27 @@ vi.mock("@/lib/balances", () => ({
   useBalances: useBalancesMock,
 }));
 
+// The activity panel owns a react-query infinite query against testnet; the
+// dashboard tests are about the surrounding grid, so it is stubbed the same
+// way balances is. Its own behaviour is covered in activity.test.tsx.
+const { useActivityMock } = vi.hoisted(() => ({ useActivityMock: vi.fn() }));
+vi.mock("@/lib/activity", () => ({
+  useActivity: useActivityMock,
+}));
+
+function noActivity() {
+  useActivityMock.mockReturnValue({
+    rows: [],
+    isPending: false,
+    isError: false,
+    isFetching: false,
+    isFetchingNextPage: false,
+    hasMore: false,
+    refetch: vi.fn(),
+    loadMore: vi.fn(),
+  });
+}
+
 const session: WalletSession = {
   accountId: "CDASHBOARD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567XYZ99",
   network: "testnet",
@@ -36,6 +57,7 @@ function withBalances() {
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  noActivity();
   useBalancesMock.mockReturnValue({
     data: undefined,
     isPending: true,
