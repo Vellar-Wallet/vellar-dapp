@@ -3,7 +3,8 @@ import { Chips, LpButton, SectionHead } from "./ui";
 const MARKETPLACE_URL =
   "https://marketplace.visualstudio.com/items?itemName=VellarWallet.vellar-x402";
 
-/** "VS Code extension" — gate an endpoint with x402 without leaving the editor. */
+/** "VS Code extension" — gate an endpoint with x402 without leaving VS Code
+ *  or Cursor (which is a VS Code fork, so the same extension installs there). */
 export function VsCodeExtension() {
   return (
     <section className="lp-sec" id="vscode">
@@ -12,7 +13,7 @@ export function VsCodeExtension() {
           eyebrow="VS Code extension"
           title={
             <>
-              Charge for an API <em>without</em> leaving your editor.
+              Charge for an API <em>without</em> leaving your VS Code or Cursor IDE.
             </>
           }
           lead="Vellar x402 scans the open file for a route, asks how much to charge in USDC, and writes the 402 challenge, verification and settlement boilerplate straight into your handler. Nothing else in the file changes."
