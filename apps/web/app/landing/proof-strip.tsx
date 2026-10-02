@@ -108,9 +108,9 @@ export function ProofStrip() {
           eyebrow="Track record"
           title={
             <>
-              Not a pitch.
+              Proof, not
               <br />
-              <em>A paper trail.</em>
+              <em>promises.</em>
             </>
           }
           lead="Every line below links to the ledger, the doc, or the repo that proves it. Nothing here is asserted without something you can go check yourself."
