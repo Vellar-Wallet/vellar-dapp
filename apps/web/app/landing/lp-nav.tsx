@@ -2,28 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { scrollToSection, useScrollSpy } from "./use-scroll-spy";
-import { formatStars, STARS_REPO } from "./github-stars";
-
-/** Landing sections the nav tracks for scroll-spy highlighting. */
-const SECTIONS = [
-  { id: "how", label: "How it works" },
-  { id: "bazaar", label: "Bazaar" },
-] as const;
-
-const SECTION_IDS = SECTIONS.map((s) => s.id);
-
-const GITHUB_URL = `https://github.com/${STARS_REPO}`;
-
-/** Developer surfaces, grouped under one dropdown so the bar stays short.
- *  GitHub also gets its own top-level nav button (below) carrying the star
- *  count — social proof buried in a hover menu is social proof nobody sees. */
-const DEV_LINKS = [
-  { href: "https://docs.vellar.xyz/", label: "Docs" },
-  { href: "https://playground.vellar.xyz/", label: "Playground" },
-  { href: GITHUB_URL, label: "GitHub" },
-] as const;
+import { formatStars } from "./github-stars";
+import { BlobMenu } from "./nav-blob";
+import { MenuToggle, MobileMenu } from "./nav-mobile";
+import { GITHUB_URL, NAV_LINKS, NAV_SECTION_IDS, type NavLink } from "./nav-links";
+import { useMediaQuery } from "./use-media";
+import { lockScroll } from "./scroll-lock";
 
 /** Filled star, matching GitHub's own affordance so the count reads as a star
  *  count without needing a label. */
@@ -79,28 +65,33 @@ function StarButton({ stars }: { stars?: number | null }) {
   );
 }
 
-/** Sticky paper nav for all .lp marketing pages.
+/** Nav for all .lp marketing pages.
+ *
+ *  Desktop: the logo, the star button and the docs CTA sit on the bar; every
+ *  other link lives in the liquid drip menu hanging from the top edge
+ *  (nav-blob.tsx). Below 820px that menu is replaced by a full-screen sheet
+ *  behind a hamburger (nav-mobile.tsx). Both read the same NAV_LINKS, so
+ *  they cannot drift apart.
  *
  *  `stars` is passed in from LpShell (a server component) rather than fetched
  *  here: this is a client component, and a per-visitor GitHub call would hit
  *  the unauthenticated 60/hour-per-IP limit. `null` means "unknown" — the
  *  badge is omitted entirely rather than rendering a misleading zero. */
 export function LpNav({ stars }: { stars?: number | null }) {
+  // `open` is the MOBILE sheet; the desktop drip keeps its own state.
   const [open, setOpen] = useState(false);
-  const [devOpen, setDevOpen] = useState(false);
   // The nav floats transparent over the hero and takes a paper backdrop
   // once the page has moved. Threshold is small on purpose: the hero scene
   // starts shrinking immediately, so the bar must be readable by then.
   const [scrolled, setScrolled] = useState(false);
-  const close = () => {
-    setOpen(false);
-    setDevOpen(false);
-  };
+  const toggle = useRef<HTMLButtonElement | null>(null);
   // usePathname (not window.location read once on mount): the nav lives in the
   // shared layout, so client-side navigation must re-derive the active link.
   const path = usePathname() ?? "";
   const onLanding = path === "/";
-  const section = useScrollSpy(SECTION_IDS, onLanding);
+  const section = useScrollSpy(NAV_SECTION_IDS, onLanding);
+  const activeSection = onLanding ? section : null;
+  const wide = useMediaQuery("(min-width: 821px)");
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -109,100 +100,66 @@ export function LpNav({ stars }: { stars?: number | null }) {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  // Pause page scrolling behind the open sheet, and always give it back.
   useEffect(() => {
-    if (!devOpen) return;
+    if (!open) return;
+    lockScroll(true);
+    return () => lockScroll(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDevOpen(false);
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      toggle.current?.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [devOpen]);
+  }, [open]);
 
-  const goTo = (id: string) => (e: React.MouseEvent) => {
-    close();
-    if (!onLanding) return;
+  // A sheet left open across a resize to desktop, or across a navigation,
+  // would strand the scroll lock with nothing visible to dismiss it.
+  useEffect(() => {
+    if (wide) setOpen(false);
+  }, [wide]);
+  useEffect(() => {
+    setOpen(false);
+  }, [path]);
+
+  const navigate = (link: NavLink, e: React.MouseEvent<HTMLAnchorElement>) => {
+    setOpen(false);
+    if (!link.section || !onLanding) return;
     e.preventDefault();
-    scrollToSection(id);
+    scrollToSection(link.section);
   };
 
   return (
-    <div className={`lp-nav-outer${scrolled || open ? " is-scrolled" : ""}`}>
-      <nav className="lp-nav">
-        <Link href="/" className="lp-brand" onClick={close}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-mark.png" alt="Vellar" />
-        </Link>
-        <div className={`lp-nav-links${open ? " open" : ""}`}>
-          {SECTIONS.map((s) => (
-            <Link
-              key={s.id}
-              href={`/#${s.id}`}
-              className={onLanding && section === s.id ? "active" : ""}
-              onClick={goTo(s.id)}
-            >
-              {s.label}
-            </Link>
-          ))}
-          <div
-            className={`lp-nav-dd${devOpen ? " open" : ""}`}
-            onMouseEnter={() => setDevOpen(true)}
-            onMouseLeave={() => setDevOpen(false)}
-          >
-            <button
-              type="button"
-              className="lp-nav-dd-btn"
-              aria-haspopup="true"
-              aria-expanded={devOpen}
-              onClick={() => setDevOpen(!devOpen)}
-            >
-              Developers
-              <svg
-                width="10"
-                height="6"
-                viewBox="0 0 10 6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M1 1l4 4 4-4" />
-              </svg>
-            </button>
-            <div className="lp-nav-dd-panel">
-              <div className="lp-nav-dd-card">
-                {DEV_LINKS.map((l) => (
-                  <a key={l.href} href={l.href} onClick={close}>
-                    {l.label}
-                  </a>
-                ))}
-              </div>
-            </div>
-          </div>
-          <Link href="/about" className={path === "/about" ? "active" : ""} onClick={close}>
-            About
+    <>
+      <div className={`lp-nav-outer${scrolled || open ? " is-scrolled" : ""}`}>
+        <nav className="lp-nav" aria-label="Primary">
+          <Link href="/" className="lp-brand" onClick={() => setOpen(false)}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-mark.png" alt="Vellar" />
           </Link>
-        </div>
-        <StarButton stars={stars} />
-        <a href="https://docs.vellar.xyz/" className="lp-btn lp-btn--forest">
-          Read the docs
-        </a>
-        <button
-          className="lp-nav-toggle"
-          onClick={() => setOpen(!open)}
-          aria-label="Menu"
-          aria-expanded={open}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 22 22"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          >
-            {open ? <path d="M4 4l14 14M18 4L4 18" /> : <path d="M3 6h16M3 11h16M3 16h16" />}
-          </svg>
-        </button>
-      </nav>
-    </div>
+          <BlobMenu links={NAV_LINKS} activeSection={activeSection} onNavigate={navigate} />
+          <StarButton stars={stars} />
+          <a href="https://docs.vellar.xyz/" className="lp-btn lp-btn--forest">
+            Read the docs
+          </a>
+          <MenuToggle buttonRef={toggle} open={open} onToggle={() => setOpen(!open)} />
+        </nav>
+      </div>
+      {/* A sibling of the bar, not a child. The scrolled bar carries a
+          backdrop-filter, and a backdrop-filter makes its element the
+          containing block for `position: fixed` descendants, which would
+          shrink this "full-screen" sheet to the height of the bar. */}
+      <MobileMenu
+        open={open}
+        links={NAV_LINKS}
+        activeSection={activeSection}
+        onNavigate={navigate}
+      />
+    </>
   );
 }

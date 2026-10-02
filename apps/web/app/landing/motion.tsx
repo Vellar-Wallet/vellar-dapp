@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { SCROLL_LOCK_EVENT } from "./scroll-lock";
 
 /**
  * Landing motion: Lenis smooth scroll + GSAP/ScrollTrigger reveals, hero
@@ -41,6 +42,13 @@ export function LandingMotion() {
 
       const lenis = new Lenis({ duration: 1.05 });
       lenis.on("scroll", ScrollTrigger.update);
+      // An open full-screen menu asks for the page to hold still; Lenis would
+      // otherwise keep scrolling it under the sheet (see scroll-lock.ts).
+      const onScrollLock = (e: Event) => {
+        if ((e as CustomEvent<boolean>).detail) lenis.stop();
+        else lenis.start();
+      };
+      window.addEventListener(SCROLL_LOCK_EVENT, onScrollLock);
       const raf = (time: number) => lenis.raf(time * 1000);
       gsap.ticker.add(raf);
       gsap.ticker.lagSmoothing(0);
@@ -89,6 +97,7 @@ export function LandingMotion() {
 
       cleanup = () => {
         ctx.revert();
+        window.removeEventListener(SCROLL_LOCK_EVENT, onScrollLock);
         gsap.ticker.remove(raf);
         lenis.destroy();
       };

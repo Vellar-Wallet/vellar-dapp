@@ -492,10 +492,6 @@
 .lp .lp-nav-outer:not(.is-scrolled) {
   color: var(--lp-on-dark);
 }
-.lp .lp-nav-outer:not(.is-scrolled) .lp-nav-links a,
-.lp .lp-nav-outer:not(.is-scrolled) .lp-nav-dd-btn {
-  color: var(--lp-on-dark);
-}
 /* The logo is a dark-ink mark, invisible on the ink hero: invert it
    while the nav floats. Spec quirk #2, also explicitly fixed. */
 .lp .lp-nav-outer:not(.is-scrolled) .lp-brand img {
@@ -533,111 +529,7 @@
   height: 55px;
   width: auto;
 }
-.lp .lp-nav-links {
-  display: flex;
-  align-items: center;
-  gap: var(--lp-sp-6);
-}
-.lp .lp-nav-links a {
-  font-size: var(--lp-fs-sm);
-  font-weight: 600;
-  text-decoration: none;
-  padding-block: 4px;
-  border-bottom: 3px solid transparent;
-  transition: border-color var(--lp-dur-fast) ease;
-}
-.lp .lp-nav-links a:hover {
-  border-bottom-color: var(--lp-sun);
-}
-.lp .lp-nav-links a.active {
-  border-bottom-color: var(--lp-mint);
-}
-.lp .lp-nav-toggle {
-  display: none;
-  background: none;
-  border: 0;
-  color: var(--lp-ink);
-  cursor: pointer;
-  padding: 8px;
-  margin-left: 4px;
-}
-.lp .lp-nav-toggle svg {
-  display: block;
-}
 
-/* Developers dropdown — hover or click to open, Escape closes. The panel
-   is a cut-corner paper card (two-layer clip border); its wrapper carries
-   a transparent top bridge so the pointer can cross the gap without the
-   wrapper firing mouseleave. */
-.lp .lp-nav-dd {
-  position: relative;
-}
-.lp .lp-nav-dd-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  color: var(--lp-ink);
-  font-family: inherit;
-  font-size: var(--lp-fs-sm);
-  font-weight: 600;
-  padding: 4px 0;
-  border-bottom: 3px solid transparent;
-  transition: border-color var(--lp-dur-fast) ease;
-}
-.lp .lp-nav-dd:hover .lp-nav-dd-btn,
-.lp .lp-nav-dd.open .lp-nav-dd-btn {
-  border-bottom-color: var(--lp-sun);
-}
-.lp .lp-nav-dd-btn svg {
-  transition: rotate var(--lp-dur-fast) ease;
-}
-.lp .lp-nav-dd.open .lp-nav-dd-btn svg {
-  rotate: 180deg;
-}
-.lp .lp-nav-dd-panel {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  translate: -50% 0;
-  padding-top: 10px;
-  display: none;
-  z-index: 41;
-}
-.lp .lp-nav-dd.open .lp-nav-dd-panel {
-  display: block;
-}
-.lp .lp-nav-dd-card {
-  position: relative;
-  min-width: 190px;
-  background: var(--lp-line-strong);
-  clip-path: var(--lp-clip-br-sm);
-  padding: var(--lp-sp-2);
-  display: flex;
-  flex-direction: column;
-}
-.lp .lp-nav-dd-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--lp-paper);
-  clip-path: polygon(
-    1px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 12.41px),
-    calc(100% - 12.41px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
-}
-.lp .lp-nav-links .lp-nav-dd-card a {
-  display: block;
-  padding: 10px 14px;
-  border-bottom: none;
-  transition: background var(--lp-dur-fast) ease;
-}
 /* ---- GitHub star button (top-level nav) ------------------------
    Two-part button in GitHub's own idiom: a "Star" face and a count box
    divided by a hairline. Sits on the nav bar rather than inside the
@@ -697,50 +589,10 @@
   color: var(--lp-sun);
 }
 
-.lp .lp-nav-links .lp-nav-dd-card a:hover {
-  border-bottom: none;
-  background: var(--lp-mint-soft);
-}
-
 @media (max-width: 820px) {
   .lp .lp-nav {
     height: 64px;
     gap: var(--lp-sp-4);
-  }
-  .lp .lp-nav-toggle {
-    display: block;
-  }
-  .lp .lp-nav-links {
-    position: fixed;
-    inset: 64px 0 0 0;
-    z-index: 39;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    gap: var(--lp-sp-6);
-    padding: var(--lp-sp-8) var(--lp-gutter);
-    background: var(--lp-ink);
-    display: none;
-  }
-  .lp .lp-nav-links.open {
-    display: flex;
-  }
-  .lp .lp-nav-links a {
-    color: var(--lp-on-dark);
-    font-family: var(--lp-display);
-    font-size: 2rem;
-    font-weight: 700;
-    border-bottom-width: 4px;
-  }
-  /* In the full-screen menu the dropdown flattens into plain links — the
-     wrappers dissolve (display: contents) and the button disappears. */
-  .lp .lp-nav-dd,
-  .lp .lp-nav-dd-panel,
-  .lp .lp-nav-dd-card {
-    display: contents;
-  }
-  .lp .lp-nav-dd-btn {
-    display: none;
   }
   /* Narrow bars fit brand + star + "Read the docs" + hamburger only if the
      star button gives up its word. The COUNT is the point, so that stays and
@@ -765,18 +617,6 @@
     white-space: nowrap;
     padding-inline: 14px;
     font-size: 0.8125rem;
-  }
-  .lp .lp-nav-dd-card::before {
-    content: none;
-  }
-  .lp .lp-nav-links .lp-nav-dd-card a,
-  .lp .lp-nav-links .lp-nav-dd-card a:hover {
-    padding: 4px 0;
-    background: none;
-    border-bottom: 4px solid transparent;
-  }
-  .lp .lp-nav-links .lp-nav-dd-card a:hover {
-    border-bottom-color: var(--lp-sun);
   }
 }
 
@@ -2924,4 +2764,227 @@
 .lp .lp-curtain--lime .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--forest {
   background: var(--lp-forest);
   color: var(--lp-on-dark);
+}
+
+/* ---- Nav: liquid drip menu, flip links, mobile sheet --------------------
+   Reference spec §4.1. Desktop: the drip hangs from the viewport's top
+   edge (fixed, so it is out of the bar's flow and the star button and CTA
+   keep their place). Below 820px it is replaced by a full-screen sheet. */
+
+.lp .lp-blob {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+}
+.lp .lp-blob-shape {
+  position: relative;
+  overflow: hidden;
+}
+.lp .lp-blob-svg {
+  position: absolute;
+  inset: 0;
+}
+.lp .lp-blob-toggle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  color: var(--lp-ink);
+  cursor: pointer;
+}
+/* The shape clips its own overflow, so the toggle's ring draws inset. */
+.lp .lp-blob-toggle:focus-visible {
+  outline: 2px solid var(--lp-ink);
+  outline-offset: -6px;
+}
+.lp .lp-blob-links {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 44px;
+  padding-inline: var(--lp-sp-8);
+  display: flex;
+  flex-direction: column;
+}
+/* Click-outside catcher: behind the shape, in front of the page. */
+.lp .lp-blob-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+/* A rolling sign: label rotates away, italic description rotates in. */
+.lp .lp-flip {
+  position: relative;
+  display: block;
+  height: 3.2rem;
+  padding-block: 1rem;
+  overflow: hidden;
+  color: var(--lp-ink);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--lp-ink) 14%, transparent);
+}
+.lp .lp-flip:last-child {
+  border-bottom: 0;
+}
+.lp .lp-flip-stage {
+  position: relative;
+  display: block;
+  perspective: 400px;
+}
+.lp .lp-flip-label {
+  display: block;
+  font-family: var(--lp-display);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transform-origin: bottom center;
+}
+.lp .lp-flip-desc {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  font-family: var(--lp-serif);
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transform-origin: top center;
+}
+.lp .lp-flip.is-active .lp-flip-label {
+  text-decoration: underline;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 4px;
+}
+.lp .lp-flip:focus-visible {
+  outline: 2px solid var(--lp-ink);
+  outline-offset: -3px;
+}
+
+/* Hamburger: three lines that become an X (motion drives the rotation). */
+.lp .lp-nav-toggle {
+  display: none;
+  margin-left: 4px;
+  padding: 10px;
+  background: none;
+  border: 0;
+  color: var(--lp-ink);
+  cursor: pointer;
+}
+.lp .lp-nav-outer:not(.is-scrolled) .lp-nav-toggle {
+  color: var(--lp-on-dark);
+}
+.lp .lp-burger {
+  position: relative;
+  display: block;
+  width: 22px;
+  height: 14px;
+}
+.lp .lp-burger i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.lp .lp-burger i:nth-child(1) {
+  top: 0;
+}
+.lp .lp-burger i:nth-child(2) {
+  top: 6px;
+}
+.lp .lp-burger i:nth-child(3) {
+  top: 12px;
+}
+
+.lp .lp-mmenu {
+  display: none;
+}
+@media (max-width: 820px) {
+  /* Declared here, after the base `display: none` above, because equal
+     specificity is settled by source order: an earlier copy of this rule
+     lost to the base and left the hamburger invisible on phones. */
+  .lp .lp-nav-toggle {
+    display: block;
+  }
+  .lp .lp-blob {
+    display: none;
+  }
+  /* The full-screen sheet. It sits under the bar (z 50) so the logo and the
+     toggle stay reachable. Ink on lime is 9.3:1. */
+  .lp .lp-mmenu {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: var(--lp-sp-8);
+    padding: calc(64px + var(--lp-sp-8)) var(--lp-gutter) var(--lp-sp-8);
+    overflow-y: auto;
+    background: var(--lp-lime);
+    color: var(--lp-ink);
+  }
+  .lp .lp-mmenu-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lp-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .lp .lp-mmenu-link {
+    display: block;
+    color: var(--lp-ink);
+    text-decoration: none;
+  }
+  .lp .lp-mmenu-label {
+    display: block;
+    font-family: var(--lp-display);
+    font-size: clamp(1.875rem, 9vw, 2.5rem);
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+  .lp .lp-mmenu-link.is-active .lp-mmenu-label {
+    text-decoration: underline;
+    text-decoration-thickness: 4px;
+    text-underline-offset: 6px;
+  }
+  .lp .lp-mmenu-desc {
+    display: block;
+    margin-top: 0.35rem;
+    font-family: var(--lp-serif);
+    font-size: 1rem;
+    font-style: italic;
+    font-weight: 600;
+    color: var(--lp-ink);
+  }
+  .lp .lp-mmenu-link:focus-visible {
+    outline: 3px solid var(--lp-ink);
+    outline-offset: 4px;
+  }
+  .lp .lp-mmenu-cta {
+    display: grid;
+    gap: var(--lp-sp-3);
+  }
+  .lp .lp-mmenu-cta .lp-btn {
+    width: 100%;
+  }
 }
