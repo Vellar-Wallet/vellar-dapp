@@ -1,63 +1,23 @@
-import type { ReactNode } from "react";
-import { LpButton, MonoRow, MonoRows, SectionHead } from "./ui";
+import { LpButton, SectionHead } from "./ui";
 
-/** A listing as the Bazaar shows it: name, price, and a Pay button. */
-function BazaarRow({ name, meta }: { name: string; meta: string }) {
-  return (
-    <div className="lp-rrow">
-      <div className="ri"></div>
-      <div className="rn">
-        <b>{name}</b>
-        <span>{meta}</span>
-      </div>
-      <span className="open">Pay</span>
-    </div>
-  );
-}
-
-/** The three pillars. Each card pairs its explanation with a small example of
- *  the thing it describes, so the section is one set of three cards rather than
- *  three paragraphs followed by three unrelated mock-ups. */
-const PILLARS: ReadonlyArray<{
-  num: string;
-  title: string;
-  body: string;
-  mock: ReactNode;
-}> = [
+/** The three pillars: one set of three cards. */
+const PILLARS = [
   {
     num: "01",
     title: "Verify and settle",
     body: "Point your resource server at the Vellar facilitator and it handles the rest: verifying a signed payment, settling it on Stellar, and sponsoring the network fee through a pool of channel accounts. Buyers sign a payment authorization and never hand over keys.",
-    mock: (
-      <MonoRows>
-        <MonoRow label="/verify" value="✓ valid" tone="ok" />
-        <MonoRow label="/settle" value="✓ fee sponsored" tone="ok" />
-      </MonoRows>
-    ),
   },
   {
     num: "02",
     title: "Bazaar discovery",
     body: "A settlement carrying the discovery extension can list your endpoint in the Bazaar, searchable by keyword and semantic ranking. Listing isn't automatic: the settlement has to succeed, and the discovery data, payTo binding and ownership checks all have to pass, so the catalog can't be spammed for free.",
-    mock: (
-      <div className="lp-rlist">
-        <BazaarRow name="Weather API" meta="0.05 USDC" />
-        <BazaarRow name="Translate API" meta="0.02 USDC" />
-      </div>
-    ),
   },
   {
     num: "03",
     title: "Built to be checked",
     body: "The facilitator is open source. Its published testnet settlements, including a canonical conformance run with unmodified clients, resolve independently on the Stellar ledger, so nothing here has to be taken on trust.",
-    mock: (
-      <MonoRows>
-        <MonoRow label="tx hash" value="9a3c…e1f0" />
-        <MonoRow label="resource" value="200 OK" tone="ok" />
-      </MonoRows>
-    ),
   },
-];
+] as const;
 
 /** "Building on x402" — the three-pillar facilitator story. */
 export function X402Pillars() {
@@ -86,9 +46,6 @@ export function X402Pillars() {
               <span className="num">{p.num}</span>
               <h4>{p.title}</h4>
               <p>{p.body}</p>
-              <div className="lp-pillar-mock" aria-hidden="true">
-                {p.mock}
-              </div>
             </div>
           ))}
         </div>

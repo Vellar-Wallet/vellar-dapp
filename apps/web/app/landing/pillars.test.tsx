@@ -3,13 +3,9 @@ import { describe, expect, it } from "vitest";
 import { X402Pillars } from "./pillars";
 
 describe("X402Pillars", () => {
-  it("is one set of three cards, each pairing its copy with an example", () => {
+  it("is one set of three cards", () => {
     const { container } = render(<X402Pillars />);
-    const cards = container.querySelectorAll(".lp-pillar");
-    expect(cards).toHaveLength(3);
-    for (const card of Array.from(cards)) {
-      expect(card.querySelector(".lp-pillar-mock")).not.toBeNull();
-    }
+    expect(container.querySelectorAll(".lp-pillar")).toHaveLength(3);
   });
 
   it("keeps every pillar's title and copy", () => {
@@ -22,17 +18,12 @@ describe("X402Pillars", () => {
     expect(screen.getByText(/nothing here has to be taken on trust/i)).toBeDefined();
   });
 
-  it("no longer renders a second, separate row of example cards", () => {
+  it("has no example panels or second row of cards, only the three pillars", () => {
     const { container } = render(<X402Pillars />);
     expect(container.querySelector(".lp-hero-cards")).toBeNull();
+    expect(container.querySelector(".lp-pillar-mock")).toBeNull();
     expect(screen.queryByText(/seller · example/i)).toBeNull();
-  });
-
-  it("hides the examples from assistive tech, since each card's text carries the meaning", () => {
-    const { container } = render(<X402Pillars />);
-    for (const mock of Array.from(container.querySelectorAll(".lp-pillar-mock"))) {
-      expect(mock.getAttribute("aria-hidden")).toBe("true");
-    }
+    expect(screen.queryByText("Weather API")).toBeNull();
   });
 
   it("keeps the calls to action", () => {

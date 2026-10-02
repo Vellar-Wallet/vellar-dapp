@@ -897,54 +897,6 @@
   color: #c2372b; /* coral's AA-passing text shade on white */
 }
 
-/* Bazaar rows */
-.lp .lp-rlist {
-  display: flex;
-  flex-direction: column;
-}
-.lp .lp-rrow {
-  display: flex;
-  align-items: center;
-  gap: var(--lp-sp-3);
-  padding: 10px 2px;
-  border-bottom: 1px solid var(--lp-line);
-}
-.lp .lp-rrow:last-child {
-  border-bottom: 0;
-}
-.lp .lp-rrow .ri {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  background: var(--lp-lime-soft);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
-}
-.lp .lp-rrow:nth-child(2) .ri {
-  background: var(--lp-sun-soft);
-}
-.lp .lp-rrow:nth-child(3) .ri {
-  background: var(--lp-mint-soft);
-}
-.lp .lp-rrow .rn {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.lp .lp-rrow .rn b {
-  font-size: 0.875rem;
-}
-.lp .lp-rrow .rn span {
-  font-size: 0.75rem;
-  color: var(--lp-ink-faint);
-}
-.lp .lp-rrow .open {
-  margin-left: auto;
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 4px 10px;
-  background: var(--lp-sun);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
-}
 .lp .lp-verified {
   display: inline-flex;
   align-self: flex-start;
@@ -1004,21 +956,6 @@
   font-size: clamp(2.5rem, 2rem + 2vw, 4rem);
   line-height: 1;
   letter-spacing: -0.02em;
-}
-/* The example inside a pillar card: a small white panel pinned to the
-   card's foot, so the three cards line up whatever their copy length. It is
-   decorative (aria-hidden): the card's text carries the meaning. Rows may
-   not shrink the card, so min-width is released down the chain. */
-.lp .lp-pillar-mock {
-  margin-top: auto;
-  padding: var(--lp-sp-3) var(--lp-sp-4);
-  background: var(--lp-paper);
-  border: 1px solid var(--lp-line);
-  min-width: 0;
-}
-.lp .lp-pillar-mock .lp-mrow,
-.lp .lp-pillar-mock .lp-rrow .rn {
-  min-width: 0;
 }
 .lp .lp-pillar p {
   color: var(--lp-ink-soft);
@@ -1312,11 +1249,6 @@
 }
 .lp .lp-slat-mock .lbl {
   display: block;
-}
-.lp .lp-slat-mock .lp-rlist {
-  background: var(--lp-paper);
-  border: 1px solid var(--lp-line);
-  padding: 4px 12px;
 }
 .lp .lp-slat-mock .lp-badge {
   align-self: flex-start;
