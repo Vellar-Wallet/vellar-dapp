@@ -7,8 +7,11 @@ const title = "Vellar, the payment layer for AI agents on Stellar";
 const description =
   "Vellar verifies and settles x402 payments on Stellar, lists every paid endpoint in a searchable Bazaar, and gives sellers and agents the tools to use both. Open source, non-custodial, fees sponsored.";
 // The hero itself, cropped to the canonical 1200x630 social-card size.
+// Versioned filename on purpose: social platforms cache a link's preview image
+// by URL, so replacing og-image.png in place would keep showing the old hero to
+// anyone who has seen this link before. Bump the suffix when the card changes.
 const ogImage = {
-  url: "https://vellar.xyz/og-image.png",
+  url: "https://vellar.xyz/og-image-v2.png",
   width: 1200,
   height: 630,
   alt: title,
