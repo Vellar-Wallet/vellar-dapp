@@ -454,20 +454,25 @@
 }
 
 /* ---- GitHub star button (top-level nav) ------------------------
-   Two-part button in GitHub's own idiom: a "Star" face and a count box
-   divided by a hairline. Sits on the nav bar rather than inside the
-   Developers dropdown — social proof behind a hover menu is social proof
-   nobody sees. */
+   One pill: the GitHub mark, "Star", and the live star count, with no
+   divider. The count is social proof, so it sits on the bar rather than
+   inside a hover menu where nobody would see it.
+
+   Hover goes to the loud accent, not to forest. Forest is the hero's own
+   ground colour, so a forest hover made the button vanish into the page
+   (white text on a background identical to what was behind it). Lime reads
+   on the dark hero and on the white scrolled bar alike. */
 .lp .lp-star-btn {
   display: inline-flex;
-  align-items: stretch;
+  align-items: center;
+  gap: 10px;
   height: 40px;
+  padding: 0 16px;
   flex: 0 0 auto;
   text-decoration: none;
   color: var(--lp-ink);
   border: 1.5px solid var(--lp-ink);
-  border-radius: 8px;
-  overflow: hidden;
+  border-radius: var(--lp-r-pill);
   background: var(--lp-paper);
   transition:
     background var(--lp-dur-fast) ease,
@@ -477,39 +482,33 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 0 12px;
   font-size: var(--lp-fs-sm);
   font-weight: 700;
   line-height: 1;
 }
-/* The count sits in its own cell, separated by the same hairline as the
-   border — reads as one control, not a button with a sticker on it. */
 .lp .lp-star-btn-count {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 0 12px;
   font-size: var(--lp-fs-sm);
   font-weight: 700;
   line-height: 1;
   /* tabular-nums: the count stays put when it ticks 28 -> 29 rather than
      reflowing the whole button. */
   font-variant-numeric: tabular-nums;
-  border-left: 1.5px solid var(--lp-ink);
-  background: var(--lp-paper-tint);
 }
 .lp .lp-star-btn:hover {
-  background: var(--lp-ink);
-  color: var(--lp-on-dark);
-}
-.lp .lp-star-btn:hover .lp-star-btn-count {
-  background: rgba(255, 255, 255, 0.12);
-  border-left-color: var(--lp-on-dark);
+  background: var(--lp-lime);
+  color: var(--lp-ink);
 }
 .lp .lp-star-btn .lp-star-ico {
   /* Optical: the star's visual centre sits slightly above its box centre. */
   margin-top: -1px;
   color: var(--lp-sun);
+}
+/* Yellow on lime is nearly invisible; the star goes ink on hover. */
+.lp .lp-star-btn:hover .lp-star-ico {
+  color: var(--lp-ink);
 }
 
 @media (max-width: 820px) {
@@ -532,11 +531,9 @@
   .lp .lp-star-btn-label {
     display: none;
   }
-  .lp .lp-star-btn-face {
-    padding: 0 9px;
-  }
-  .lp .lp-star-btn-count {
-    padding: 0 9px;
+  .lp .lp-star-btn {
+    padding: 0 12px;
+    gap: 8px;
   }
   /* The nav CTA was already wrapping to two lines at this width before the
      star button existed (measured: 144x63 at 390px); adding a second control
