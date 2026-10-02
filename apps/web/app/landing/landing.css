@@ -757,21 +757,6 @@
 }
 
 /* Product cards row */
-.lp .lp-hero-cards > .lp-frame,
-.lp .lp-hero-cards .lp-pcard,
-.lp .lp-hero-cards .lp-mrow,
-.lp .lp-hero-cards .lp-rrow .rn {
-  min-width: 0;
-}
-.lp .lp-hero-cards {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--lp-sp-8) var(--lp-sp-6);
-  align-items: start;
-  margin-top: var(--lp-sp-xl);
-}
 .lp .lp-pcard {
   position: relative;
   background: var(--lp-line-strong); /* the 1px border */
@@ -1019,6 +1004,21 @@
   font-size: clamp(2.5rem, 2rem + 2vw, 4rem);
   line-height: 1;
   letter-spacing: -0.02em;
+}
+/* The example inside a pillar card: a small white panel pinned to the
+   card's foot, so the three cards line up whatever their copy length. It is
+   decorative (aria-hidden): the card's text carries the meaning. Rows may
+   not shrink the card, so min-width is released down the chain. */
+.lp .lp-pillar-mock {
+  margin-top: auto;
+  padding: var(--lp-sp-3) var(--lp-sp-4);
+  background: var(--lp-paper);
+  border: 1px solid var(--lp-line);
+  min-width: 0;
+}
+.lp .lp-pillar-mock .lp-mrow,
+.lp .lp-pillar-mock .lp-rrow .rn {
+  min-width: 0;
 }
 .lp .lp-pillar p {
   color: var(--lp-ink-soft);
@@ -1859,9 +1859,6 @@
 /* ---- Responsive ----------------------------------------------- */
 
 @media (max-width: 1000px) {
-  .lp .lp-hero-cards {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
   .lp .lp-pillars,
   .lp .lp-steps {
     grid-template-columns: 1fr 1fr;
@@ -1899,57 +1896,9 @@
   .lp .lp-playcard {
     padding: var(--lp-sp-4);
   }
-  .lp .lp-hero-cards {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--lp-sp-4) var(--lp-sp-3);
-  }
-  .lp .lp-hero-cards > .lp-frame:last-child {
-    grid-column: 1 / -1;
-  }
   /* phone-only content trim — desktop and tablet keep the full cards */
-  .lp .lp-hero-cards .lp-field .sub,
-  .lp .lp-hero-cards .lp-field .lp-token,
-  .lp .lp-hero-cards .lp-chips {
-    display: none;
-  }
   /* narrow columns: mono rows wrap instead of ellipsizing to nonsense */
-  .lp .lp-hero-cards .lp-mrow {
-    gap: 2px var(--lp-sp-2);
-    white-space: normal;
-    flex-wrap: wrap;
-  }
-  .lp .lp-hero-cards .lp-mrow span {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    overflow-wrap: anywhere;
-  }
-  .lp .lp-hero-cards .lp-field .row {
-    flex-wrap: wrap;
-  }
-  .lp .lp-hero-cards .lp-pcard {
-    padding: var(--lp-sp-4);
-    gap: var(--lp-sp-3);
-    height: 100%;
-  }
-  .lp .lp-hero-cards .lp-pcard-top {
-    font-size: 0.6875rem;
-  }
-  .lp .lp-hero-cards .lp-field {
-    padding: var(--lp-sp-2) var(--lp-sp-3);
-  }
   /* inline amount sizes need the override at phone width */
-  .lp .lp-hero-cards .lp-field .amt {
-    font-size: 1rem !important;
-  }
-  .lp .lp-hero-cards .lp-field .sub {
-    flex-wrap: wrap;
-    gap: 2px;
-  }
-  .lp .lp-hero-cards .lp-mrow {
-    font-size: 0.6875rem;
-    padding: 6px 1px;
-  }
   .lp .lp-pillars,
   .lp .lp-steps {
     grid-template-columns: 1fr 1fr;
@@ -1983,9 +1932,6 @@
   }
   .lp .lp-cta {
     padding-block: var(--lp-sp-xl);
-  }
-  .lp .lp-hero-cards {
-    margin-top: var(--lp-sp-lg);
   }
 }
 
@@ -2957,4 +2903,13 @@
 }
 .lp .lp-ground--ink {
   background: var(--lp-ink);
+}
+
+/* Phones: one pillar per row. The earlier two-up rule suited three short text
+   cards; with a worked example inside each, two columns of ~150px are too
+   narrow to read. (Placed last so it wins over the generic 700px grid rule.) */
+@media (max-width: 700px) {
+  .lp .lp-pillars {
+    grid-template-columns: 1fr;
+  }
 }
