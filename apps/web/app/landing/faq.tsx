@@ -2,10 +2,6 @@ import { Eyebrow } from "./ui";
 
 const FAQS = [
   {
-    q: "What is x402, and where does Vellar fit?",
-    a: "x402 is an open protocol that turns HTTP 402 into machine-payable APIs: a server asks for payment, the caller signs and retries. Vellar is the payment layer on Stellar. Its facilitator verifies and settles each payment, the Bazaar makes paid endpoints discoverable, and tools for sellers and agents sit on top.",
-  },
-  {
     q: "How do I start charging for an API?",
     a: "Point your resource server at the Vellar facilitator and gate a route with a 402 challenge. Settlement, fee sponsorship and Bazaar cataloging are handled for you, with no Soroban code in your app. The VS Code extension can write the gate into an Express, Fastify or Next.js App Router route for you.",
   },
