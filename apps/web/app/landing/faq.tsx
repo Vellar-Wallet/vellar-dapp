@@ -44,7 +44,7 @@ export function FaqSection() {
           {FAQS.map((f) => (
             <details className="lp-fitem" key={f.q}>
               <summary>
-                {f.q} <span className="pm">+</span>
+                {f.q} <span className="pm" aria-hidden="true" />
               </summary>
               <div className="body">{f.a}</div>
             </details>

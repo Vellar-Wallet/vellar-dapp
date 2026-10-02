@@ -1295,23 +1295,43 @@
   color: var(--lp-forest);
 }
 .lp .lp-fitem summary .pm {
+  position: relative;
   flex: none;
   width: 30px;
   height: 30px;
-  display: grid;
-  place-items: center;
-  font-family: var(--lp-body);
-  font-size: 1.0625rem;
-  font-weight: 700;
-  line-height: 1;
-  /* optically center inside the cut shape (its visual centroid sits a
-     touch up-left of the box centre because of the corner cut) */
-  padding: 0 2px 2px 0;
   background: var(--lp-sun);
   border-radius: var(--lp-r-md);
+}
+/* The plus is two bars, not a font glyph. A "+" typed as text sits off-centre
+   whatever you do, because the glyph's own side bearings and baseline are not
+   symmetric, and the padding that used to compensate for the old clipped
+   corner pushed it further left. Two bars centred with translate are exact:
+   the box is 30px and the bars are 12x2, so every offset is a whole pixel.
+   `translate` (not `transform`) keeps it independent of the open-state
+   `rotate`, which turns the plus into an x. */
+.lp .lp-fitem summary .pm::before,
+.lp .lp-fitem summary .pm::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  background: var(--lp-ink);
+  border-radius: 1px;
   transition: rotate var(--lp-dur-fast) var(--lp-ease-io);
 }
-.lp .lp-fitem[open] summary .pm {
+.lp .lp-fitem summary .pm::before {
+  width: 12px;
+  height: 2px;
+}
+.lp .lp-fitem summary .pm::after {
+  width: 2px;
+  height: 12px;
+}
+/* Open: only the bars turn (into an x); the yellow square stays put. They
+   rotate about their own centre, which is already the square's centre. */
+.lp .lp-fitem[open] summary .pm::before,
+.lp .lp-fitem[open] summary .pm::after {
   rotate: 45deg;
 }
 .lp .lp-fitem .body {
