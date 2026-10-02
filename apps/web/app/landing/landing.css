@@ -2158,6 +2158,14 @@
 .lp-curtain--ink {
   background: var(--lp-ink);
 }
+.lp-curtain--paper {
+  background: var(--lp-paper);
+  color: var(--lp-ink);
+}
+.lp-curtain--tint {
+  background: var(--lp-paper-tint);
+  color: var(--lp-ink);
+}
 .lp-curtain--lime {
   background: var(--lp-lime);
   color: var(--lp-ink);
@@ -2319,33 +2327,30 @@
 /* No `color` on the curtain itself: cards inherit their text colour, so a
    light colour set here leaks into every card and field. Light type is set
    only on the specific ground-level elements below. */
-.lp .lp-curtain--ink .lp-sec {
-  background: transparent;
-}
-.lp .lp-curtain--ink .lp-sechead h2,
-.lp .lp-curtain--ink .lp-faq-aside h2 {
+.lp .lp-ground--ink .lp-sechead h2,
+.lp .lp-ground--ink .lp-faq-aside h2 {
   color: var(--lp-on-dark);
 }
-.lp .lp-curtain--ink .lp-sechead .lp-lead,
-.lp .lp-curtain--ink .lp-faq-aside > p {
+.lp .lp-ground--ink .lp-sechead .lp-lead,
+.lp .lp-ground--ink .lp-faq-aside > p {
   color: var(--lp-on-dark-soft);
 }
-.lp .lp-curtain--ink .lp-sechead .lp-lead a,
-.lp .lp-curtain--ink .lp-faq-aside a {
+.lp .lp-ground--ink .lp-sechead .lp-lead a,
+.lp .lp-ground--ink .lp-faq-aside a {
   color: var(--lp-mint);
 }
-.lp .lp-curtain--ink .lp-eyebrow {
+.lp .lp-ground--ink .lp-eyebrow {
   color: var(--lp-lime);
 }
 /* Buttons that sit directly on ink: forest-on-ink and ink-outline-on-ink
    are both invisible, so they take the accent / light-outline treatment.
    Scoped to the CTA rows that live on the ground, not buttons inside
    cards. */
-.lp .lp-curtain--ink .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--forest {
+.lp .lp-ground--ink > .lp-wrap > .lp-cta-row .lp-btn--forest {
   background: var(--lp-lime);
   color: var(--lp-ink);
 }
-.lp .lp-curtain--ink .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--outline {
+.lp .lp-ground--ink > .lp-wrap > .lp-cta-row .lp-btn--outline {
   color: var(--lp-on-dark);
   border-color: var(--lp-line-dark);
 }
@@ -2456,7 +2461,7 @@
 /* The dark proof card sits on the ink ground, where an ink fill and an ink
    border both vanish and the text appears to float. Forest is the system's
    raised-dark surface; the hairline border is the dark-ground line token. */
-.lp .lp-curtain--ink .lp-proofcard:nth-child(4n) {
+.lp .lp-ground--ink .lp-proofcard:nth-child(4n) {
   --proof-fill: var(--lp-forest);
   background: var(--lp-line-dark);
 }
@@ -2537,23 +2542,23 @@
 }
 /* On the ink ground the dark card needs its own surface, or it dissolves
    into the page. Forest is the system's raised-dark surface. */
-.lp .lp-curtain--ink .lp-platcard.lp-platcard--dark {
+.lp .lp-ground--ink .lp-platcard.lp-platcard--dark {
   background: var(--lp-forest);
 }
 
 /* The VS Code copy column sits directly on the ground. */
-.lp .lp-curtain--ink .lp-vscode-copy p {
+.lp .lp-ground--ink .lp-vscode-copy p {
   color: var(--lp-on-dark-soft);
 }
-.lp .lp-curtain--ink .lp-vscode-copy .lp-chips b {
+.lp .lp-ground--ink .lp-vscode-copy .lp-chips b {
   color: var(--lp-on-dark);
   border-color: var(--lp-line-dark);
 }
-.lp .lp-curtain--ink .lp-vscode-copy .lp-btn--outline {
+.lp .lp-ground--ink .lp-vscode-copy .lp-btn--outline {
   color: var(--lp-on-dark);
   border-color: var(--lp-on-dark-faint);
 }
-.lp .lp-curtain--ink .lp-vscode-copy .lp-btn--outline:hover {
+.lp .lp-ground--ink .lp-vscode-copy .lp-btn--outline:hover {
   background: var(--lp-on-dark);
   color: var(--lp-ink);
 }
@@ -2562,20 +2567,20 @@
    The questions inherit their colour from the page, so on ink they went
    ink-on-ink and only the "+" markers showed. Set on the elements, not the
    curtain, for the same reason as everywhere else in the inverted curtain. */
-.lp .lp-curtain--ink .lp-fitem {
+.lp .lp-ground--ink .lp-fitem {
   border-bottom-color: var(--lp-line-dark);
 }
-.lp .lp-curtain--ink .lp-fitem summary {
+.lp .lp-ground--ink .lp-fitem summary {
   color: var(--lp-on-dark);
 }
-.lp .lp-curtain--ink .lp-fitem summary:hover {
+.lp .lp-ground--ink .lp-fitem summary:hover {
   color: var(--lp-lime);
 }
 /* The marker's "+" sits on a sun fill, so it stays ink whatever the row is. */
-.lp .lp-curtain--ink .lp-fitem summary .pm {
+.lp .lp-ground--ink .lp-fitem summary .pm {
   color: var(--lp-ink);
 }
-.lp .lp-curtain--ink .lp-fitem .body {
+.lp .lp-ground--ink .lp-fitem .body {
   color: var(--lp-on-dark-soft);
 }
 
@@ -2805,27 +2810,6 @@
   .lp .lp-rail-track {
     scroll-behavior: auto;
   }
-}
-
-/* ---- Lime ground, nested inside the ink curtain --------------------------
-   The lime curtain sits INSIDE the ink one, so every `.lp-curtain--ink …`
-   rule above also matches here as an ancestor selector, and CSS has no way
-   to say "nearest curtain". Rather than restructure the nesting (which the
-   overlap mechanics depend on), the lime ground restates its own colours
-   at equal specificity, later in the source. Without this the heading is
-   white on lime and the eyebrow is lime on lime. Ink on lime is 9.3:1. */
-.lp .lp-curtain--lime .lp-sechead h2 {
-  color: var(--lp-ink);
-}
-.lp .lp-curtain--lime .lp-sechead .lp-lead {
-  color: var(--lp-ink);
-}
-.lp .lp-curtain--lime .lp-eyebrow {
-  color: var(--lp-ink);
-}
-.lp .lp-curtain--lime .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--forest {
-  background: var(--lp-forest);
-  color: var(--lp-on-dark);
 }
 
 /* ---- Nav: liquid drip menu, flip links, mobile sheet --------------------
@@ -3063,7 +3047,7 @@
       card, lime or white, the ink ring shows (7.6 to 12.2:1). One rule,
       no per-surface cases. */
 .lp .lp-hero-scene :focus-visible,
-.lp .lp-curtain--ink :focus-visible,
+.lp .lp-ground--ink :focus-visible,
 .lp .lp-scrub :focus-visible,
 .lp .lp-nav-outer--float:not(.is-scrolled) :focus-visible {
   outline: 2px solid var(--lp-lime);
@@ -3118,4 +3102,21 @@
 .lp .lp-platcard .lp-mrow span {
   overflow: visible;
   text-overflow: clip;
+}
+
+/* ---- Section grounds -------------------------------------------------------
+   Each section declares its own ground, so the page alternates instead of
+   being one continuous ink slab. `paper` and `tint` are the original
+   paper-system defaults, so they need no overrides: the light-ground colours
+   already in this file apply as written. `ink` is the inverted treatment,
+   keyed to the section (not the curtain) so a light section sitting inside
+   the same curtain cannot inherit its white type. */
+.lp .lp-ground--paper {
+  background: var(--lp-paper);
+}
+.lp .lp-ground--tint {
+  background: var(--lp-paper-tint);
+}
+.lp .lp-ground--ink {
+  background: var(--lp-ink);
 }

@@ -46,7 +46,7 @@ function TraceRow({
  *  static section showing the finished trace. */
 export function TraceSection() {
   return (
-    <ScrubScene id="trace" className="lp-trace">
+    <ScrubScene id="trace" className="lp-trace lp-ground--ink">
       {(scene) => <TraceBody read={scene.read} exit={scene.exit} live={!scene.reduced} />}
     </ScrubScene>
   );

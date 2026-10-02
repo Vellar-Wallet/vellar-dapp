@@ -30,7 +30,7 @@ const FAQS = [
 /** FAQ: aside + native details/summary accordion. */
 export function FaqSection() {
   return (
-    <section className="lp-sec" id="faq">
+    <section className="lp-sec lp-ground--tint" id="faq">
       <div className="lp-wrap lp-faq-grid">
         <div className="lp-faq-aside" data-reveal>
           <Eyebrow>Questions</Eyebrow>

@@ -103,6 +103,7 @@ describe("Curtain", () => {
         <Curtain diagonal>slanted</Curtain>
         <Curtain overlap={false}>flat</Curtain>
         <Curtain tone="lime">loud</Curtain>
+        <Curtain tone="tint">soft</Curtain>
       </>,
     );
     const at = (i: number) => container.children[i] as HTMLElement;
@@ -113,6 +114,7 @@ describe("Curtain", () => {
     expect(slanted.className).toContain("lp-curtain--diagonal");
     expect(flat.className).not.toContain("lp-curtain--overlap");
     expect(loud.className).toContain("lp-curtain--lime");
+    expect((container.children[4] as HTMLElement).className).toContain("lp-curtain--tint");
   });
 
   it('"wide" overlaps only where the scene before it pins, never as a plain overlap', () => {

@@ -4,7 +4,7 @@ import { LpButton, MonoRow, MonoRows } from "./ui";
  *  the Bazaar. */
 export function TwoSides() {
   return (
-    <section className="lp-sec lp-sec--tight" id="bazaar">
+    <section className="lp-sec lp-ground--paper" id="bazaar">
       <div className="lp-wrap">
         <div className="lp-plat" data-reveal-group>
           <div className="lp-platcard lp-platcard--paper">

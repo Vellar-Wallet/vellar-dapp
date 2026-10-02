@@ -6,7 +6,7 @@ const MARKETPLACE_URL =
 /** "VS Code extension" — gate an endpoint with x402 without leaving VS Code. */
 export function VsCodeExtension() {
   return (
-    <section className="lp-sec" id="vscode">
+    <section className="lp-sec lp-ground--ink" id="vscode">
       <div className="lp-wrap">
         <SectionHead
           eyebrow="VS Code extension"

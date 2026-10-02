@@ -123,7 +123,7 @@ export function Curtain({
    *  no pinned viewport to cover, and an overlap would just slide this block
    *  up over the scene's own content. */
   overlap?: boolean | "wide";
-  tone?: "ink" | "lime";
+  tone?: "ink" | "paper" | "tint" | "lime";
   className?: string;
 }) {
   const cls = [

@@ -98,7 +98,11 @@ function MarqueeRow({
  *  click. */
 export function ProofStrip() {
   return (
-    <section className="lp-sec lp-sec--proof" id="proof" aria-label="Verifiable proofs">
+    <section
+      className="lp-sec lp-sec--proof lp-ground--tint"
+      id="proof"
+      aria-label="Verifiable proofs"
+    >
       <div className="lp-wrap">
         <SectionHead
           eyebrow="Track record"

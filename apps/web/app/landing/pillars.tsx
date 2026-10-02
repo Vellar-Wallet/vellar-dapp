@@ -32,7 +32,7 @@ const PILLARS = [
  *  above them, so they read better here than under a poster headline. */
 export function X402Pillars() {
   return (
-    <section className="lp-sec" id="how">
+    <section className="lp-sec lp-ground--paper" id="how">
       <div className="lp-wrap">
         <SectionHead
           eyebrow="Building on x402"
