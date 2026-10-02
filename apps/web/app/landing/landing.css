@@ -2623,3 +2623,94 @@
   background: var(--lp-on-dark);
   color: var(--lp-ink);
 }
+
+/* ---- Platforms and VS Code on the ink ground --------------------------- */
+
+/* The dark platform card's paragraph colour was losing to the generic
+   `.lp-platcard p` rule defined after it (equal specificity, later wins),
+   leaving ink text on an ink card. Compounding the two classes settles it
+   by specificity instead of by source order. */
+.lp .lp-platcard.lp-platcard--dark p {
+  color: var(--lp-on-dark-soft);
+}
+/* On the ink ground the dark card needs its own surface, or it dissolves
+   into the page. Forest is the system's raised-dark surface. */
+.lp .lp-curtain--ink .lp-platcard.lp-platcard--dark {
+  background: var(--lp-forest);
+}
+
+/* The VS Code copy column sits directly on the ground. */
+.lp .lp-curtain--ink .lp-vscode-copy p {
+  color: var(--lp-on-dark-soft);
+}
+.lp .lp-curtain--ink .lp-vscode-copy .lp-chips b {
+  color: var(--lp-on-dark);
+  border-color: var(--lp-line-dark);
+}
+.lp .lp-curtain--ink .lp-vscode-copy .lp-btn--outline {
+  color: var(--lp-on-dark);
+  border-color: var(--lp-on-dark-faint);
+}
+.lp .lp-curtain--ink .lp-vscode-copy .lp-btn--outline:hover {
+  background: var(--lp-on-dark);
+  color: var(--lp-ink);
+}
+
+/* ---- FAQ on the ink ground ---------------------------------------------
+   The questions inherit their colour from the page, so on ink they went
+   ink-on-ink and only the "+" markers showed. Set on the elements, not the
+   curtain, for the same reason as everywhere else in the inverted curtain. */
+.lp .lp-curtain--ink .lp-fitem {
+  border-bottom-color: var(--lp-line-dark);
+}
+.lp .lp-curtain--ink .lp-fitem summary {
+  color: var(--lp-on-dark);
+}
+.lp .lp-curtain--ink .lp-fitem summary:hover {
+  color: var(--lp-lime);
+}
+/* The marker's "+" sits on a sun fill, so it stays ink whatever the row is. */
+.lp .lp-curtain--ink .lp-fitem summary .pm {
+  color: var(--lp-ink);
+}
+.lp .lp-curtain--ink .lp-fitem .body {
+  color: var(--lp-on-dark-soft);
+}
+
+/* ---- Poster emphasis word ------------------------------------------------
+   One rationed italic-serif phrase per headline, wherever the poster face
+   is used. The hero overrides the colour; the closing band keeps the sun. */
+.lp .lp-poster em {
+  font-family: var(--lp-serif);
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+/* ---- Closing band at poster scale ---------------------------------------- */
+.lp .lp-cta .lp-poster {
+  margin-inline: auto;
+  max-width: 14ch;
+  padding-bottom: 0.14em;
+}
+
+/* ---- Footer on the accent ground ------------------------------------------
+   The reference closes on the loud accent. Ink on lime is 9.3:1; the soft
+   ink token (74%) measures ~4.8:1 for small text, but the "faint" token
+   (55%) only ~3.0:1 and fails, so nothing small on lime uses faint. */
+.lp .lp-footer {
+  background: var(--lp-lime);
+  color: var(--lp-ink);
+  border-top: 0;
+}
+.lp .lp-foot-bot {
+  color: var(--lp-ink-soft);
+  border-top-color: var(--lp-line-strong);
+}
+.lp .lp-foot-col a:hover {
+  border-bottom-color: var(--lp-ink);
+}
+.lp .lp-footer :focus-visible {
+  outline-color: var(--lp-ink);
+}
