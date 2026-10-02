@@ -447,6 +447,11 @@
   height: 55px;
   width: auto;
 }
+.lp .lp-brand {
+  /* Never let the controls beside the logo squeeze it: at 360px the link
+     was crushed to 16px wide and the wordmark was unreadable. */
+  flex: 0 0 auto;
+}
 
 /* ---- GitHub star button (top-level nav) ------------------------
    Two-part button in GitHub's own idiom: a "Star" face and a count box
@@ -510,13 +515,19 @@
 @media (max-width: 820px) {
   .lp .lp-nav {
     height: 64px;
-    gap: var(--lp-sp-4);
+    gap: var(--lp-sp-3);
+  }
+  /* A 55px-tall wordmark is 143px wide, which crowds the star badge, the
+     CTA and the hamburger out of a phone-width bar. 40px (104px wide) fits. */
+  .lp .lp-brand img {
+    height: 40px;
   }
   /* Narrow bars fit brand + star + "Read the docs" + hamburger only if the
      star button gives up its word. The COUNT is the point, so that stays and
-     the "Star" label goes — an icon plus a number still reads correctly. */
+     the "Star" label goes: an icon plus a number still reads correctly.
+     Controls are 40px tall (the hamburger is a full 44px target). */
   .lp .lp-star-btn {
-    height: 36px;
+    height: 40px;
   }
   .lp .lp-star-btn-label {
     display: none;
@@ -529,12 +540,33 @@
   }
   /* The nav CTA was already wrapping to two lines at this width before the
      star button existed (measured: 144x63 at 390px); adding a second control
-     pushed it to three. Keep it on one line and let it shrink instead — a
+     pushed it to three. Keep it on one line and let it shrink instead: a
      wrapped pill in a 64px bar reads as broken. */
   .lp .lp-nav > .lp-btn {
     white-space: nowrap;
-    padding-inline: 14px;
+    padding: 0 14px;
+    min-height: 40px;
     font-size: 0.8125rem;
+  }
+  /* Footer links were 25px tall: fine for a mouse, too small for a thumb.
+     Padding brings each to a 44px target without changing the look. */
+  .lp .lp-foot-col a {
+    padding-block: 11px;
+  }
+}
+
+/* Small phones: the bar has room for the logo, the star count and the
+   hamburger, but not for a CTA as well. "Read the docs" is still one tap
+   away: it is the hero button, and the menu sheet leads with Docs and
+   Quickstart. */
+@media (max-width: 560px) {
+  .lp .lp-nav > .lp-btn {
+    display: none;
+  }
+  .lp .lp-nav {
+    /* the freed width goes to the logo, which sits left; the star badge and
+       hamburger sit together on the right */
+    justify-content: space-between;
   }
 }
 
@@ -1917,7 +1949,7 @@
 
    `!important` appears only on the scrub height, because that value is an
    inline style set from the `height` prop; nothing else here needs it. */
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: reduce), (max-height: 520px) {
   .lp-scene-outer--hero {
     height: auto;
   }
@@ -2385,7 +2417,15 @@
      specificity is settled by source order: an earlier copy of this rule
      lost to the base and left the hamburger invisible on phones. */
   .lp .lp-nav-toggle {
-    display: block;
+    /* A full 44px target (it was 42x34): the one control that must be easy
+       to hit one-handed. Sized here, after the base rule, because equal
+       specificity is settled by source order. */
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-left: 0;
+    padding: 0;
   }
   .lp .lp-blob {
     display: none;
@@ -2539,5 +2579,27 @@
 @media (max-width: 700px) {
   .lp .lp-pillars {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Short phones (iPhone SE class, 568 to 700px tall). The hero is a one-screen
+   scene, so its content has to fit the viewport or the bottom is cut off:
+   at 320x568 the buttons ended at 593px. Tightening the paragraph, the gaps
+   and the button height recovers the height without changing the look on any
+   normal-height phone. */
+@media (max-width: 820px) and (max-height: 700px) {
+  .lp .lp-hero-scene .lp-lead {
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+  .lp .lp-hero-scene .lp-hero-poster {
+    margin-bottom: var(--lp-sp-3);
+  }
+  .lp .lp-hero-scene .lp-cta-row {
+    margin-top: var(--lp-sp-4);
+    gap: var(--lp-sp-2);
+  }
+  .lp .lp-hero-scene .lp-btn--lg {
+    padding-block: 0.7em;
   }
 }

@@ -39,6 +39,7 @@ import { useMediaQuery } from "./use-media";
  */
 
 const REDUCED_QUERY = "(prefers-reduced-motion: reduce)";
+const SHORT_QUERY = "(max-height: 520px)";
 
 /** True when the visitor prefers reduced motion. Hydration-safe. */
 export function useReduced() {
@@ -54,7 +55,12 @@ export function useReduced() {
  */
 export function HeroScene({ children }: { children: ReactNode }) {
   const reduced = useReduced();
-  if (reduced) {
+  // A phone held sideways is ~375px tall: too short to pin a one-screen hero
+  // without cutting its content off, so it gets the same plain, scrolling
+  // layout as reduced motion (landing.css states the same rule for first
+  // paint).
+  const short = useMediaQuery(SHORT_QUERY);
+  if (reduced || short) {
     return (
       <div className="lp-scene-outer lp-scene-outer--hero">
         <section className="lp-hero-scene">{children}</section>
