@@ -44,9 +44,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           href="https://api.fontshare.com/v2/css?f[]=clash-display@700,600,500,400&f[]=cabinet-grotesk@800,700,500&display=swap"
           rel="stylesheet"
         />
-        {/* Playfair italic is the landing's rationed emphasis face. */}
+        {/* Playfair italic is the landing's rationed emphasis face. Anton is
+            the condensed display face, rationed to the two poster-scale
+            headlines (hero + closing band) — see docs/decisions.md. */}
         <link
-          href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,500;1,600;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Anton&family=Playfair+Display:ital,wght@1,500;1,600;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap"
           rel="stylesheet"
         />
       </head>

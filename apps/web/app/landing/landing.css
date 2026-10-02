@@ -3,7 +3,8 @@
    Scope: everything lives under .lp so the app shell, docs and the
    (not-yet-migrated) About page keep their own systems untouched.
 
-   Moves, not values (see landing-page.md audit + design.md §marketing):
+   Moves, not values (sources: a brophybox.com teardown and an
+   earlier keyslagos.estate teardown; both audit docs since deleted):
    - White paper ground, forest ink, section-level inversion (no dark mode).
    - Zero border-radius: 45° clip-cut corners + 2px offset outline frames
      stand in for rounding and for elevation shadows (none exist here).
@@ -72,6 +73,15 @@
   --lp-fs-sm: 0.9375rem;
   --lp-fs-eyebrow: 0.8125rem;
 
+  /* Poster scale — the 2026-10-02 re-choreography (docs/decisions.md).
+     The condensed face carries the two poster headlines ONLY (hero,
+     closing band); everything else keeps the Cabinet Grotesk scale
+     above. Anton has one weight and very narrow sidebearings, so it
+     holds together at sizes where Cabinet Grotesk would overflow. */
+  --lp-condensed: "Anton", "Cabinet Grotesk", ui-sans-serif, sans-serif;
+  --lp-fs-poster: clamp(4.5rem, 1rem + 17vw, 16rem);
+  --lp-fs-poster-sm: clamp(3rem, 1rem + 10vw, 9rem);
+
   /* Spacing — 8px base; the biggest step is spent once (hero + CTA band) */
   --lp-sp-2: 0.5rem;
   --lp-sp-3: 0.75rem;
@@ -84,6 +94,21 @@
   --lp-sp-xxl: clamp(6rem, 13vw, 11rem);
   --lp-gutter: clamp(1.25rem, 4vw, 2.5rem);
   --lp-container: 1240px;
+
+  /* Radius + elevation — ADDED 2026-10-02. The system shipped with
+     `border-radius: 0` and no shadows (45° clip-cuts + 2px offset frames
+     stood in for both). The re-choreography adopts the reference spec's
+     rounding and elevation on the NEW surfaces only; every existing
+     clip-cut card below is untouched, so the two devices coexist
+     intentionally rather than by drift. See docs/decisions.md. */
+  --lp-r-pill: 9999px;
+  --lp-r-card: 2rem;
+  --lp-r-lg: 1rem;
+  --lp-r-md: 0.75rem;
+  /* Shadows retinted from the spec's pure black to our forest ink, so
+     elevation reads as part of the brand rather than a generic drop. */
+  --lp-sh-card: 0 40px 100px rgba(12, 59, 49, 0.45);
+  --lp-sh-glow: 0 12px 40px rgba(200, 240, 72, 0.15);
 
   /* Shape — no radius anywhere; 45° cuts instead */
   --lp-cut-sm: 12px;

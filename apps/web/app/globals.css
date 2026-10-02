@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
 /* ============================================================
-   VELA design system (single source of truth: design.md).
-   Never hardcode hex in components — reference these tokens.
+   VELA app design system — tokens + app-shell layout for the wallet
+   pages (/dashboard, /settings, /verify, /policies, /cleanup, /app)
+   and the extension popup. These are the system of record now: the
+   former design.md was deleted 2026-10-02, so this file is the only
+   definition. Never hardcode hex in components — use these tokens.
+
+   NOT the marketing system. The landing + about pages use the
+   scoped "paper & signals" system in app/landing/landing.css (.lp),
+   which deliberately never touches :root here.
    ============================================================ */
 :root {
   /* Surfaces (darkest → lightest) */
