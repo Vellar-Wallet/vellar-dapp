@@ -79,7 +79,7 @@
      above. Anton has one weight and very narrow sidebearings, so it
      holds together at sizes where Cabinet Grotesk would overflow. */
   --lp-condensed: "Anton", "Cabinet Grotesk", ui-sans-serif, sans-serif;
-  --lp-fs-poster: clamp(4.5rem, 1rem + 17vw, 16rem);
+  --lp-fs-poster: clamp(3.5rem, 1rem + 12vw, 11.5rem);
   --lp-fs-poster-sm: clamp(3rem, 1rem + 10vw, 9rem);
 
   /* Spacing — 8px base; the biggest step is spent once (hero + CTA band) */
@@ -816,7 +816,12 @@
 }
 .lp .lp-hero-scene .lp-hero {
   width: 100%;
-  padding-block: 0;
+  /* Fill the whole scene so the waves background does too, and clear the
+     floating nav (72px) so the eyebrow never tucks under it. */
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  padding-block: 72px 0;
 }
 /* Inverted hero: the paper-ground type colours flip. */
 .lp .lp-hero-scene h1,
@@ -824,7 +829,18 @@
   color: var(--lp-on-dark);
 }
 .lp .lp-hero-scene .lp-lead {
-  color: var(--lp-on-dark-soft);
+  /* Full-strength, not the 78% "soft" token: the waves move behind this
+     paragraph, so its contrast is the worst case across every frame and
+     the soft token measured 3.82:1 at its weakest. */
+  color: var(--lp-on-dark);
+}
+/* The waves were drawn for the old paper ground, where bright greens read
+   as soft. On ink they glare: measured against the rendered pixels, white
+   body copy fell to 1.57:1 and the headline to 2.33:1. Letting them show
+   through at partial opacity keeps the motion and the colour but makes
+   them a dark texture the type can sit on. */
+.lp .lp-hero-scene .lp-hero-waves {
+  opacity: var(--lp-hero-waves-strength, 0.42);
 }
 .lp .lp-scene-outer--hero .lp-hero-scene {
   position: sticky;
@@ -2315,7 +2331,10 @@
 
 /* Poster headline — the condensed face at display scale. Rationed to
    the hero and the closing band. */
-.lp-poster {
+.lp .lp-poster {
+  /* `.lp` prefix is load-bearing: `.lp h1, .lp h2` (0,1,1) would otherwise
+     beat a bare .lp-poster (0,1,0) and silently swap this back to the
+     display face at the display size. */
   font-family: var(--lp-condensed);
   font-weight: 400;
   font-size: var(--lp-fs-poster);
@@ -2324,7 +2343,7 @@
   text-transform: uppercase;
   margin: 0;
 }
-.lp-poster--sm {
+.lp .lp-poster--sm {
   font-size: var(--lp-fs-poster-sm);
   line-height: 0.9;
 }
@@ -2376,11 +2395,15 @@
   color: var(--lp-lime);
   margin-bottom: var(--lp-sp-6);
 }
-.lp .lp-hero-poster {
+.lp .lp-hero .lp-hero-poster {
   /* Poster scale needs its own measure: 13ch (the old h1 cap) would
      break "Let agents pay your API." into five near-empty lines at the
      condensed face's width. */
   max-width: 16ch;
+  /* Poster leading (0.82) is tighter than the italic serif's descenders,
+     so without this the "p" and "y" of the emphasis word land on the
+     paragraph below. */
+  padding-bottom: 0.14em;
   margin-bottom: var(--lp-sp-6);
 }
 .lp .lp-hero-poster em {
@@ -2446,11 +2469,6 @@
 .lp .lp-nav-outer:not(.is-scrolled) .lp-btn--forest {
   background: var(--lp-lime);
   color: var(--lp-ink);
-}
-/* The GitHub star button's outline is ink-coloured; on the ink hero it
-   needs the light treatment too. */
-.lp .lp-nav-outer:not(.is-scrolled) .lp-star-btn {
-  color: var(--lp-on-dark);
 }
 
 /* ---- Proof marquee: tilted dual band --------------------------------
@@ -2593,4 +2611,15 @@
   .lp-scrub-inner {
     height: auto;
   }
+}
+
+/* The hero's outline button: ink text was right on the paper-ground hero
+   and is wrong on the dimmed-waves ink one. */
+.lp .lp-hero-scene .lp-btn--outline {
+  color: var(--lp-on-dark);
+  border-color: var(--lp-on-dark-faint);
+}
+.lp .lp-hero-scene .lp-btn--outline:hover {
+  background: var(--lp-on-dark);
+  color: var(--lp-ink);
 }
