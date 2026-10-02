@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, useMotionValue, useScroll, useTransform, type MotionValue } from "motion/react";
+import { motion, useScroll, useTransform } from "motion/react";
 import { useRef, type ReactNode } from "react";
 import { useMediaQuery } from "./use-media";
 
@@ -40,20 +40,9 @@ import { useMediaQuery } from "./use-media";
 
 const REDUCED_QUERY = "(prefers-reduced-motion: reduce)";
 
-/** Below this width a scrubbed scene does not pin: its content (a header
- *  stacked over a panel) is taller than a phone viewport, and pinning
- *  content taller than the screen clips it. Matches the breakpoint the
- *  previous GSAP trace used, so small-screen behaviour is unchanged. */
-const NARROW_QUERY = "(max-width: 800px)";
-
 /** True when the visitor prefers reduced motion. Hydration-safe. */
 export function useReduced() {
   return useMediaQuery(REDUCED_QUERY);
-}
-
-/** True when the viewport is too narrow to pin a scrubbed scene. */
-export function useNarrow() {
-  return useMediaQuery(NARROW_QUERY);
 }
 
 /**
@@ -116,13 +105,8 @@ export function Curtain({
   children: ReactNode;
   diagonal?: boolean;
   /** Pull up over the previous scene's last viewport. Only meaningful
-   *  when the block before is a sticky scene; otherwise leave it off.
-   *
-   *  `"wide"` applies the overlap only above 800px. Use it after a scrubbed
-   *  scene: below that width the scene is static (see ScrubScene), there is
-   *  no pinned viewport to cover, and an overlap would just slide this block
-   *  up over the scene's own content. */
-  overlap?: boolean | "wide";
+   *  when the block before is a sticky scene; otherwise leave it off. */
+  overlap?: boolean;
   tone?: "ink" | "paper" | "tint" | "lime";
   className?: string;
 }) {
@@ -130,97 +114,10 @@ export function Curtain({
     "lp-curtain",
     `lp-curtain--${tone}`,
     diagonal && "lp-curtain--diagonal",
-    overlap === "wide" ? "lp-curtain--overlap-wide" : overlap && "lp-curtain--overlap",
+    overlap && "lp-curtain--overlap",
     className,
   ]
     .filter(Boolean)
     .join(" ");
   return <div className={cls}>{children}</div>;
-}
-
-/** What a scrub scene hands its children. Always real motion values: in a
- *  static scene (reduced motion, or too narrow to pin) they are pinned to
- *  the finished state (`read` 1, `exit` 0), so children never branch on
- *  whether hooks may run and nothing has to be faked. `reduced` tells a
- *  child whether to skip applying them as styles at all. */
-export type ScrubRenderProps = {
-  reduced: boolean;
-  read: MotionValue<number>;
-  exit: MotionValue<number>;
-};
-
-type ScrubSceneProps = {
-  children: (p: ScrubRenderProps) => ReactNode;
-  height?: string;
-  id?: string;
-  className?: string;
-};
-
-/**
- * A two-phase scrubbed scene: content advances through phase A, then the
- * whole scene recedes in phase B while the next curtain covers it.
- *
- * Phase A (progress 0→0.5) is handed to the child as `read` so each scene
- * decides what "advancing" means. Phase B (0.5→1) is uniform:
- * scale 1→0.9, y 0→-40px, blur 0→4px, brightness 1→0.5, with the header
- * and body pulling apart (-150px / +150px) and fading out by 60%.
- *
- * Spec §4.6 values kept exactly. Blur is capped at the spec's 4px, which
- * is also the performance ceiling for a full-screen filter.
- */
-export function ScrubScene(props: ScrubSceneProps) {
-  const reduced = useReduced();
-  const narrow = useNarrow();
-  return reduced || narrow ? <StaticScrubScene {...props} /> : <LiveScrubScene {...props} />;
-}
-
-function StaticScrubScene({ children, id, className = "" }: ScrubSceneProps) {
-  // Finished-state values (see ScrubRenderProps).
-  const read = useMotionValue(1);
-  const exit = useMotionValue(0);
-  return (
-    <section id={id} className={`lp-scrub lp-scrub--static ${className}`.trim()}>
-      <div className="lp-scrub-inner">{children({ reduced: true, read, exit })}</div>
-    </section>
-  );
-}
-
-function LiveScrubScene({ children, height = "320vh", id, className = "" }: ScrubSceneProps) {
-  const ref = useRef<HTMLElement>(null);
-  // start/start→end/end: the full height of the wrapper scrolls through,
-  // giving (height - 100vh) of actual scrubbing.
-  const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
-  // Phase A drives the content; phase B drives the scene's exit.
-  const read = useTransform(scrollYProgress, [0, 0.5], [0, 1]);
-  const exit = useTransform(scrollYProgress, [0.5, 1], [0, 1]);
-  const scale = useTransform(exit, [0, 1], [1, 0.9]);
-  const y = useTransform(exit, [0, 1], ["0px", "-40px"]);
-  const blur = useTransform(exit, [0, 1], [0, 4]);
-  const bright = useTransform(exit, [0, 1], [1, 0.5]);
-  const filter = useTransform([blur, bright], ([b, r]) => `blur(${b}px) brightness(${r})`);
-
-  return (
-    <section ref={ref} id={id} className={`lp-scrub ${className}`.trim()} style={{ height }}>
-      <div className="lp-scene-sticky lp-scrub-sticky">
-        <motion.div style={{ y, scale, filter }} className="lp-scrub-inner">
-          {children({ reduced: false, read, exit })}
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-/**
- * The paired exit transforms for a scrub scene's header and body: they
- * pull apart vertically and fade as the scene recedes (spec §4.6).
- *
- * Takes the scene's `exit` progress, so this stays an ordinary
- * unconditional hook. A static scene hands it the finished-state value.
- */
-export function useScrubExit(exit: MotionValue<number>) {
-  const headY = useTransform(exit, [0, 0.8], ["0px", "-150px"]);
-  const headO = useTransform(exit, [0, 0.6], [1, 0]);
-  const bodyY = useTransform(exit, [0, 0.8], ["0px", "150px"]);
-  const bodyO = useTransform(exit, [0, 0.6], [1, 0]);
-  return { headY, headO, bodyY, bodyO };
 }

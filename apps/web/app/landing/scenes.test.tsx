@@ -1,9 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Curtain, HeroScene, ScrubScene, type ScrubRenderProps } from "./scenes";
+import { Curtain, HeroScene } from "./scenes";
 import { Reveal } from "./reveal";
 import { ProofStrip } from "./proof-strip";
-import { TraceSection } from "./trace";
 
 /** jsdom has no matchMedia. Install one that answers per query, so a test
  *  can say "reduced motion" or "narrow" independently. */
@@ -117,15 +116,6 @@ describe("Curtain", () => {
     expect((container.children[4] as HTMLElement).className).toContain("lp-curtain--tint");
   });
 
-  it('"wide" overlaps only where the scene before it pins, never as a plain overlap', () => {
-    // Below 800px the trace is static, so a plain -100vh overlap slid the next
-    // block up over the trace's own content and hid it.
-    const { container } = render(<Curtain overlap="wide">x</Curtain>);
-    const el = container.firstElementChild as HTMLElement;
-    expect(el.className).toContain("lp-curtain--overlap-wide");
-    expect(el.className).not.toMatch(/lp-curtain--overlap(?!-)/);
-  });
-
   it("renders identical markup whatever the reduced-motion preference (hydration-safe)", () => {
     mockMedia({ reduced: false });
     const a = render(<Curtain diagonal>x</Curtain>).container.innerHTML;
@@ -157,69 +147,6 @@ describe("HeroScene", () => {
     );
     expect(container.querySelector(".lp-scene-sticky")).toBeNull();
     expect(screen.getByText("hero")).toBeDefined();
-  });
-});
-
-describe("ScrubScene", () => {
-  it("is a tall pinned scene on a wide screen with motion allowed", () => {
-    mockMedia({});
-    const probe = vi.fn((_p: ScrubRenderProps) => <p>body</p>);
-    const { container } = render(<ScrubScene id="s">{probe}</ScrubScene>);
-    const section = container.querySelector("section") as HTMLElement;
-    expect(section.style.height).toBe("320vh");
-    expect(container.querySelector(".lp-scene-sticky")).not.toBeNull();
-    expect(probe.mock.calls[0]![0].reduced).toBe(false);
-  });
-
-  it.each([
-    ["reduced motion", { reduced: true }],
-    ["a narrow screen", { narrow: true }],
-  ])("renders statically, finished, for %s", (_name, media) => {
-    mockMedia(media);
-    const probe = vi.fn((_p: ScrubRenderProps) => <p>body</p>);
-    const { container } = render(<ScrubScene id="s">{probe}</ScrubScene>);
-    const section = container.querySelector("section") as HTMLElement;
-    expect(section.style.height).toBe("");
-    expect(section.className).toContain("lp-scrub--static");
-    expect(container.querySelector(".lp-scene-sticky")).toBeNull();
-    const props = probe.mock.calls[0]![0];
-    expect(props.reduced).toBe(true);
-    // pinned to the finished state, as real motion values
-    expect(props.read.get()).toBe(1);
-    expect(props.exit.get()).toBe(0);
-  });
-
-  it("forwards id and className so a scene keeps its scoped styling", () => {
-    mockMedia({});
-    const { container } = render(
-      <ScrubScene id="trace" className="lp-trace">
-        {() => <p>x</p>}
-      </ScrubScene>,
-    );
-    const section = container.querySelector("section") as HTMLElement;
-    expect(section.id).toBe("trace");
-    expect(section.className).toContain("lp-trace");
-  });
-});
-
-describe("TraceSection", () => {
-  const VALUES = ["402", "0.05 USDC", "✓ valid", "✓ fee sponsored", "200 OK"];
-
-  it("shows the whole finished request when static, with no scroll styles applied", () => {
-    mockMedia({ reduced: true });
-    const { container } = render(<TraceSection />);
-    for (const v of VALUES) expect(screen.getByText(v)).toBeDefined();
-    for (const row of Array.from(container.querySelectorAll(".lp-trace-row"))) {
-      expect((row as HTMLElement).style.opacity).toBe("");
-    }
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toMatch(/vellar settles it/i);
-  });
-
-  it("keeps every row and the full copy in the animated version too", () => {
-    mockMedia({});
-    render(<TraceSection />);
-    for (const v of VALUES) expect(screen.getByText(v)).toBeDefined();
-    expect(screen.getByText(/the resource server returns 402/i)).toBeDefined();
   });
 });
 

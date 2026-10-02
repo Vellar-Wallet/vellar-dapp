@@ -1396,106 +1396,6 @@
 
 /* ---- 402 → 200 pinned trace (the one cinematic moment) --------- */
 
-.lp .lp-trace {
-  background: var(--lp-ink);
-  color: var(--lp-on-dark);
-  /* The old standalone band had a cut top-left corner. The scene now
-     sits inside a curtain on the same ink, where a cut would be
-     invisible and only add a clip-path to a sticky ancestor. */
-}
-.lp .lp-trace-pin {
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding-block: var(--lp-sp-lg);
-}
-.lp .lp-trace-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  gap: var(--lp-sp-12);
-  align-items: center;
-}
-.lp .lp-trace h2 {
-  max-width: 12ch;
-}
-.lp .lp-trace h2 em {
-  color: var(--lp-mint);
-}
-.lp .lp-trace .lp-lead {
-  color: var(--lp-on-dark-soft);
-  margin-top: var(--lp-sp-6);
-}
-.lp .lp-trace-panel {
-  position: relative;
-  background: var(--lp-line-dark); /* the 1px border */
-  clip-path: var(--lp-clip-br-md);
-  padding: var(--lp-sp-6);
-}
-.lp .lp-trace-panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  /* opaque equivalent of the old 4%-white wash — a translucent fill
-     would let the border colour bleed through */
-  background: color-mix(in srgb, var(--lp-on-dark) 4%, var(--lp-ink));
-  clip-path: var(--lp-clip-br-md-in1);
-}
-.lp .lp-trace-panel .head {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--lp-on-dark-faint);
-  margin-bottom: var(--lp-sp-4);
-}
-.lp .lp-trace-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--lp-sp-4);
-  padding: 12px 2px;
-  border-bottom: 1px solid var(--lp-line-dark);
-  font-family: var(--lp-mono);
-  font-size: 0.875rem;
-  white-space: nowrap;
-}
-.lp .lp-trace-row:last-child {
-  border-bottom: 0;
-}
-.lp .lp-trace-row span {
-  color: var(--lp-on-dark-soft);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lp .lp-trace-row b {
-  font-weight: 700;
-  color: var(--lp-on-dark);
-}
-.lp .lp-trace-row b.ok {
-  color: var(--lp-mint);
-}
-.lp .lp-trace-row b.bad {
-  color: var(--lp-coral);
-}
-.lp .lp-trace-bar {
-  height: 4px;
-  background: var(--lp-line-dark);
-  margin-top: var(--lp-sp-6);
-  overflow: hidden;
-}
-.lp .lp-trace-bar i {
-  /* Full by default (the no-JS / reduced-motion state); motion.tsx scales it
-     from 0 and scrubs it with the pinned timeline. */
-  display: block;
-  height: 100%;
-  width: 100%;
-  background: var(--lp-mint);
-}
-
 /* ---- Platform cards ------------------------------------------- */
 
 .lp .lp-plat {
@@ -1972,13 +1872,6 @@
   .lp .lp-proofcard {
     flex-basis: calc(50% - var(--lp-sp-4) / 2);
   }
-  .lp .lp-trace-grid {
-    grid-template-columns: 1fr;
-    gap: var(--lp-sp-8);
-  }
-  .lp .lp-trace-pin {
-    min-height: 0;
-  }
   .lp .lp-play {
     grid-template-columns: 1fr;
     gap: var(--lp-sp-8);
@@ -2175,12 +2068,6 @@
 .lp-curtain--overlap {
   margin-top: -100vh;
 }
-/* The same overlap, but only where the scene before it actually pins. */
-@media (min-width: 801px) {
-  .lp-curtain--overlap-wide {
-    margin-top: -100vh;
-  }
-}
 /* The slanted seam the shrinking hero passes under: the top edge rises
    from left (8vw down) to right (0). */
 .lp-curtain--diagonal {
@@ -2197,32 +2084,6 @@
 }
 
 /* A two-phase scrubbed scene. */
-.lp-scrub {
-  position: relative;
-  z-index: 10;
-  background: var(--lp-ink);
-}
-.lp-scrub--static {
-  height: auto;
-  padding-block: var(--lp-sp-xl);
-}
-.lp-scrub-sticky {
-  z-index: 0;
-}
-.lp-scrub-inner {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  height: 100%;
-  width: 100%;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  transform-origin: center center;
-}
-.lp-scrub--static .lp-scrub-inner {
-  height: auto;
-}
 
 /* Poster headline — the condensed face at display scale. Rationed to
    the hero and the closing band. */
@@ -2489,36 +2350,12 @@
     height: auto;
     padding-block: var(--lp-sp-xl);
   }
-  .lp-curtain--overlap,
-  .lp-curtain--overlap-wide {
+  .lp-curtain--overlap {
     margin-top: 0;
   }
   .lp-curtain--diagonal {
     clip-path: none;
     padding-top: 0;
-  }
-}
-
-/* Scrubbed scenes are static under reduced motion AND below 800px, where
-   their content (a header stacked over a panel) is taller than a phone
-   viewport and cannot pin. ScrubScene makes the same choice in JS; stating
-   it here as well means the right layout is there from the first paint,
-   before any script has run, instead of flashing a 320vh pinned scene. The
-   hero is not in this list: it pins at every width.
-
-   `!important` only on the height, which is an inline style from the
-   `height` prop. */
-@media (prefers-reduced-motion: reduce), (max-width: 800px) {
-  .lp-scrub {
-    height: auto !important;
-    padding-block: var(--lp-sp-xl);
-  }
-  .lp-scrub .lp-scene-sticky {
-    position: static;
-    height: auto;
-  }
-  .lp-scrub-inner {
-    height: auto;
   }
 }
 
@@ -3050,7 +2887,6 @@
       no per-surface cases. */
 .lp .lp-hero-scene :focus-visible,
 .lp .lp-ground--ink :focus-visible,
-.lp .lp-scrub :focus-visible,
 .lp .lp-nav-outer--float:not(.is-scrolled) :focus-visible {
   outline: 2px solid var(--lp-lime);
   outline-offset: 3px;

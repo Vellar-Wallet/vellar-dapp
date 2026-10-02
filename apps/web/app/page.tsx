@@ -2,7 +2,6 @@ import { LpShell } from "./landing/shell";
 import { HeroScene, Curtain } from "./landing/scenes";
 import { Hero } from "./landing/hero";
 import { X402Pillars } from "./landing/pillars";
-import { TraceSection } from "./landing/trace";
 import { ProofStrip } from "./landing/proof-strip";
 import { TwoSides } from "./landing/platforms";
 import { VsCodeExtension } from "./landing/vscode";
@@ -19,8 +18,8 @@ import { SdkCta } from "./landing/cta";
 // Structure (reference spec §3.2, re-choreography recorded in
 // docs/decisions.md): the hero is a sticky scene that shrinks and tilts
 // away while everything after it rises as one curtain with a diagonal top
-// edge. The trace section is the pinned, scrubbed moment inside that
-// curtain; the playground is a second curtain in the loud accent.
+// edge. Sections alternate their own grounds (white, off-white, ink); the
+// playground is a second curtain in the loud accent.
 
 export default function Landing() {
   return (
@@ -32,23 +31,17 @@ export default function Landing() {
 
         <Curtain diagonal overlap tone="paper">
           <X402Pillars />
-          <TraceSection />
-          {/* Rises over the trace scene's last viewport, so the scene's
-              exit plays underneath it (reference spec §3.2). "wide": below
-              800px the trace is static, so there is nothing to rise over. */}
-          <Curtain overlap="wide" tone="tint">
-            <ProofStrip />
-            <TwoSides />
-            <VsCodeExtension />
-            {/* The accent curtain: a wavy edge that surfs in as it rises
-                (reference spec §4.7). Nothing sticky sits before it, so it
-                does not overlap the section above. */}
-            <Curtain tone="lime" overlap={false}>
-              <Playground />
-            </Curtain>
-            <FaqSection />
-            <SdkCta />
+          <ProofStrip />
+          <TwoSides />
+          <VsCodeExtension />
+          {/* The accent curtain: a wavy edge that surfs in as it rises
+              (reference spec §4.7). Nothing sticky sits before it, so it
+              does not overlap the section above. */}
+          <Curtain tone="lime" overlap={false}>
+            <Playground />
           </Curtain>
+          <FaqSection />
+          <SdkCta />
         </Curtain>
       </div>
     </LpShell>
