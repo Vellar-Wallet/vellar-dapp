@@ -1,7 +1,14 @@
 "use client";
 
-import { motion, useReducedMotion, useScroll, useTransform, type MotionValue } from "motion/react";
-import { useRef, type ReactNode } from "react";
+import {
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useScroll,
+  useTransform,
+  type MotionValue,
+} from "motion/react";
+import { useRef, useSyncExternalStore, type ReactNode } from "react";
 
 /**
  * Sticky-scene and curtain primitives — the page's layering architecture.
@@ -27,6 +34,29 @@ import { useRef, type ReactNode } from "react";
  * dropped entirely, so nothing pins, scales or blurs and the page reads
  * as an ordinary stack of sections.
  */
+
+/** Below this width a scrubbed scene does not pin: its content (a header
+ *  stacked over a panel) is taller than a phone viewport, and pinning
+ *  content taller than the screen clips it. Matches the breakpoint the
+ *  previous GSAP trace used, so small-screen behaviour is unchanged. */
+const NARROW_QUERY = "(max-width: 800px)";
+
+function subscribeNarrow(cb: () => void) {
+  if (typeof window.matchMedia !== "function") return () => {};
+  const mq = window.matchMedia(NARROW_QUERY);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+/** True when the viewport is too narrow to pin a scrubbed scene. Server
+ *  and first client render both say false, so hydration matches. */
+export function useNarrow() {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  );
+}
 
 /**
  * The opening scene: pins for one viewport while shrinking, tilting and
@@ -110,26 +140,39 @@ export function Curtain({
  * Spec §4.6 values kept exactly. Blur is capped at the spec's 4px, which
  * is also the performance ceiling for a full-screen filter.
  */
-export type ScrubRenderProps =
-  | { reduced: true; read: null; exit: null }
-  | { reduced: false; read: MotionValue<number>; exit: MotionValue<number> };
+/** What a scrub scene hands its children. Always real motion values: in a
+ *  static scene (reduced motion, or too narrow to pin) they are pinned to
+ *  the finished state (`read` 1, `exit` 0), so children never branch on
+ *  whether hooks may run and nothing has to be faked. `reduced` tells a
+ *  child whether to skip applying them as styles at all. */
+export type ScrubRenderProps = {
+  reduced: boolean;
+  read: MotionValue<number>;
+  exit: MotionValue<number>;
+};
 
 export function ScrubScene({
   children,
   height = "320vh",
   id,
+  className = "",
 }: {
   children: (p: ScrubRenderProps) => ReactNode;
   height?: string;
   id?: string;
+  className?: string;
 }) {
   const ref = useRef<HTMLElement>(null);
-  const reduced = useReducedMotion();
+  const narrow = useNarrow();
+  const reduced = useReducedMotion() || narrow;
   // start/start→end/end: the full height of the wrapper scrolls through,
   // giving (height - 100vh) of actual scrubbing.
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
   // Phase A drives the content; phase B drives the scene's exit.
   const read = useTransform(scrollYProgress, [0, 0.5], [0, 1]);
+  // Finished-state values for the static branch (see ScrubRenderProps).
+  const doneRead = useMotionValue(1);
+  const doneExit = useMotionValue(0);
   const exit = useTransform(scrollYProgress, [0.5, 1], [0, 1]);
   const scale = useTransform(exit, [0, 1], [1, 0.9]);
   const y = useTransform(exit, [0, 1], ["0px", "-40px"]);
@@ -139,14 +182,14 @@ export function ScrubScene({
 
   if (reduced) {
     return (
-      <section id={id} className="lp-scrub lp-scrub--static">
-        <div className="lp-scrub-inner">{children({ reduced: true, read: null, exit: null })}</div>
+      <section id={id} className={`lp-scrub lp-scrub--static ${className}`.trim()}>
+        <div className="lp-scrub-inner">{children({ reduced: true, read: doneRead, exit: doneExit })}</div>
       </section>
     );
   }
 
   return (
-    <section ref={ref} id={id} className="lp-scrub" style={{ height }}>
+    <section ref={ref} id={id} className={`lp-scrub ${className}`.trim()} style={{ height }}>
       <div className="lp-scene-sticky lp-scrub-sticky">
         <motion.div style={{ y, scale, filter }} className="lp-scrub-inner">
           {children({ reduced: false, read, exit })}

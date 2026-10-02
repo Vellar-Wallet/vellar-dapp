@@ -1505,7 +1505,9 @@
 .lp .lp-trace {
   background: var(--lp-ink);
   color: var(--lp-on-dark);
-  clip-path: var(--lp-clip-tl-lg);
+  /* The old standalone band had a cut top-left corner. The scene now
+     sits inside a curtain on the same ink, where a cut would be
+     invisible and only add a clip-path to a sticky ancestor. */
 }
 .lp .lp-trace-pin {
   min-height: 100svh;
