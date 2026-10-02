@@ -31,8 +31,8 @@ export function Hero() {
         <Reveal delay={0.4} y={20}>
           <p className="lp-lead">
             Vellar verifies and settles x402 payments on Stellar and lists every paid endpoint in a
-            searchable Bazaar. Charge per request for any API or MCP tool, and let AI agents find you
-            and pay in USDC. Open source, non-custodial, fees sponsored.
+            searchable Bazaar. Charge per request for any API or MCP tool, and let AI agents find
+            you and pay in USDC. Open source, non-custodial, fees sponsored.
           </p>
         </Reveal>
 

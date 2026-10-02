@@ -32,10 +32,7 @@ function TraceRow({
   const x = useTransform(read, [from, to], [-10, 0]);
   const tone = "tone" in row ? row.tone : undefined;
   return (
-    <motion.div
-      className="lp-trace-row"
-      style={live ? { opacity: lit, x } : undefined}
-    >
+    <motion.div className="lp-trace-row" style={live ? { opacity: lit, x } : undefined}>
       <span>{row.label}</span>
       <b className={tone}>{row.value}</b>
     </motion.div>
@@ -94,7 +91,9 @@ function TraceBody({
             <TraceRow key={r.label} row={r} index={i} read={read} live={live} />
           ))}
           <div className="lp-trace-bar">
-            <motion.i style={live ? { scaleX: barScale, transformOrigin: "left center" } : undefined} />
+            <motion.i
+              style={live ? { scaleX: barScale, transformOrigin: "left center" } : undefined}
+            />
           </div>
         </motion.div>
       </div>

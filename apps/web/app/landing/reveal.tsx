@@ -66,14 +66,16 @@ export function Reveal({
     <Tag
       ref={ref}
       className={`lp-reveal${shown ? " is-in" : ""}${className ? ` ${className}` : ""}`}
-      style={{
-        transitionDuration: `${duration}s`,
-        transitionDelay: `${delay}s`,
-        // Only the distance is inline; the hidden state itself is CSS so
-        // the reduced-motion override can win.
-        "--lp-reveal-y": `${y}px`,
-        transform: shown ? undefined : `translateY(${y}px)`,
-      } as React.CSSProperties}
+      style={
+        {
+          transitionDuration: `${duration}s`,
+          transitionDelay: `${delay}s`,
+          // Only the distance is inline; the hidden state itself is CSS so
+          // the reduced-motion override can win.
+          "--lp-reveal-y": `${y}px`,
+          transform: shown ? undefined : `translateY(${y}px)`,
+        } as React.CSSProperties
+      }
       {...rest}
     >
       {children}

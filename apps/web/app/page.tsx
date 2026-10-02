@@ -30,15 +30,19 @@ export default function Landing() {
           <Hero />
         </HeroScene>
 
-        <Curtain diagonal>
+        <Curtain diagonal overlap>
           <X402Pillars />
           <TraceSection />
-          <ProofStrip />
-          <TwoSides />
-          <VsCodeExtension />
-          <Playground />
-          <FaqSection />
-          <SdkCta />
+          {/* Rises over the trace scene's last viewport, so the scene's
+              exit plays underneath it (reference spec §3.2). */}
+          <Curtain>
+            <ProofStrip />
+            <TwoSides />
+            <VsCodeExtension />
+            <Playground />
+            <FaqSection />
+            <SdkCta />
+          </Curtain>
         </Curtain>
       </div>
     </LpShell>

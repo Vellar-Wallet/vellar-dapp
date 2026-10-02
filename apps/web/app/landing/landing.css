@@ -830,10 +830,7 @@
   position: sticky;
   top: 0;
 }
-.lp-scene-outer--static .lp-hero-scene {
-  height: auto;
-  padding-block: var(--lp-sp-xl);
-}
+
 /* GradientWaves as the hero's full-bleed background (see hero-waves.tsx),
    sitting behind everything in the section. */
 .lp .lp-hero-waves {
@@ -1172,13 +1169,13 @@
 }
 /* Same color rotation as .lp-pillar, so this section reads as the same
    weight of "real thing" rather than a lighter afterthought. */
-.lp .lp-proofcard:nth-child(2) {
+.lp .lp-proofcard:nth-child(4n + 2) {
   background: var(--lp-sun-soft);
 }
-.lp .lp-proofcard:nth-child(3) {
+.lp .lp-proofcard:nth-child(4n + 3) {
   background: var(--lp-lime-soft);
 }
-.lp .lp-proofcard:nth-child(4) {
+.lp .lp-proofcard:nth-child(4n) {
   background: var(--lp-ink);
 }
 .lp .lp-proofcard::before {
@@ -1189,7 +1186,7 @@
   background: var(--lp-line);
   clip-path: var(--lp-clip-tl-sm);
 }
-.lp .lp-proofcard:nth-child(4)::before {
+.lp .lp-proofcard:nth-child(4n)::before {
   background: var(--lp-ink);
 }
 .lp .lp-proofcard:hover {
@@ -1237,13 +1234,13 @@
 }
 /* Fourth card (mainnet) sits on --lp-ink like the inverted sections do — every
    text color on it needs to flip along with the background. */
-.lp .lp-proofcard:nth-child(4) .lp-proofcard-label {
+.lp .lp-proofcard:nth-child(4n) .lp-proofcard-label {
   color: rgba(255, 255, 255, 0.62);
 }
-.lp .lp-proofcard:nth-child(4) .lp-proofcard-value {
+.lp .lp-proofcard:nth-child(4n) .lp-proofcard-value {
   color: var(--lp-paper);
 }
-.lp .lp-proofcard:nth-child(4) .lp-proofcard-go {
+.lp .lp-proofcard:nth-child(4n) .lp-proofcard-go {
   color: rgba(255, 255, 255, 0.72);
 }
 
@@ -2240,10 +2237,6 @@
 .lp-scene-outer--hero {
   height: 200vh;
 }
-/* Reduced motion: collapse to content height, nothing pins. */
-.lp-scene-outer--static {
-  height: auto;
-}
 
 .lp-scene-sticky {
   position: sticky;
@@ -2458,4 +2451,146 @@
    needs the light treatment too. */
 .lp .lp-nav-outer:not(.is-scrolled) .lp-star-btn {
   color: var(--lp-on-dark);
+}
+
+/* ---- Proof marquee: tilted dual band --------------------------------
+   Reference spec §4.5. Values kept: -3deg tilt, 1.05 scale, 120vw band so
+   the tilted ends never show, two rows drifting opposite ways at 20s/25s
+   linear, the second offset -20vw so cards never line up. */
+
+.lp .lp-sec--proof {
+  /* The band is wider than the page; clip it on x only so the sticky scene
+     above is unaffected (see scenes.tsx rule 2). */
+  overflow-x: clip;
+  padding-bottom: var(--lp-sp-xl);
+}
+.lp .lp-marquee-stage {
+  position: relative;
+  overflow-x: clip;
+  padding-block: var(--lp-sp-12);
+}
+.lp .lp-marquee-band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lp-sp-6);
+  width: 120vw;
+  margin-left: -10vw;
+  transform: rotate(-3deg) scale(1.05);
+  transform-origin: center;
+}
+.lp .lp-marquee {
+  display: flex;
+  width: max-content;
+  animation: lp-marquee 20s linear infinite;
+  will-change: transform;
+}
+.lp .lp-marquee--reverse {
+  animation-name: lp-marquee-reverse;
+  margin-left: -20vw;
+}
+@keyframes lp-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes lp-marquee-reverse {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+/* A moving link is hard to click and impossible to read for some users, so
+   the band stops while a card is hovered or holds keyboard focus. */
+.lp .lp-marquee-band:hover .lp-marquee,
+.lp .lp-marquee-band:focus-within .lp-marquee {
+  animation-play-state: paused;
+}
+
+/* Marquee cards: the existing proof card, sized as a band item. */
+.lp .lp-proofcard--marquee {
+  flex: 0 0 auto;
+  width: 18rem;
+  min-height: 11rem;
+  margin-inline: var(--lp-sp-4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No drift, no tilt, no clones: a plain wrapping grid of the four real
+     cards, fully legible and fully clickable. */
+  .lp .lp-marquee-band {
+    width: auto;
+    margin-left: 0;
+    transform: none;
+    padding-inline: var(--lp-gutter);
+  }
+  .lp .lp-marquee {
+    animation: none;
+    width: auto;
+    margin-left: 0;
+    flex-wrap: wrap;
+    gap: var(--lp-sp-4);
+  }
+  .lp .lp-marquee .lp-proofcard--marquee[aria-hidden="true"] {
+    display: none;
+  }
+  .lp .lp-marquee--reverse {
+    display: none;
+  }
+  .lp .lp-proofcard--marquee {
+    margin-inline: 0;
+    flex: 1 1 14rem;
+    width: auto;
+  }
+}
+
+/* The dark proof card sits on the ink ground, where an ink fill and an ink
+   border both vanish and the text appears to float. Forest is the system's
+   raised-dark surface; the hairline border is the dark-ground line token. */
+.lp .lp-curtain--ink .lp-proofcard:nth-child(4n) {
+  background: var(--lp-forest);
+}
+.lp .lp-curtain--ink .lp-proofcard:nth-child(4n)::before {
+  background: var(--lp-line-dark);
+}
+
+/* ---- Reduced motion: layout layer ------------------------------------
+   The CSS half of the two-layer reduced-motion handling (scenes.tsx has
+   the JS half). Under the preference nothing pins, overlaps or clips: the
+   page is an ordinary stack of full-height-free sections, correct from
+   the very first paint, before any script has run.
+
+   `!important` appears only on the scrub height, because that value is an
+   inline style set from the `height` prop; nothing else here needs it. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-scene-outer--hero {
+    height: auto;
+  }
+  .lp-scene-sticky {
+    position: static;
+    height: auto;
+  }
+  .lp .lp-scene-outer--hero .lp-hero-scene {
+    position: relative;
+    height: auto;
+    padding-block: var(--lp-sp-xl);
+  }
+  .lp-curtain--overlap {
+    margin-top: 0;
+  }
+  .lp-curtain--diagonal {
+    clip-path: none;
+    padding-top: 0;
+  }
+  .lp-scrub {
+    height: auto !important;
+    padding-block: var(--lp-sp-xl);
+  }
+  .lp-scrub-inner {
+    height: auto;
+  }
 }
