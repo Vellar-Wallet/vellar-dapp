@@ -39,7 +39,12 @@ export default function Landing() {
             <ProofStrip />
             <TwoSides />
             <VsCodeExtension />
-            <Playground />
+            {/* The accent curtain: a wavy edge that surfs in as it rises
+                (reference spec §4.7). Nothing sticky sits before it, so it
+                does not overlap the section above. */}
+            <Curtain tone="lime" overlap={false}>
+              <Playground />
+            </Curtain>
             <FaqSection />
             <SdkCta />
           </Curtain>

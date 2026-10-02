@@ -1,7 +1,8 @@
 "use client";
 
 import { motion, useMotionValue, useScroll, useTransform, type MotionValue } from "motion/react";
-import { useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { useMediaQuery } from "./use-media";
 
 /**
  * Sticky-scene and curtain primitives — the page's layering architecture.
@@ -29,26 +30,13 @@ import { useRef, useSyncExternalStore, type ReactNode } from "react";
  * static component, so no scroll hook ever runs, and none can point at a
  * ref that was never mounted.
  *
- * The motion/static choice is made with `useSyncExternalStore` and a
- * server snapshot of `false`. That is what keeps hydration honest: the
+ * The motion/static choice is made with `useMediaQuery` (use-media.ts), a
+ * `useSyncExternalStore` hook whose server snapshot is `false`. That is what keeps hydration honest: the
  * server and the first client render always agree (animated tree), then
  * the client updates. motion's own `useReducedMotion` reads the preference
  * on the first client render, which differs from the server and makes
  * React discard and rebuild the tree.
  */
-
-function useMediaQuery(query: string) {
-  return useSyncExternalStore(
-    (cb) => {
-      if (typeof window.matchMedia !== "function") return () => {};
-      const mq = window.matchMedia(query);
-      mq.addEventListener("change", cb);
-      return () => mq.removeEventListener("change", cb);
-    },
-    () => typeof window.matchMedia === "function" && window.matchMedia(query).matches,
-    () => false,
-  );
-}
 
 const REDUCED_QUERY = "(prefers-reduced-motion: reduce)";
 

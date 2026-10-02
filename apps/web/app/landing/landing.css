@@ -2714,3 +2714,214 @@
 .lp .lp-footer :focus-visible {
   outline-color: var(--lp-ink);
 }
+
+/* ---- Playground: accent curtain, wave edge, drag rail -------------------
+   Reference spec §4.7. The curtain itself is `.lp-curtain--lime`; this is
+   the wave that hangs above it, and the rail of poster cards inside it. */
+
+.lp .lp-sec--wave {
+  position: relative;
+}
+.lp .lp-wave {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  /* 99%, not 100%: a hairline of subpixel rounding would otherwise open a
+     gap between the wave and the section it hangs from. */
+  transform: translateY(-99%);
+  pointer-events: none;
+  /* The wave's fill is currentColor, so it always matches the ground. */
+  color: var(--lp-lime);
+}
+.lp .lp-wave-svg {
+  display: block;
+  /* 400% wide: the wave repeats every quarter of the path, so a -25%
+     translation is exactly one period and never shows a seam. */
+  width: 400%;
+  height: clamp(100px, 14vw, 220px);
+  transform-origin: left;
+}
+
+.lp .lp-rail {
+  position: relative;
+  margin-top: var(--lp-sp-12);
+}
+.lp .lp-rail-track {
+  display: flex;
+  gap: var(--lp-sp-6);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  /* Cards start aligned to the page container, but scroll edge to edge. */
+  padding-inline: max(var(--lp-gutter), calc((100vw - var(--lp-container)) / 2 + var(--lp-gutter)));
+  scroll-padding-inline: max(
+    var(--lp-gutter),
+    calc((100vw - var(--lp-container)) / 2 + var(--lp-gutter))
+  );
+  padding-block: var(--lp-sp-4) var(--lp-sp-6);
+  /* Not hidden: a visible scrollbar is the one affordance that works for
+     everyone, and the reference's global scrollbar hiding is a quirk this
+     build deliberately does not copy. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--lp-ink) transparent;
+  cursor: grab;
+}
+.lp .lp-rail-track.is-dragging {
+  cursor: grabbing;
+  /* Snap fights a manual drag: it yanks the track back mid-gesture. */
+  scroll-snap-type: none;
+  user-select: none;
+}
+.lp .lp-rail-track > * {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}
+/* The track is a scroll container, so its ring draws inset or the
+   container's own clipping would cut it. */
+.lp .lp-rail-track:focus-visible {
+  outline: 2px solid var(--lp-ink);
+  outline-offset: -4px;
+}
+
+.lp .lp-rail-nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--lp-sp-3);
+  max-width: var(--lp-container);
+  margin-inline: auto;
+  padding-inline: var(--lp-gutter);
+}
+.lp .lp-rail-btn {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border: 2px solid var(--lp-ink);
+  border-radius: var(--lp-r-pill);
+  background: transparent;
+  color: var(--lp-ink);
+  cursor: pointer;
+  transition:
+    background var(--lp-dur-fast) ease,
+    color var(--lp-dur-fast) ease;
+}
+.lp .lp-rail-btn:hover:not(:disabled) {
+  background: var(--lp-ink);
+  color: var(--lp-lime);
+}
+.lp .lp-rail-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* The spring-following cursor pill. Fixed to the viewport; motion drives
+   its x/y, opacity and scale. */
+.lp .lp-rail-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  pointer-events: none;
+  padding: 0.6rem 1.25rem;
+  border-radius: var(--lp-r-pill);
+  background: var(--lp-ink);
+  color: var(--lp-lime);
+  box-shadow: var(--lp-sh-card);
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Lab cards: tall poster blocks, the lab's name large at the bottom. Body
+   copy is full ink, not the soft token: ink at 74% on mint measures about
+   4.2:1, under the 4.5 body-text bar. */
+.lp .lp-labcard {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--lp-sp-8);
+  width: min(86vw, 22rem);
+  min-height: 28rem;
+  padding: var(--lp-sp-8);
+  border-radius: var(--lp-r-card);
+  color: var(--lp-ink);
+}
+.lp .lp-labcard p {
+  color: inherit;
+  font-size: var(--lp-fs-sm);
+  line-height: 1.6;
+  max-width: 28ch;
+}
+.lp .lp-labcard h3 {
+  font-weight: 800;
+  font-size: clamp(2rem, 1.4rem + 2vw, 3rem);
+  line-height: 0.92;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  max-width: 10ch;
+}
+.lp .lp-labcard-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lp .lp-labcard-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+.lp .lp-labcard--mint {
+  background: var(--lp-mint);
+}
+.lp .lp-labcard--coral {
+  background: var(--lp-coral-soft);
+}
+.lp .lp-labcard--ink {
+  background: var(--lp-ink);
+  color: var(--lp-on-dark);
+}
+.lp .lp-labcard--sun {
+  background: var(--lp-sun);
+}
+.lp .lp-labcard-example {
+  display: flex;
+  align-items: center;
+  width: min(88vw, 27rem);
+  /* Room for the offset outline frame, which overhangs its card and would
+     otherwise be clipped by the scroll container. */
+  padding: var(--lp-sp-4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp .lp-rail-track {
+    scroll-behavior: auto;
+  }
+}
+
+/* ---- Lime ground, nested inside the ink curtain --------------------------
+   The lime curtain sits INSIDE the ink one, so every `.lp-curtain--ink …`
+   rule above also matches here as an ancestor selector, and CSS has no way
+   to say "nearest curtain". Rather than restructure the nesting (which the
+   overlap mechanics depend on), the lime ground restates its own colours
+   at equal specificity, later in the source. Without this the heading is
+   white on lime and the eyebrow is lime on lime. Ink on lime is 9.3:1. */
+.lp .lp-curtain--lime .lp-sechead h2 {
+  color: var(--lp-ink);
+}
+.lp .lp-curtain--lime .lp-sechead .lp-lead {
+  color: var(--lp-ink);
+}
+.lp .lp-curtain--lime .lp-eyebrow {
+  color: var(--lp-ink);
+}
+.lp .lp-curtain--lime .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--forest {
+  background: var(--lp-forest);
+  color: var(--lp-on-dark);
+}
