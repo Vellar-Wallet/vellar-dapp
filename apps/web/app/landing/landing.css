@@ -2233,14 +2233,16 @@
   font-family: var(--lp-condensed);
   font-weight: 400;
   font-size: var(--lp-fs-poster);
-  line-height: 0.82;
-  letter-spacing: -0.02em;
+  /* 0.82 stacked the lines so tightly they touched; 1.0 gives the
+     condensed caps room to breathe without losing the poster feel. */
+  line-height: 1;
+  letter-spacing: 0.005em;
   text-transform: uppercase;
   margin: 0;
 }
 .lp .lp-poster--sm {
   font-size: var(--lp-fs-poster-sm);
-  line-height: 0.9;
+  line-height: 1;
 }
 
 /* Reveal: fade-up on enter. CSS transitions driven by an
