@@ -469,11 +469,49 @@
 /* ---- Nav ------------------------------------------------------ */
 
 .lp .lp-nav-outer {
-  position: sticky;
+  position: fixed;
   top: 0;
-  z-index: 40;
-  background: var(--lp-paper);
-  border-bottom: 1px solid var(--lp-line);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  /* Floats over the hero scene with no bar of its own (reference spec
+     §4.1), then takes a readable backdrop once scrolled.
+
+     The spec's own nav never does the second part: it tracks scroll but
+     never uses it, so its wordmark disappears over accent-coloured
+     sections. That is one of the quirks this build is explicitly not
+     copying, so the scrolled state below is a fix, not an embellishment. */
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  transition:
+    background var(--lp-dur-reveal) ease,
+    border-color var(--lp-dur-reveal) ease,
+    backdrop-filter var(--lp-dur-reveal) ease;
+}
+/* Over the ink hero: light type, no bar. */
+.lp .lp-nav-outer:not(.is-scrolled) {
+  color: var(--lp-on-dark);
+}
+.lp .lp-nav-outer:not(.is-scrolled) .lp-nav-links a,
+.lp .lp-nav-outer:not(.is-scrolled) .lp-nav-dd-btn {
+  color: var(--lp-on-dark);
+}
+/* The logo is a dark-ink mark, invisible on the ink hero: invert it
+   while the nav floats. Spec quirk #2, also explicitly fixed. */
+.lp .lp-nav-outer:not(.is-scrolled) .lp-brand img {
+  filter: brightness(0) invert(1);
+}
+/* Scrolled: a real paper bar, so every link stays readable over whatever
+   section is passing underneath. */
+.lp .lp-nav-outer.is-scrolled {
+  background: color-mix(in srgb, var(--lp-paper) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom-color: var(--lp-line);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp .lp-nav-outer {
+    transition: none;
+  }
 }
 .lp .lp-nav {
   max-width: var(--lp-container);
@@ -748,12 +786,53 @@
   padding-top: var(--lp-sp-xl);
   padding-bottom: var(--lp-sp-lg);
   position: relative;
-  overflow: hidden;
+  /* overflow-x only. `overflow: hidden` here would kill the sticky scene
+     this hero now sits inside (a sticky element dies inside any scroll
+     container ancestor); `clip` on one axis does not create one. */
+  overflow-x: clip;
   /* Scopes z-index stacking to the hero: without this, the waves' z-index:0
      sits in the SAME stacking context as .lp-frame's z-index:-1 offset
      outlines, so the outline (meant to sit just behind its own card) instead
      drops behind the waves entirely and its overhang disappears. */
   isolation: isolate;
+}
+
+/* The hero as a sticky scene: fills the viewport, inverted ground, and
+   its own transform origin so the shrink/tilt pivots on centre. */
+.lp .lp-hero-scene {
+  /* position is deliberately NOT set here: this selector out-ranks
+     .lp-scene-sticky, so a `position: relative` would silently cancel
+     the pin. The scene is sticky inside the outer wrapper (below) and
+     plainly static under reduced motion. */
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  align-items: center;
+  overflow-x: clip;
+  background: var(--lp-ink);
+  color: var(--lp-on-dark);
+  transform-origin: center center;
+  isolation: isolate;
+}
+.lp .lp-hero-scene .lp-hero {
+  width: 100%;
+  padding-block: 0;
+}
+/* Inverted hero: the paper-ground type colours flip. */
+.lp .lp-hero-scene h1,
+.lp .lp-hero-scene .lp-poster {
+  color: var(--lp-on-dark);
+}
+.lp .lp-hero-scene .lp-lead {
+  color: var(--lp-on-dark-soft);
+}
+.lp .lp-scene-outer--hero .lp-hero-scene {
+  position: sticky;
+  top: 0;
+}
+.lp-scene-outer--static .lp-hero-scene {
+  height: auto;
+  padding-block: var(--lp-sp-xl);
 }
 /* GradientWaves as the hero's full-bleed background (see hero-waves.tsx),
    sitting behind everything in the section. */
@@ -2132,4 +2211,249 @@
     transition-duration: 0.01ms !important;
   }
   /* motion.tsx also bails entirely — no Lenis, no GSAP tweens. */
+}
+
+/* ============================================================
+   Layering architecture — sticky scenes and curtains.
+   Added 2026-10-02 with the re-choreography (docs/decisions.md).
+   Mechanics mirror the reference spec §3.2; every colour is ours.
+
+   The whole stack sits on the dark ink ground: a scene that scales
+   down reveals what is behind it, and that reveal IS the effect.
+   ============================================================ */
+
+.lp-staged {
+  position: relative;
+  background: var(--lp-ink);
+}
+
+/* A scene's tall outer wrapper. Height is what buys scrub distance:
+   200vh gives one viewport of pinned animation. */
+.lp-scene-outer {
+  position: relative;
+  width: 100%;
+  z-index: 1;
+  background: var(--lp-ink);
+}
+.lp-scene-outer--hero {
+  height: 200vh;
+}
+/* Reduced motion: collapse to content height, nothing pins. */
+.lp-scene-outer--static {
+  height: auto;
+}
+
+.lp-scene-sticky {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100vh;
+  /* overflow-x: clip (not hidden) — `hidden` on a sticky ancestor
+     silently breaks stickiness, `clip` does not create a scroll
+     container. */
+  overflow-x: clip;
+  overflow-y: clip;
+}
+
+/* The curtain: rises over the scene before it. */
+.lp-curtain {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.lp-curtain--ink {
+  background: var(--lp-ink);
+}
+.lp-curtain--lime {
+  background: var(--lp-lime);
+  color: var(--lp-ink);
+}
+/* Pull up over the previous scene's last viewport so its exit plays
+   underneath this block. */
+.lp-curtain--overlap {
+  margin-top: -100vh;
+}
+/* The slanted seam the shrinking hero passes under: the top edge rises
+   from left (8vw down) to right (0). */
+.lp-curtain--diagonal {
+  clip-path: polygon(0 8vw, 100% 0, 100% 100%, 0 100%);
+  /* The clip removes up to 8vw from the top, so the first section needs
+     that height back or its own top padding is swallowed by the cut and
+     the content looks like it starts in a void. */
+  padding-top: 8vw;
+}
+/* The first section inside a diagonal curtain already has the 8vw of
+   clearance above it; its own top padding would double the gap. */
+.lp-curtain--diagonal > .lp-sec:first-child {
+  padding-top: var(--lp-sp-lg);
+}
+
+/* A two-phase scrubbed scene. */
+.lp-scrub {
+  position: relative;
+  z-index: 10;
+  background: var(--lp-ink);
+}
+.lp-scrub--static {
+  height: auto;
+  padding-block: var(--lp-sp-xl);
+}
+.lp-scrub-sticky {
+  z-index: 0;
+}
+.lp-scrub-inner {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  height: 100%;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center center;
+}
+.lp-scrub--static .lp-scrub-inner {
+  height: auto;
+}
+
+/* Poster headline — the condensed face at display scale. Rationed to
+   the hero and the closing band. */
+.lp-poster {
+  font-family: var(--lp-condensed);
+  font-weight: 400;
+  font-size: var(--lp-fs-poster);
+  line-height: 0.82;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.lp-poster--sm {
+  font-size: var(--lp-fs-poster-sm);
+  line-height: 0.9;
+}
+
+/* Reveal: fade-up on enter. CSS transitions driven by an
+   IntersectionObserver, so it costs nothing until it fires. */
+.lp-reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity 0.6s ease,
+    transform 0.6s ease;
+}
+.lp-reveal.is-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Static and fully visible: never leave content stuck at opacity 0. */
+  .lp-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Wide-tracked mono micro-label — the spec's signature small type,
+   set in our mono face. */
+.lp-micro {
+  font-family: var(--lp-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.lp-micro--wide {
+  font-size: 0.75rem;
+  letter-spacing: 0.5em;
+}
+
+/* Text selection, scoped to the marketing pages. */
+.lp ::selection {
+  background: var(--lp-lime);
+  color: var(--lp-ink);
+}
+
+/* ---- Hero poster -------------------------------------------------- */
+
+.lp .lp-hero-eyebrow {
+  color: var(--lp-lime);
+  margin-bottom: var(--lp-sp-6);
+}
+.lp .lp-hero-poster {
+  /* Poster scale needs its own measure: 13ch (the old h1 cap) would
+     break "Let agents pay your API." into five near-empty lines at the
+     condensed face's width. */
+  max-width: 16ch;
+  margin-bottom: var(--lp-sp-6);
+}
+.lp .lp-hero-poster em {
+  /* The one rationed italic-serif emphasis phrase per headline, in the
+     loud accent. Serif at poster scale needs a touch less tracking than
+     the condensed face around it. */
+  font-family: var(--lp-serif);
+  font-style: italic;
+  font-weight: 600;
+  color: var(--lp-lime);
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+.lp .lp-hero-scene .lp-lead {
+  max-width: 54ch;
+}
+
+/* ---- Inverted curtain: sections on the ink ground ------------------ */
+
+/* Only text that sits DIRECTLY on the ink ground flips to light: section
+   heads, leads, eyebrows. Cards keep their own light fills and their own
+   ink text, so nothing is re-coloured by inheritance. An earlier, blanket
+   version of this (every p/h3/h4/a) turned the pastel pillar cards and the
+   white product mocks white-on-light and made buttons vanish; the rule is
+   deliberately narrow because contrast is per-surface, not per-page. */
+/* No `color` on the curtain itself: cards inherit their text colour, so a
+   light colour set here leaks into every card and field. Light type is set
+   only on the specific ground-level elements below. */
+.lp .lp-curtain--ink .lp-sec {
+  background: transparent;
+}
+.lp .lp-curtain--ink .lp-sechead h2,
+.lp .lp-curtain--ink .lp-faq-aside h2 {
+  color: var(--lp-on-dark);
+}
+.lp .lp-curtain--ink .lp-sechead .lp-lead,
+.lp .lp-curtain--ink .lp-faq-aside > p {
+  color: var(--lp-on-dark-soft);
+}
+.lp .lp-curtain--ink .lp-sechead .lp-lead a,
+.lp .lp-curtain--ink .lp-faq-aside a {
+  color: var(--lp-mint);
+}
+.lp .lp-curtain--ink .lp-eyebrow {
+  color: var(--lp-lime);
+}
+/* Buttons that sit directly on ink: forest-on-ink and ink-outline-on-ink
+   are both invisible, so they take the accent / light-outline treatment.
+   Scoped to the CTA rows that live on the ground, not buttons inside
+   cards. */
+.lp .lp-curtain--ink .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--forest {
+  background: var(--lp-lime);
+  color: var(--lp-ink);
+}
+.lp .lp-curtain--ink .lp-sec > .lp-wrap > .lp-cta-row .lp-btn--outline {
+  color: var(--lp-on-dark);
+  border-color: var(--lp-line-dark);
+}
+
+/* Nav CTA over the ink hero: the forest button would vanish (forest on
+   ink), so it takes the loud accent while the nav floats. ink on lime is
+   9.3:1. Once the paper bar appears it returns to forest. */
+.lp .lp-nav-outer:not(.is-scrolled) .lp-btn--forest {
+  background: var(--lp-lime);
+  color: var(--lp-ink);
+}
+/* The GitHub star button's outline is ink-coloured; on the ink hero it
+   needs the light treatment too. */
+.lp .lp-nav-outer:not(.is-scrolled) .lp-star-btn {
+  color: var(--lp-on-dark);
 }

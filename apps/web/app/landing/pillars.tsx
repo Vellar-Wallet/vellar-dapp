@@ -1,4 +1,10 @@
-import { LpButton, SectionHead } from "./ui";
+import { Chips, Field, Frame, LpButton, MonoRow, MonoRows, SectionHead, TokenPill } from "./ui";
+
+const BAZAAR = [
+  { name: "Weather API", meta: "0.05 USDC" },
+  { name: "Translate API", meta: "0.02 USDC" },
+  { name: "GPU Inference", meta: "0.25 USDC" },
+];
 
 const PILLARS = [
   {
@@ -18,7 +24,12 @@ const PILLARS = [
   },
 ];
 
-/** "Building on x402" — the three-pillar facilitator story. */
+/** "Building on x402" — the three-pillar facilitator story, followed by
+ *  the three product mock cards (seller, facilitator, Bazaar).
+ *
+ *  The cards moved here from the hero when the hero became a 100vh
+ *  sticky scene: they are the concrete illustration of the three pillars
+ *  above them, so they read better here than under a poster headline. */
 export function X402Pillars() {
   return (
     <section className="lp-sec" id="how">
@@ -48,6 +59,79 @@ export function X402Pillars() {
             </div>
           ))}
         </div>
+
+        <div className="lp-hero-cards" data-reveal-group>
+          <Frame>
+            <div className="lp-pcard">
+              <div className="lp-pcard-top">
+                <span>Seller · Example</span>
+                <span>◇</span>
+              </div>
+              <Field
+                label="GET /v1/research"
+                amount="402"
+                amountStyle={{ fontSize: 18 }}
+                sub={
+                  <>
+                    <span>price 0.05 USDC</span>
+                    <span>scheme exact</span>
+                  </>
+                }
+              />
+              <Field
+                label="NETWORK"
+                amount="stellar:pubnet"
+                token={<TokenPill usdc label="USDC" />}
+                sub={<span>Payment Required</span>}
+              />
+              <Chips
+                items={[
+                  { label: "exact", on: true },
+                  { label: "upto" },
+                  { label: "Bazaar-listed" },
+                ]}
+              />
+            </div>
+          </Frame>
+
+          <Frame corner="tr" color="sun">
+            <div className="lp-pcard">
+              <div className="lp-pcard-top">
+                <span>Facilitator</span>
+                <span>⚡</span>
+              </div>
+              <MonoRows>
+                <MonoRow label="/verify" value="✓ valid" tone="ok" />
+                <MonoRow label="/settle" value="✓ fee sponsored" tone="ok" />
+                <MonoRow label="tx hash" value="9a3c…e1f0" />
+                <MonoRow label="resource" value="200 OK" tone="ok" />
+              </MonoRows>
+            </div>
+          </Frame>
+
+          <Frame corner="br" color="lime">
+            <div className="lp-pcard">
+              <div className="lp-pcard-top">
+                <span>Bazaar · Example</span>
+                <span>◎</span>
+              </div>
+              <span className="lp-verified">Searchable catalog</span>
+              <div className="lp-rlist">
+                {BAZAAR.map((r) => (
+                  <div className="lp-rrow" key={r.name}>
+                    <div className="ri"></div>
+                    <div className="rn">
+                      <b>{r.name}</b>
+                      <span>{r.meta}</span>
+                    </div>
+                    <span className="open">Pay</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Frame>
+        </div>
+
         <div className="lp-cta-row" data-reveal>
           <LpButton href="https://docs.vellar.xyz/docs/getting-started/quickstart" variant="forest">
             Quickstart

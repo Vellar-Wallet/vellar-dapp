@@ -88,6 +88,10 @@ function StarButton({ stars }: { stars?: number | null }) {
 export function LpNav({ stars }: { stars?: number | null }) {
   const [open, setOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
+  // The nav floats transparent over the hero and takes a paper backdrop
+  // once the page has moved. Threshold is small on purpose: the hero scene
+  // starts shrinking immediately, so the bar must be readable by then.
+  const [scrolled, setScrolled] = useState(false);
   const close = () => {
     setOpen(false);
     setDevOpen(false);
@@ -97,6 +101,13 @@ export function LpNav({ stars }: { stars?: number | null }) {
   const path = usePathname() ?? "";
   const onLanding = path === "/";
   const section = useScrollSpy(SECTION_IDS, onLanding);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 20);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     if (!devOpen) return;
@@ -115,7 +126,7 @@ export function LpNav({ stars }: { stars?: number | null }) {
   };
 
   return (
-    <div className="lp-nav-outer">
+    <div className={`lp-nav-outer${scrolled || open ? " is-scrolled" : ""}`}>
       <nav className="lp-nav">
         <Link href="/" className="lp-brand" onClick={close}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
