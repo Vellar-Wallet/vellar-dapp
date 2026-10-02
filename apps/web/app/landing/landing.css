@@ -6,8 +6,8 @@
    Moves, not values (sources: a brophybox.com teardown and an
    earlier keyslagos.estate teardown; both audit docs since deleted):
    - White paper ground, forest ink, section-level inversion (no dark mode).
-   - Zero border-radius: 45° clip-cut corners + 2px offset outline frames
-     stand in for rounding and for elevation shadows.
+   - Rounded cards and pill buttons, with a 2px offset outline frame as the
+     depth device (originally 45° clip-cut corners; see AMENDED below).
    - Two workhorse faces (Cabinet Grotesk display / Plus Jakarta Sans body)
      plus Playfair Display italic rationed to one emphasis phrase per
      heading. Mono appears inside genuinely monospaced content AND as the
@@ -17,17 +17,18 @@
      used at confident coverage on cards and CTAs.
 
    AMENDED 2026-10-02 (landing re-choreography, docs/decisions.md): the
-   landing page itself is no longer paper-ground. It is a stack of sticky
-   scenes and curtains on the INK ground, with a lime accent curtain and a
-   lime footer, adopting an external spec's structure and motion. That
-   work added, deliberately and only for the new surfaces:
-   - radius and elevation (--lp-r-*, --lp-sh-*), which the system lacked;
+   landing page is no longer a paper-ground page with cut-corner cards. It
+   is a stack of sticky scenes and curtains that alternates white,
+   off-white, ink and lime grounds, adopting an external spec's structure
+   and motion. That work retired the 45° clip-cut corners in favour of one
+   rounded structure, and added, deliberately:
+   - radius and elevation tokens (--lp-r-*, --lp-sh-*), which the system
+     lacked;
    - a fourth face, the condensed Anton (--lp-condensed), rationed to the
      two poster headlines;
    - the `motion` runtime alongside GSAP.
-   The clip-cut cards and offset frames below are unchanged and coexist
-   with the rounded surfaces by decision. Other marketing pages (About)
-   still use the paper treatment described above.
+   The one remaining clip-path is the hero's diagonal seam, which is a
+   layout sweep, not a card shape.
 
    Deliberately fixed here (the audits' shared sins): visible
    :focus-visible on every interactive element, accent colours only in
@@ -109,12 +110,12 @@
   --lp-gutter: clamp(1.25rem, 4vw, 2.5rem);
   --lp-container: 1240px;
 
-  /* Radius + elevation — ADDED 2026-10-02. The system shipped with
-     `border-radius: 0` and no shadows (45° clip-cuts + 2px offset frames
-     stood in for both). The re-choreography adopts the reference spec's
-     rounding and elevation on the NEW surfaces only; every existing
-     clip-cut card below is untouched, so the two devices coexist
-     intentionally rather than by drift. See docs/decisions.md. */
+  /* Shape: one rounded structure for every surface. Large cards use
+     --lp-r-card, medium cards --lp-r-lg, inner panels and fields --lp-r-md,
+     and buttons, chips and menus are pills. (Until 2026-10-02 the system had
+     no radius at all and used 45° clip-cut corners; the cut corners were
+     retired because mixing them with the rounded poster, menu and carousel
+     surfaces read as two designs. See docs/decisions.md.) */
   --lp-r-pill: 9999px;
   --lp-r-card: 2rem;
   --lp-r-lg: 1rem;
@@ -123,113 +124,6 @@
      elevation reads as part of the brand rather than a generic drop. */
   --lp-sh-card: 0 40px 100px rgba(12, 59, 49, 0.45);
   --lp-sh-glow: 0 12px 40px rgba(200, 240, 72, 0.15);
-
-  /* Shape — no radius anywhere; 45° cuts instead */
-  --lp-cut-sm: 12px;
-  --lp-cut-md: 28px;
-  --lp-cut-lg: 44px;
-  --lp-clip-br-sm: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
-  --lp-clip-tl-sm: polygon(0 12px, 12px 0, 100% 0, 100% 100%, 0 100%);
-  --lp-clip-tl-md: polygon(0 28px, 28px 0, 100% 0, 100% 100%, 0 100%);
-  --lp-clip-br-md: polygon(0 0, 100% 0, 100% calc(100% - 28px), calc(100% - 28px) 100%, 0 100%);
-  --lp-clip-tr-md: polygon(0 0, calc(100% - 28px) 0, 100% 28px, 100% 100%, 0 100%);
-  --lp-clip-tl-lg: polygon(0 44px, 44px 0, 100% 0, 100% 100%, 0 100%);
-  /* Inner br-md shapes inset by the border width (diagonal offset is
-     w·√2: 1.41px for 1px, 2.83px for 2px). A cut card paints its BORDER
-     as the element background clipped to the outer shape, and its FILL
-     on ::before clipped to the matching inner shape — a pixel-exact
-     uniform border with no rotated-line approximation. */
-  --lp-clip-br-md-in1: polygon(
-    1px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 28.41px),
-    calc(100% - 28.41px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
-  --lp-clip-br-md-in2: polygon(
-    2px 2px,
-    calc(100% - 2px) 2px,
-    calc(100% - 2px) calc(100% - 28.83px),
-    calc(100% - 28.83px) calc(100% - 2px),
-    2px calc(100% - 2px)
-  );
-  /* tl-lg inset by a 1px border (same 44px cut, top-left corner, mirrored
-     from the br-md derivation above). */
-  --lp-clip-tl-lg-in1: polygon(
-    1px 44.41px,
-    44.41px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
-  /* tl-md inset by a 1px border (same 28px cut, top-left corner, same
-     derivation as tl-lg-in1 above at the smaller cut size). */
-  --lp-clip-tl-md-in1: polygon(
-    1px 28.41px,
-    28.41px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
-  /* tl-sm inset by a 1px border (same 12px cut, top-left corner, same
-     derivation as tl-lg-in1 above at the smallest cut size). Rounded to a
-     whole pixel (13px, not 13.41px) rather than the exact w*sqrt(2) offset:
-     the fractional value visibly rasterized with a ~1px height discrepancy
-     between cards in Safari, most likely from clip-path's percentage
-     terms (100% 100%) resolving against a fractional computed card height
-     combined with a fractional inset value. */
-  --lp-clip-tl-sm-in1: polygon(
-    1px 13px,
-    13px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
-  /* 2px outline frames (offset behind cards — the depth system) */
-  --lp-frame-tl-md: polygon(
-    0 28px,
-    28px 0,
-    100% 0,
-    100% 100%,
-    0 100%,
-    0 28px,
-    2px 28.83px,
-    2px calc(100% - 2px),
-    calc(100% - 2px) calc(100% - 2px),
-    calc(100% - 2px) 2px,
-    28.83px 2px,
-    2px 28.83px
-  );
-  --lp-frame-tr-md: polygon(
-    0 0,
-    calc(100% - 28px) 0,
-    100% 28px,
-    100% 100%,
-    0 100%,
-    0 0,
-    2px 2px,
-    2px calc(100% - 2px),
-    calc(100% - 2px) calc(100% - 2px),
-    calc(100% - 2px) 28.83px,
-    calc(100% - 28.83px) 2px,
-    2px 2px
-  );
-  /* Inner path runs opposite to the outer path — the nonzero fill rule
-     needs the reversed winding to carve the outline's hollow middle. */
-  --lp-frame-br-md: polygon(
-    0 0,
-    100% 0,
-    100% calc(100% - 28px),
-    calc(100% - 28px) 100%,
-    0 100%,
-    0 0,
-    2px 2px,
-    2px calc(100% - 2px),
-    calc(100% - 28.83px) calc(100% - 2px),
-    calc(100% - 2px) calc(100% - 28.83px),
-    calc(100% - 2px) 2px,
-    2px 2px
-  );
 
   /* Motion — two curves, everywhere */
   --lp-ease-rise: cubic-bezier(0.22, 0.95, 0.3, 1);
@@ -366,8 +260,7 @@
   line-height: 1.2;
   padding: 0.9em 1.6em;
   border: 0;
-  border-radius: 0;
-  clip-path: var(--lp-clip-br-sm);
+  border-radius: var(--lp-r-pill);
   cursor: pointer;
   text-decoration: none;
   transition:
@@ -424,7 +317,6 @@
   background: transparent;
   color: var(--lp-ink);
   box-shadow: inset 0 0 0 2px var(--lp-ink);
-  clip-path: none;
 }
 .lp .lp-btn--outline:hover {
   background: var(--lp-ink);
@@ -436,7 +328,6 @@
   background: transparent;
   color: var(--lp-on-dark);
   box-shadow: inset 0 0 0 2px var(--lp-on-dark);
-  clip-path: none;
 }
 .lp .lp-btn--ghost:hover {
   background: var(--lp-on-dark);
@@ -444,10 +335,9 @@
 }
 
 /* ---- Offset outline frame (the depth system) ------------------
-   .lp-frame is a WRAPPER around a clipped card, never the card itself:
-   the card's own clip-path would cut the offset outline off (it clips
-   pseudo-elements too). The wrapper stays unclipped so the frame can
-   overhang freely. */
+   .lp-frame wraps a card; its ::before is a rounded outline offset behind
+   the card, so the card appears to sit in front of a second outline. The
+   radius matches the card it wraps (--lp-r-lg, the .lp-pcard radius). */
 
 .lp .lp-frame {
   position: relative;
@@ -460,19 +350,17 @@
   left: -10px;
   width: 100%;
   height: 100%;
-  background: var(--frame, var(--lp-mint));
-  clip-path: var(--lp-frame-tl-md);
+  border: 2px solid var(--frame, var(--lp-mint));
+  border-radius: var(--lp-r-lg);
   pointer-events: none;
 }
 .lp .lp-frame--tr::before {
   top: -10px;
   left: 10px;
-  clip-path: var(--lp-frame-tr-md);
 }
 .lp .lp-frame--br::before {
   top: 10px;
   left: 10px;
-  clip-path: var(--lp-frame-br-md);
 }
 .lp .lp-frame--sun {
   --frame: var(--lp-sun);
@@ -759,20 +647,13 @@
 /* Product cards row */
 .lp .lp-pcard {
   position: relative;
-  background: var(--lp-line-strong); /* the 1px border */
-  clip-path: var(--lp-clip-br-md);
+  background: var(--lp-paper);
+  border: 1px solid var(--lp-line-strong);
+  border-radius: var(--lp-r-lg);
   padding: var(--lp-sp-6);
   display: flex;
   flex-direction: column;
   gap: var(--lp-sp-4);
-}
-.lp .lp-pcard::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--lp-paper);
-  clip-path: var(--lp-clip-br-md-in1);
 }
 .lp .lp-pcard-top {
   display: flex;
@@ -785,25 +666,10 @@
   color: var(--lp-ink-faint);
 }
 .lp .lp-field {
-  position: relative;
-  border: 0;
-  background: var(--field-border, var(--lp-line)); /* the 1px border */
-  clip-path: var(--lp-clip-br-sm);
-  padding: var(--lp-sp-3) var(--lp-sp-4);
-}
-.lp .lp-field::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
   background: var(--field-fill, var(--lp-paper-tint));
-  clip-path: polygon(
-    1px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 12.41px),
-    calc(100% - 12.41px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
+  border: 1px solid var(--field-border, var(--lp-line));
+  border-radius: var(--lp-r-md);
+  padding: var(--lp-sp-3) var(--lp-sp-4);
 }
 .lp .lp-field .lbl {
   font-size: 0.6875rem;
@@ -855,8 +721,9 @@
 .lp .lp-chips b {
   font-size: 0.75rem;
   font-weight: 700;
-  padding: 5px 10px;
+  padding: 5px 12px;
   border: 1px solid var(--lp-line-strong);
+  border-radius: var(--lp-r-pill);
 }
 .lp .lp-chips b.on {
   background: var(--lp-mint-soft);
@@ -902,8 +769,9 @@
   align-self: flex-start;
   font-size: 0.75rem;
   font-weight: 700;
-  padding: 4px 10px;
+  padding: 4px 12px;
   background: var(--lp-mint-soft);
+  border-radius: var(--lp-r-pill);
 }
 
 /* ---- Section scaffolding -------------------------------------- */
@@ -935,7 +803,7 @@
 }
 .lp .lp-pillar {
   padding: var(--lp-sp-8) var(--lp-sp-6);
-  clip-path: var(--lp-clip-tl-md);
+  border-radius: var(--lp-r-card);
   display: flex;
   flex-direction: column;
   gap: var(--lp-sp-4);
@@ -977,23 +845,10 @@
   gap: var(--lp-sp-3);
   padding: var(--lp-sp-6);
   box-sizing: border-box;
-  /* Cut-corner border, in the system's standard two layers. A plain `border`
-     on a clip-path'd box leaves its straight edge crossing the diagonal cut,
-     producing a stray triangle. So the ELEMENT paints the border colour,
-     clipped to the OUTER shape, and ::before paints the FILL on top of it,
-     clipped to the matching INSET shape; the 1px gap between the two shapes
-     is all that shows of the border.
-
-     This used to be the other way round (fill on the element, border on a
-     ::before at z-index -1). That cannot work: the card's clip-path creates a
-     stacking context, in which a negative z-index child paints ABOVE the
-     element's own background, so the "border" layer washed every card with a
-     16% ink veil (a mint card rendered as rgb(186,217,206) instead of its
-     token rgb(220,248,236)) while the card's inset clip hid the border it
-     was meant to draw. */
   --proof-fill: var(--lp-mint-soft);
-  background: var(--lp-line);
-  clip-path: var(--lp-clip-tl-sm);
+  background: var(--proof-fill);
+  border: 1px solid var(--lp-line);
+  border-radius: var(--lp-r-lg);
   text-decoration: none;
   transition:
     transform 0.15s ease,
@@ -1009,15 +864,7 @@
 }
 .lp .lp-proofcard:nth-child(4n) {
   --proof-fill: var(--lp-ink);
-  background: var(--lp-ink);
-}
-.lp .lp-proofcard::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--proof-fill);
-  clip-path: var(--lp-clip-tl-sm-in1);
+  border-color: var(--lp-ink);
 }
 .lp .lp-proofcard:hover {
   transform: translateY(-3px);
@@ -1086,18 +933,6 @@
   gap: var(--lp-sp-12);
   align-items: center;
 }
-.lp .lp-playgrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--lp-sp-4);
-}
-.lp .lp-playcard {
-  padding: var(--lp-sp-6);
-  clip-path: var(--lp-clip-br-sm);
-  display: flex;
-  flex-direction: column;
-  gap: var(--lp-sp-2);
-}
 .lp .lp-playcard--mint {
   background: var(--lp-mint-soft);
 }
@@ -1109,11 +944,6 @@
 }
 .lp .lp-playcard--sun {
   background: var(--lp-sun-soft);
-}
-.lp .lp-playcard p {
-  color: var(--lp-ink-soft);
-  font-size: var(--lp-fs-sm);
-  line-height: 1.6;
 }
 .lp .lp-play + .lp-cta-row {
   margin-top: var(--lp-sp-12);
@@ -1127,38 +957,8 @@
    content is never visible in a container too narrow for it; the brief
    empty middle moment during the width change is intentional. */
 
-.lp .lp-spread {
-  display: flex;
-  gap: 10px;
-  height: 430px;
-}
-.lp .lp-slat {
-  flex: 1 1 0%;
-  min-width: 0;
-  position: relative;
-  overflow: hidden;
-  cursor: pointer;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  clip-path: var(--lp-clip-br-md);
-  background: var(--slat-soft, var(--lp-paper-tint));
-  color: var(--lp-ink);
-  font-family: var(--lp-body);
-  text-align: left;
-  transition: flex-grow 0.55s cubic-bezier(0.22, 0.9, 0.24, 1);
-}
-.lp .lp-slat[aria-expanded="true"] {
-  flex-grow: 5;
-  z-index: 2;
-  cursor: default;
-}
 /* The slat's clip-path would cut an outer outline ring, so the focus
    ring draws inset here — still 3px of ink, still unmistakable. */
-.lp .lp-slat:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 3px var(--lp-ink);
-}
 
 /* Collapsed face: fades OUT fast on expand, back IN late on collapse */
 .lp .lp-slat-face {
@@ -1171,10 +971,6 @@
   padding: 22px 0 26px;
   opacity: 1;
   transition: opacity 0.2s ease 0.4s;
-}
-.lp .lp-slat[aria-expanded="true"] .lp-slat-face {
-  opacity: 0;
-  transition: opacity 0.12s ease;
 }
 .lp .lp-slat-face .num {
   font-family: var(--lp-mono);
@@ -1212,14 +1008,6 @@
   transition:
     opacity 0.08s ease,
     transform 0.08s ease;
-}
-.lp .lp-slat[aria-expanded="true"] .lp-slat-body {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
-  transition:
-    opacity 0.25s ease 0.38s,
-    transform 0.25s ease 0.38s;
 }
 .lp .lp-slat-body .title {
   font-family: var(--lp-display);
@@ -1278,25 +1066,10 @@
    (no autoplay, no interaction) — the mocks hide, so each card is just
    its title and one line */
 @media (max-width: 900px) {
-  .lp .lp-spread {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    height: auto;
-    gap: var(--lp-sp-3);
-  }
-  .lp .lp-slat,
-  .lp .lp-slat[aria-expanded="true"] {
-    flex: none;
-    cursor: default;
-  }
-  .lp .lp-slat:last-child {
-    grid-column: 1 / -1;
-  }
   .lp .lp-slat-face {
     display: none;
   }
-  .lp .lp-slat-body,
-  .lp .lp-slat[aria-expanded="true"] .lp-slat-body {
+  .lp .lp-slat-body {
     position: static;
     opacity: 1;
     transform: none;
@@ -1340,7 +1113,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--lp-sp-4);
-  clip-path: var(--lp-clip-tr-md);
+  border-radius: var(--lp-r-card);
 }
 .lp .lp-platcard--paper {
   background: var(--lp-mint-soft);
@@ -1360,33 +1133,16 @@
 }
 .lp .lp-platcard .mini {
   margin-top: auto;
-  position: relative;
-  border: 0;
-  background: var(--lp-line); /* the 1px border */
-  clip-path: var(--lp-clip-br-sm);
+  background: var(--lp-paper);
+  border: 1px solid var(--lp-line);
+  border-radius: var(--lp-r-md);
   padding: var(--lp-sp-4);
   color: var(--lp-ink);
 }
-.lp .lp-platcard .mini::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--lp-paper);
-  clip-path: polygon(
-    1px 1px,
-    calc(100% - 1px) 1px,
-    calc(100% - 1px) calc(100% - 12.41px),
-    calc(100% - 12.41px) calc(100% - 1px),
-    1px calc(100% - 1px)
-  );
-}
 .lp .lp-platcard--dark .mini {
-  background: var(--lp-line-dark);
-  color: var(--lp-on-dark);
-}
-.lp .lp-platcard--dark .mini::before {
   background: color-mix(in srgb, var(--lp-on-dark) 5%, var(--lp-ink));
+  border-color: var(--lp-line-dark);
+  color: var(--lp-on-dark);
 }
 .lp .lp-platcard--dark .mini .lp-mrow {
   border-color: var(--lp-line-dark);
@@ -1403,48 +1159,8 @@
 
 /* ---- Step columns (extension) --------------------------------- */
 
-.lp .lp-steps {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--lp-sp-6);
-}
 /* Each step is a card whose FULL 2px border carries its accent colour,
    drawn with the outer/inner clip pair so the diagonal is exact. */
-.lp .lp-step {
-  --step-c: var(--lp-mint);
-  position: relative;
-  background: var(--step-c); /* the 2px border */
-  clip-path: var(--lp-clip-br-md);
-  padding: var(--lp-sp-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--lp-sp-3);
-}
-.lp .lp-step::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--lp-paper);
-  clip-path: var(--lp-clip-br-md-in2);
-}
-.lp .lp-step:nth-child(2) {
-  --step-c: var(--lp-sun);
-}
-.lp .lp-step:nth-child(3) {
-  --step-c: var(--lp-lime);
-}
-.lp .lp-step .num {
-  font-family: var(--lp-display);
-  font-weight: 800;
-  font-size: 1rem;
-  letter-spacing: 0.08em;
-}
-.lp .lp-step p {
-  color: var(--lp-ink-soft);
-  font-size: var(--lp-fs-sm);
-  line-height: 1.6;
-}
 
 /* ---- VS Code extension ----------------------------------------
    Two-column: copy + CTA on the left, a real Marketplace screenshot
@@ -1473,8 +1189,10 @@
 .lp .lp-vsshot {
   position: relative;
   display: block;
-  background: var(--lp-line-strong); /* the 1px border */
-  clip-path: var(--lp-clip-tl-lg);
+  background: var(--lp-ink);
+  border: 1px solid var(--lp-line-strong);
+  border-radius: var(--lp-r-card);
+  overflow: hidden;
   padding: 2px;
   /* `scale`/`rotate`, not `transform`: the reveal system (motion.tsx)
      tweens this element's `transform` on scroll-in via GSAP, writing a
@@ -1492,14 +1210,6 @@
     rotate var(--lp-dur-fast) var(--lp-ease-rise);
   scale: 1;
   rotate: 0deg;
-}
-.lp .lp-vsshot::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--lp-ink);
-  clip-path: var(--lp-clip-tl-lg-in1);
 }
 .lp .lp-vsshot:hover,
 .lp .lp-vsshot:focus-visible {
@@ -1569,7 +1279,7 @@
      touch up-left of the box centre because of the corner cut) */
   padding: 0 2px 2px 0;
   background: var(--lp-sun);
-  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+  border-radius: var(--lp-r-md);
   transition: rotate var(--lp-dur-fast) var(--lp-ease-io);
 }
 .lp .lp-fitem[open] summary .pm {
@@ -1598,7 +1308,6 @@
 .lp .lp-cta {
   background: var(--lp-ink);
   color: var(--lp-on-dark);
-  clip-path: var(--lp-clip-tl-lg);
   padding-block: var(--lp-sp-xxl);
   text-align: center;
 }
@@ -1766,7 +1475,8 @@
 
 .lp .lp-persona {
   position: relative;
-  clip-path: var(--lp-clip-br-md);
+  border-radius: var(--lp-r-card);
+  overflow: hidden;
   background: var(--lp-mint-soft);
   aspect-ratio: 4 / 5;
   overflow: hidden;
@@ -1791,8 +1501,7 @@
 /* ---- Responsive ----------------------------------------------- */
 
 @media (max-width: 1000px) {
-  .lp .lp-pillars,
-  .lp .lp-steps {
+  .lp .lp-pillars {
     grid-template-columns: 1fr 1fr;
   }
   .lp .lp-proofstrip {
@@ -1822,34 +1531,24 @@
     flex-basis: auto;
   }
   /* Two-up compact grids — the mobile pattern for stacked card sections */
-  .lp .lp-playgrid {
-    gap: var(--lp-sp-3);
-  }
-  .lp .lp-playcard {
-    padding: var(--lp-sp-4);
-  }
   /* phone-only content trim — desktop and tablet keep the full cards */
   /* narrow columns: mono rows wrap instead of ellipsizing to nonsense */
   /* inline amount sizes need the override at phone width */
-  .lp .lp-pillars,
-  .lp .lp-steps {
+  .lp .lp-pillars {
     grid-template-columns: 1fr 1fr;
     gap: var(--lp-sp-3);
   }
-  .lp .lp-pillar:last-child,
-  .lp .lp-step:last-child {
+  .lp .lp-pillar:last-child {
     grid-column: 1 / -1;
   }
-  .lp .lp-pillar,
-  .lp .lp-step {
+  .lp .lp-pillar {
     padding: var(--lp-sp-4);
     gap: var(--lp-sp-2);
   }
   .lp .lp-pillar .num {
     font-size: 1.75rem;
   }
-  .lp .lp-pillar p,
-  .lp .lp-step p {
+  .lp .lp-pillar p {
     font-size: 0.8125rem;
   }
   .lp .lp-foot-cols {
@@ -2202,10 +1901,6 @@
 /* The dark proof card sits on the ink ground, where an ink fill and an ink
    border both vanish and the text appears to float. Forest is the system's
    raised-dark surface; the hairline border is the dark-ground line token. */
-.lp .lp-ground--ink .lp-proofcard:nth-child(4n) {
-  --proof-fill: var(--lp-forest);
-  background: var(--lp-line-dark);
-}
 
 /* ---- Reduced motion: layout layer ------------------------------------
    The CSS half of the two-layer reduced-motion handling (scenes.tsx has
@@ -2753,7 +2448,7 @@
 }
 
 /* ---- Keyboard focus -------------------------------------------------------
-   Three separate problems, three separate fixes. Order matters: later rules
+   Separate problems, separate fixes. Order matters: later rules
    at equal specificity win, so the clipped-element fixes come last.
 
    1. INK GROUND. The default ring is ink, so on the hero, the ink curtain,
@@ -2771,26 +2466,20 @@
   box-shadow: 0 0 0 3px var(--lp-ink);
 }
 
-/* 2. CLIPPED CONTROLS. Buttons and proof cards have a cut corner made with
-      clip-path, and a clip-path also clips an outline drawn outside the
-      box, so their focus ring was not drawn at all: no ring on any button,
-      on any ground. The ring is drawn INSIDE the box instead, in the
-      element's own text colour, which by construction contrasts with its
-      fill (forest and ghost buttons get a light ring, sun and lime get an
-      ink one) without a rule per variant. */
-.lp .lp-btn:focus-visible {
-  outline: 3px solid currentColor;
-  outline-offset: -6px;
-  box-shadow: none;
+/* 2. OUTLINE AND GHOST BUTTONS draw their border as an inset box-shadow, and
+      the double ring above also sets box-shadow, which would erase that
+      border while the button is focused. Re-assert it (later, same
+      specificity, so it wins); the ring is then the outline alone, which
+      shows on ink (lime) and on paper (ink). */
+.lp .lp-btn--outline:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--lp-ink);
 }
-.lp .lp-proofcard:focus-visible {
-  outline: 3px solid var(--lp-ink);
-  outline-offset: -8px;
-  box-shadow: none;
+.lp .lp-btn--ghost:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--lp-on-dark);
 }
-/* The dark proof card takes light type, so its ring is light too. */
-.lp .lp-proofcard:nth-child(4n):focus-visible {
-  outline-color: var(--lp-lime);
+.lp .lp-hero-scene .lp-btn--outline:focus-visible,
+.lp .lp-ground--ink .lp-btn--outline:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--lp-on-dark);
 }
 
 /* ---- Platform cards: let long mono rows shrink and wrap -------------------
