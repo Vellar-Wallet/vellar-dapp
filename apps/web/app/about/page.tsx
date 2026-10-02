@@ -7,7 +7,7 @@ import { PersonaImage } from "./persona-image";
 export const metadata: Metadata = {
   title: "About · Vellar",
   description:
-    "About Vellar, the open-source x402 facilitator for Stellar, and the person building it.",
+    "About Vellar, the open-source payment layer for AI agents on Stellar, and the person building it.",
 };
 
 export default function About() {
@@ -20,7 +20,7 @@ export default function About() {
             <div>
               <Eyebrow>About</Eyebrow>
               <h1 data-split className="lp-about-title">
-                The <em>facilitator</em> for x402 on Stellar.
+                The <em>payment layer</em> for AI agents on Stellar.
               </h1>
             </div>
             <p className="lp-lead">

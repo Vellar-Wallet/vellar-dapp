@@ -94,7 +94,7 @@
      above. Anton has one weight and very narrow sidebearings, so it
      holds together at sizes where Cabinet Grotesk would overflow. */
   --lp-condensed: "Anton", "Cabinet Grotesk", ui-sans-serif, sans-serif;
-  --lp-fs-poster: clamp(3.5rem, 1rem + 12vw, 11.5rem);
+  --lp-fs-poster: clamp(2.5rem, 0.5rem + 9.2vw, 9rem);
   --lp-fs-poster-sm: clamp(3rem, 1rem + 10vw, 9rem);
 
   /* Spacing — 8px base; the biggest step is spent once (hero + CTA band) */
@@ -1751,6 +1751,13 @@
   color: var(--lp-lime);
   letter-spacing: -0.01em;
   text-transform: none;
+}
+/* The hero is a flex container, so without an explicit width its content
+   wrapper shrinks to its widest child and centres itself. That only looked
+   right while the headline happened to be as wide as the container; with a
+   shorter headline the text drifted 25px right of the logo. */
+.lp .lp-hero-scene .lp-hero > .lp-wrap {
+  width: 100%;
 }
 .lp .lp-hero-scene .lp-lead {
   max-width: 54ch;

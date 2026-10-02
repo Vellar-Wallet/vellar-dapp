@@ -28,7 +28,7 @@ export function X402Pillars() {
           eyebrow="Building on x402"
           title={
             <>
-              The <em>facilitator</em> for x402 on Stellar.
+              What the <em>payment layer</em> does.
             </>
           }
           lead={

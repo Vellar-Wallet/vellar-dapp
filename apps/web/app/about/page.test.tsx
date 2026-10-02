@@ -6,7 +6,7 @@ describe("About", () => {
   it("renders its headline and the four product pillars", () => {
     render(<About />);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(
-      /the facilitator for x402 on stellar/i,
+      /the payment layer for ai agents on stellar/i,
     );
     for (const name of ["The facilitator", "The Bazaar", "Buyer tools", "Seller tools"]) {
       expect(screen.getByText(name)).toBeDefined();

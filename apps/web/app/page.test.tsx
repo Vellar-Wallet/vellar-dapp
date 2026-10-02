@@ -6,11 +6,9 @@ describe("Landing", () => {
   it("renders the hero, docs/GitHub CTAs, proofs, and FAQ, with no link into the wallet app", () => {
     render(<Landing />);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(
-      /let agents pay your api/i,
+      /the payment layer for ai agents/i,
     );
-    expect(
-      screen.getByRole("heading", { name: /the facilitator for x402 on stellar/i }),
-    ).toBeDefined();
+    expect(screen.getByRole("heading", { name: /what the payment layer does/i })).toBeDefined();
 
     const docsLinks = screen.getAllByRole("link", { name: /read the docs/i });
     expect(docsLinks.length).toBeGreaterThan(0);

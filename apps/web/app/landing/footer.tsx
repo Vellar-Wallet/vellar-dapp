@@ -9,8 +9,8 @@ export function LpFooter() {
         <div className="lp-foot-top">
           <div className="lp-foot-brand">
             <p>
-              Vellar is an open-source x402 facilitator for Stellar: verify and settle payments,
-              sponsor the fee, and list every paid endpoint in a searchable Bazaar.
+              Vellar is the open-source payment layer for AI agents on Stellar: verify and settle
+              x402 payments, sponsor the fee, and list every paid endpoint in a searchable Bazaar.
             </p>
           </div>
           <div className="lp-foot-cols">

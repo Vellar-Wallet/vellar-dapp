@@ -25,14 +25,14 @@ export function Hero() {
         </Reveal>
 
         <Reveal delay={0.25} y={40} duration={0.8} as="h1" className="lp-poster lp-hero-poster">
-          Let agents <em>pay</em> your API.
+          The payment layer for AI <em>agents</em>.
         </Reveal>
 
         <Reveal delay={0.4} y={20}>
           <p className="lp-lead">
-            Vellar verifies and settles x402 payments on Stellar and lists every paid endpoint in a
-            searchable Bazaar. Charge per request for any API or MCP tool, and let AI agents find
-            you and pay in USDC. Open source, non-custodial, fees sponsored.
+            Vellar verifies and settles x402 payments on Stellar, lists every paid endpoint in a
+            searchable Bazaar, and gives sellers and agents the tools to use both. Open source,
+            non-custodial, fees sponsored.
           </p>
         </Reveal>
 

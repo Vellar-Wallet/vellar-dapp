@@ -3,7 +3,7 @@ import { Eyebrow } from "./ui";
 const FAQS = [
   {
     q: "What does Vellar actually do?",
-    a: "Vellar is an x402 facilitator for Stellar. It verifies signed payments, settles them on-chain, sponsors the network fee, and catalogs paid endpoints in a searchable Bazaar so agents can find them.",
+    a: "Vellar is the payment layer for AI agents on Stellar, built on x402. Its facilitator verifies signed payments, settles them on-chain and sponsors the network fee; the Bazaar catalogs paid endpoints so agents can find them; and a VS Code extension, a CLI and an MCP discovery server give sellers and agents tools to use both.",
   },
   {
     q: "Is Vellar custodial?",
