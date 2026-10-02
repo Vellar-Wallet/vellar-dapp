@@ -25,10 +25,6 @@ const FAQS = [
     q: "Which networks, tokens and payment schemes work today?",
     a: "Stellar testnet today, and Vellar settled its first payments on Stellar mainnet in September 2026. Any SEP-41 or Stellar Asset Contract token works, with USDC as the default. The exact scheme settles a fixed, pre-agreed amount; upto settles a metered amount up to a signed ceiling, which suits usage-based pricing, and is testnet-only for now.",
   },
-  {
-    q: "Has Vellar been audited?",
-    a: "Not independently, not yet. It's testnet-only and pre-production; an external security audit is planned before a production release tag.",
-  },
 ] as const;
 
 /** FAQ: aside + native details/summary accordion. */
