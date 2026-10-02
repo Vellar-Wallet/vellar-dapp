@@ -7,13 +7,27 @@
    earlier keyslagos.estate teardown; both audit docs since deleted):
    - White paper ground, forest ink, section-level inversion (no dark mode).
    - Zero border-radius: 45° clip-cut corners + 2px offset outline frames
-     stand in for rounding and for elevation shadows (none exist here).
+     stand in for rounding and for elevation shadows.
    - Two workhorse faces (Cabinet Grotesk display / Plus Jakarta Sans body)
      plus Playfair Display italic rationed to one emphasis phrase per
-     heading. Mono appears only inside genuinely monospaced content.
+     heading. Mono appears inside genuinely monospaced content AND as the
+     wide-tracked uppercase eyebrow above each headline.
    - Fluid clamp() type/spacing: mins land ~320px, maxes saturate ~1360px.
    - Accent palette is Vellar's own brand family (mint/lime/coral + sun),
-     used at confident coverage on cards and CTAs — the ground stays white.
+     used at confident coverage on cards and CTAs.
+
+   AMENDED 2026-10-02 (landing re-choreography, docs/decisions.md): the
+   landing page itself is no longer paper-ground. It is a stack of sticky
+   scenes and curtains on the INK ground, with a lime accent curtain and a
+   lime footer, adopting an external spec's structure and motion. That
+   work added, deliberately and only for the new surfaces:
+   - radius and elevation (--lp-r-*, --lp-sh-*), which the system lacked;
+   - a fourth face, the condensed Anton (--lp-condensed), rationed to the
+     two poster headlines;
+   - the `motion` runtime alongside GSAP.
+   The clip-cut cards and offset frames below are unchanged and coexist
+   with the rounded surfaces by decision. Other marketing pages (About)
+   still use the paper treatment described above.
 
    Deliberately fixed here (the audits' shared sins): visible
    :focus-visible on every interactive element, accent colours only in
@@ -325,9 +339,13 @@
   display: inline-flex;
   align-items: center;
   gap: 0.6em;
-  font-size: var(--lp-fs-eyebrow);
+  /* The reference's typographic signature: a small, widely tracked,
+     uppercase MONOSPACE label above each headline. Set in the mono face
+     rather than the body face. */
+  font-family: var(--lp-mono);
+  font-size: 0.75rem;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--lp-ink);
 }
@@ -468,44 +486,56 @@
 
 /* ---- Nav ------------------------------------------------------ */
 
+/* The default bar: the original in-flow, sticky paper bar. It is readable on
+   any ground, so it is what every page gets unless it opts in to floating. */
 .lp .lp-nav-outer {
-  position: fixed;
+  position: sticky;
   top: 0;
+  z-index: 50;
+  background: var(--lp-paper);
+  border-bottom: 1px solid var(--lp-line);
+}
+
+/* The floating variant (reference spec §4.1), opted into with LpShell's
+   `floatingNav` by pages that begin with the ink hero scene. It leaves the
+   flow, shows no bar of its own over the hero, then takes a readable
+   backdrop once scrolled.
+
+   It is opt-in because its light type and inverted logo are only correct
+   over an ink ground. Applied to a page that starts on white (About) it
+   made the logo vanish, white on white. The spec's own nav never gets the
+   scrolled state at all: it tracks scroll but never uses it, so its
+   wordmark disappears over accent sections. That quirk is explicitly not
+   copied, so the scrolled state below is a fix, not an embellishment. */
+.lp .lp-nav-outer--float {
+  position: fixed;
   left: 0;
   right: 0;
-  z-index: 50;
-  /* Floats over the hero scene with no bar of its own (reference spec
-     §4.1), then takes a readable backdrop once scrolled.
-
-     The spec's own nav never does the second part: it tracks scroll but
-     never uses it, so its wordmark disappears over accent-coloured
-     sections. That is one of the quirks this build is explicitly not
-     copying, so the scrolled state below is a fix, not an embellishment. */
   background: transparent;
-  border-bottom: 1px solid transparent;
+  border-bottom-color: transparent;
   transition:
     background var(--lp-dur-reveal) ease,
     border-color var(--lp-dur-reveal) ease,
     backdrop-filter var(--lp-dur-reveal) ease;
 }
 /* Over the ink hero: light type, no bar. */
-.lp .lp-nav-outer:not(.is-scrolled) {
+.lp .lp-nav-outer--float:not(.is-scrolled) {
   color: var(--lp-on-dark);
 }
 /* The logo is a dark-ink mark, invisible on the ink hero: invert it
    while the nav floats. Spec quirk #2, also explicitly fixed. */
-.lp .lp-nav-outer:not(.is-scrolled) .lp-brand img {
+.lp .lp-nav-outer--float:not(.is-scrolled) .lp-brand img {
   filter: brightness(0) invert(1);
 }
 /* Scrolled: a real paper bar, so every link stays readable over whatever
    section is passing underneath. */
-.lp .lp-nav-outer.is-scrolled {
+.lp .lp-nav-outer--float.is-scrolled {
   background: color-mix(in srgb, var(--lp-paper) 88%, transparent);
   backdrop-filter: blur(12px);
   border-bottom-color: var(--lp-line);
 }
 @media (prefers-reduced-motion: reduce) {
-  .lp .lp-nav-outer {
+  .lp .lp-nav-outer--float {
     transition: none;
   }
 }
@@ -1010,14 +1040,23 @@
   gap: var(--lp-sp-3);
   padding: var(--lp-sp-6);
   box-sizing: border-box;
-  /* Cut-corner border, drawn the same two-layer way as .lp-vsshot: a plain
-     `border` on a clip-path'd box leaves the border's straight edge crossing
-     the diagonal cut, producing a stray triangle at the corner. This paints
-     the border as a ::before behind the card, clipped to the OUTER shape;
-     the card's own background is clipped to the matching INSET shape, so the
-     1px gap between the two shapes is all that shows of the ::before. */
-  background: var(--lp-mint-soft);
-  clip-path: var(--lp-clip-tl-sm-in1);
+  /* Cut-corner border, in the system's standard two layers. A plain `border`
+     on a clip-path'd box leaves its straight edge crossing the diagonal cut,
+     producing a stray triangle. So the ELEMENT paints the border colour,
+     clipped to the OUTER shape, and ::before paints the FILL on top of it,
+     clipped to the matching INSET shape; the 1px gap between the two shapes
+     is all that shows of the border.
+
+     This used to be the other way round (fill on the element, border on a
+     ::before at z-index -1). That cannot work: the card's clip-path creates a
+     stacking context, in which a negative z-index child paints ABOVE the
+     element's own background, so the "border" layer washed every card with a
+     16% ink veil (a mint card rendered as rgb(186,217,206) instead of its
+     token rgb(220,248,236)) while the card's inset clip hid the border it
+     was meant to draw. */
+  --proof-fill: var(--lp-mint-soft);
+  background: var(--lp-line);
+  clip-path: var(--lp-clip-tl-sm);
   text-decoration: none;
   transition:
     transform 0.15s ease,
@@ -1026,12 +1065,13 @@
 /* Same color rotation as .lp-pillar, so this section reads as the same
    weight of "real thing" rather than a lighter afterthought. */
 .lp .lp-proofcard:nth-child(4n + 2) {
-  background: var(--lp-sun-soft);
+  --proof-fill: var(--lp-sun-soft);
 }
 .lp .lp-proofcard:nth-child(4n + 3) {
-  background: var(--lp-lime-soft);
+  --proof-fill: var(--lp-lime-soft);
 }
 .lp .lp-proofcard:nth-child(4n) {
+  --proof-fill: var(--lp-ink);
   background: var(--lp-ink);
 }
 .lp .lp-proofcard::before {
@@ -1039,11 +1079,8 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: var(--lp-line);
-  clip-path: var(--lp-clip-tl-sm);
-}
-.lp .lp-proofcard:nth-child(4n)::before {
-  background: var(--lp-ink);
+  background: var(--proof-fill);
+  clip-path: var(--lp-clip-tl-sm-in1);
 }
 .lp .lp-proofcard:hover {
   transform: translateY(-3px);
@@ -2306,7 +2343,7 @@
 /* Nav CTA over the ink hero: the forest button would vanish (forest on
    ink), so it takes the loud accent while the nav floats. ink on lime is
    9.3:1. Once the paper bar appears it returns to forest. */
-.lp .lp-nav-outer:not(.is-scrolled) .lp-btn--forest {
+.lp .lp-nav-outer--float:not(.is-scrolled) .lp-btn--forest {
   background: var(--lp-lime);
   color: var(--lp-ink);
 }
@@ -2410,9 +2447,7 @@
    border both vanish and the text appears to float. Forest is the system's
    raised-dark surface; the hairline border is the dark-ground line token. */
 .lp .lp-curtain--ink .lp-proofcard:nth-child(4n) {
-  background: var(--lp-forest);
-}
-.lp .lp-curtain--ink .lp-proofcard:nth-child(4n)::before {
+  --proof-fill: var(--lp-forest);
   background: var(--lp-line-dark);
 }
 
@@ -2885,7 +2920,7 @@
   color: var(--lp-ink);
   cursor: pointer;
 }
-.lp .lp-nav-outer:not(.is-scrolled) .lp-nav-toggle {
+.lp .lp-nav-outer--float:not(.is-scrolled) .lp-nav-toggle {
   color: var(--lp-on-dark);
 }
 .lp .lp-burger {
@@ -2987,4 +3022,46 @@
   .lp .lp-mmenu-cta .lp-btn {
     width: 100%;
   }
+}
+
+/* ---- Keyboard focus -------------------------------------------------------
+   Three separate problems, three separate fixes. Order matters: later rules
+   at equal specificity win, so the clipped-element fixes come last.
+
+   1. INK GROUND. The default ring is ink, so on the hero, the ink curtain,
+      the scrubbed scene and the floating nav it was ink-on-ink (1.00:1)
+      with only a faint mint halo (~2:1) to save it. A double ring fixes it
+      everywhere at once: a lime outline outside and an ink ring inside.
+      On ink the lime shows (9.3:1); on any light fill, such as a pastel
+      card, lime or white, the ink ring shows (7.6 to 12.2:1). One rule,
+      no per-surface cases. */
+.lp .lp-hero-scene :focus-visible,
+.lp .lp-curtain--ink :focus-visible,
+.lp .lp-scrub :focus-visible,
+.lp .lp-nav-outer--float:not(.is-scrolled) :focus-visible {
+  outline: 2px solid var(--lp-lime);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--lp-ink);
+}
+
+/* 2. CLIPPED CONTROLS. Buttons and proof cards have a cut corner made with
+      clip-path, and a clip-path also clips an outline drawn outside the
+      box, so their focus ring was not drawn at all: no ring on any button,
+      on any ground. The ring is drawn INSIDE the box instead, in the
+      element's own text colour, which by construction contrasts with its
+      fill (forest and ghost buttons get a light ring, sun and lime get an
+      ink one) without a rule per variant. */
+.lp .lp-btn:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: -6px;
+  box-shadow: none;
+}
+.lp .lp-proofcard:focus-visible {
+  outline: 3px solid var(--lp-ink);
+  outline-offset: -8px;
+  box-shadow: none;
+}
+/* The dark proof card takes light type, so its ring is light too. */
+.lp .lp-proofcard:nth-child(4n):focus-visible {
+  outline-color: var(--lp-lime);
 }

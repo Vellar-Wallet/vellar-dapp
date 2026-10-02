@@ -24,7 +24,7 @@ import { SdkCta } from "./landing/cta";
 
 export default function Landing() {
   return (
-    <LpShell>
+    <LpShell floatingNav>
       <div className="lp-staged">
         <HeroScene>
           <Hero />

@@ -282,6 +282,21 @@ describe("LpNav on a narrow screen", () => {
     expect(bar.className).toContain("is-scrolled");
   });
 
+  it("sits as an ordinary paper bar by default, so a page that opens on white keeps its logo", () => {
+    // The floating variant inverts the logo and takes light type, which is
+    // only correct over an ink hero. Applied to the About page it made the
+    // logo vanish (white on white), so floating is opt-in.
+    const { container } = render(<LpNav stars={1} />);
+    const bar = container.querySelector(".lp-nav-outer") as HTMLElement;
+    expect(bar.className).not.toContain("lp-nav-outer--float");
+  });
+
+  it("floats over the page only when asked to", () => {
+    const { container } = render(<LpNav stars={1} floating />);
+    const bar = container.querySelector(".lp-nav-outer") as HTMLElement;
+    expect(bar.className).toContain("lp-nav-outer--float");
+  });
+
   it("takes the paper backdrop once the page has scrolled", () => {
     const { container } = render(<LpNav stars={1} />);
     const bar = container.querySelector(".lp-nav-outer") as HTMLElement;

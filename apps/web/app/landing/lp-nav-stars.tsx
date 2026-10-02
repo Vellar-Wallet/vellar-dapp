@@ -8,9 +8,9 @@ import { getStarCount } from "./github-stars";
  *  making the whole page tree async — see LpShell's own comment for why that
  *  matters (Next's testing guide: async Server Components aren't supported by
  *  unit-test tooling). */
-async function NavWithCount() {
+async function NavWithCount({ floating }: { floating: boolean }) {
   const stars = await getStarCount();
-  return <LpNav stars={stars} />;
+  return <LpNav stars={stars} floating={floating} />;
 }
 
 /**
@@ -23,10 +23,10 @@ async function NavWithCount() {
  * hit (the common case — the count is revalidated hourly) the fallback is
  * never shown.
  */
-export function LpNavWithStars() {
+export function LpNavWithStars({ floating = false }: { floating?: boolean }) {
   return (
-    <Suspense fallback={<LpNav />}>
-      <NavWithCount />
+    <Suspense fallback={<LpNav floating={floating} />}>
+      <NavWithCount floating={floating} />
     </Suspense>
   );
 }

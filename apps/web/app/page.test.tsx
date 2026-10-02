@@ -33,4 +33,9 @@ describe("Landing", () => {
     const appLinks = screen.queryAllByRole("link").filter((l) => l.getAttribute("href") === "/app");
     expect(appLinks).toHaveLength(0);
   });
+
+  it("floats its nav over the ink hero", () => {
+    const { container } = render(<Landing />);
+    expect(container.querySelector(".lp-nav-outer--float")).not.toBeNull();
+  });
 });

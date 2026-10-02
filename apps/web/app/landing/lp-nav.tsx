@@ -77,7 +77,15 @@ function StarButton({ stars }: { stars?: number | null }) {
  *  here: this is a client component, and a per-visitor GitHub call would hit
  *  the unauthenticated 60/hour-per-IP limit. `null` means "unknown" — the
  *  badge is omitted entirely rather than rendering a misleading zero. */
-export function LpNav({ stars }: { stars?: number | null }) {
+export function LpNav({
+  stars,
+  floating = false,
+}: {
+  stars?: number | null;
+  /** Float transparent over the page's ink hero instead of sitting as a
+   *  paper bar. See `.lp-nav-outer--float` in landing.css. */
+  floating?: boolean;
+}) {
   // `open` is the MOBILE sheet; the desktop drip keeps its own state.
   const [open, setOpen] = useState(false);
   // The nav floats transparent over the hero and takes a paper backdrop
@@ -136,7 +144,9 @@ export function LpNav({ stars }: { stars?: number | null }) {
 
   return (
     <>
-      <div className={`lp-nav-outer${scrolled || open ? " is-scrolled" : ""}`}>
+      <div
+        className={`lp-nav-outer${floating ? " lp-nav-outer--float" : ""}${scrolled || open ? " is-scrolled" : ""}`}
+      >
         <nav className="lp-nav" aria-label="Primary">
           <Link href="/" className="lp-brand" onClick={() => setOpen(false)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}

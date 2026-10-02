@@ -14,11 +14,19 @@ import "./landing.css";
  *  over Unit Testing for async components"), which broke app/page.test.tsx.
  *  The await is isolated in LpNavWithStars instead, so the page tree stays
  *  synchronously renderable. */
-export function LpShell({ children }: { children: ReactNode }) {
+export function LpShell({
+  children,
+  floatingNav = false,
+}: {
+  children: ReactNode;
+  /** Let the nav float transparent over the page's first section. Only
+   *  correct for a page that opens on the ink hero scene; see landing.css. */
+  floatingNav?: boolean;
+}) {
   return (
     <div className="lp">
       <LandingMotion />
-      <LpNavWithStars />
+      <LpNavWithStars floating={floatingNav} />
       {children}
       <LpFooter />
     </div>
