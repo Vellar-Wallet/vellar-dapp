@@ -34,8 +34,9 @@ export default function Landing() {
           <X402Pillars />
           <TraceSection />
           {/* Rises over the trace scene's last viewport, so the scene's
-              exit plays underneath it (reference spec §3.2). */}
-          <Curtain>
+              exit plays underneath it (reference spec §3.2). "wide": below
+              800px the trace is static, so there is nothing to rise over. */}
+          <Curtain overlap="wide">
             <ProofStrip />
             <TwoSides />
             <VsCodeExtension />

@@ -116,8 +116,13 @@ export function Curtain({
   children: ReactNode;
   diagonal?: boolean;
   /** Pull up over the previous scene's last viewport. Only meaningful
-   *  when the block before is a sticky scene; otherwise leave it off. */
-  overlap?: boolean;
+   *  when the block before is a sticky scene; otherwise leave it off.
+   *
+   *  `"wide"` applies the overlap only above 800px. Use it after a scrubbed
+   *  scene: below that width the scene is static (see ScrubScene), there is
+   *  no pinned viewport to cover, and an overlap would just slide this block
+   *  up over the scene's own content. */
+  overlap?: boolean | "wide";
   tone?: "ink" | "lime";
   className?: string;
 }) {
@@ -125,7 +130,7 @@ export function Curtain({
     "lp-curtain",
     `lp-curtain--${tone}`,
     diagonal && "lp-curtain--diagonal",
-    overlap && "lp-curtain--overlap",
+    overlap === "wide" ? "lp-curtain--overlap-wide" : overlap && "lp-curtain--overlap",
     className,
   ]
     .filter(Boolean)

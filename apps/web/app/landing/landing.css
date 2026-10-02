@@ -2163,6 +2163,12 @@
 .lp-curtain--overlap {
   margin-top: -100vh;
 }
+/* The same overlap, but only where the scene before it actually pins. */
+@media (min-width: 801px) {
+  .lp-curtain--overlap-wide {
+    margin-top: -100vh;
+  }
+}
 /* The slanted seam the shrinking hero passes under: the top edge rises
    from left (8vw down) to right (0). */
 .lp-curtain--diagonal {
@@ -2472,16 +2478,33 @@
     height: auto;
     padding-block: var(--lp-sp-xl);
   }
-  .lp-curtain--overlap {
+  .lp-curtain--overlap,
+  .lp-curtain--overlap-wide {
     margin-top: 0;
   }
   .lp-curtain--diagonal {
     clip-path: none;
     padding-top: 0;
   }
+}
+
+/* Scrubbed scenes are static under reduced motion AND below 800px, where
+   their content (a header stacked over a panel) is taller than a phone
+   viewport and cannot pin. ScrubScene makes the same choice in JS; stating
+   it here as well means the right layout is there from the first paint,
+   before any script has run, instead of flashing a 320vh pinned scene. The
+   hero is not in this list: it pins at every width.
+
+   `!important` only on the height, which is an inline style from the
+   `height` prop. */
+@media (prefers-reduced-motion: reduce), (max-width: 800px) {
   .lp-scrub {
     height: auto !important;
     padding-block: var(--lp-sp-xl);
+  }
+  .lp-scrub .lp-scene-sticky {
+    position: static;
+    height: auto;
   }
   .lp-scrub-inner {
     height: auto;
@@ -3064,4 +3087,31 @@
 /* The dark proof card takes light type, so its ring is light too. */
 .lp .lp-proofcard:nth-child(4n):focus-visible {
   outline-color: var(--lp-lime);
+}
+
+/* ---- Platform cards: let long mono rows shrink and wrap -------------------
+   The mono rows are `white-space: nowrap` with an ellipsis, which only
+   works when the flex children are allowed to shrink, and no `min-width: 0`
+   was set down the chain (it was set for the hero cards, not these). So the
+   unbreakable FACILITATOR_URL forced its card wider than its grid column:
+   the card ran 144px past a phone viewport and the seller card's text was
+   cut off. The curtain's clip-path then hid the overflow instead of
+   showing a scrollbar.
+
+   Ellipsizing would truncate the one value a seller must read and copy in
+   full, so these rows wrap instead, at any character. */
+.lp .lp-plat > *,
+.lp .lp-platcard .mini,
+.lp .lp-platcard .lp-mrows,
+.lp .lp-platcard .lp-mrow,
+.lp .lp-platcard .lp-mrow span {
+  min-width: 0;
+}
+.lp .lp-platcard .lp-mrow {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.lp .lp-platcard .lp-mrow span {
+  overflow: visible;
+  text-overflow: clip;
 }

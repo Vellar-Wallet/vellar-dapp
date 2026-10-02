@@ -115,6 +115,15 @@ describe("Curtain", () => {
     expect(loud.className).toContain("lp-curtain--lime");
   });
 
+  it('"wide" overlaps only where the scene before it pins, never as a plain overlap', () => {
+    // Below 800px the trace is static, so a plain -100vh overlap slid the next
+    // block up over the trace's own content and hid it.
+    const { container } = render(<Curtain overlap="wide">x</Curtain>);
+    const el = container.firstElementChild as HTMLElement;
+    expect(el.className).toContain("lp-curtain--overlap-wide");
+    expect(el.className).not.toMatch(/lp-curtain--overlap(?!-)/);
+  });
+
   it("renders identical markup whatever the reduced-motion preference (hydration-safe)", () => {
     mockMedia({ reduced: false });
     const a = render(<Curtain diagonal>x</Curtain>).container.innerHTML;
