@@ -1086,12 +1086,15 @@
   transform: translateY(-3px);
   box-shadow: 0 8px 20px rgba(12, 59, 49, 0.12);
 }
+/* Soft ink, not faint: the faint token (55%) measured 3.15:1 to 3.19:1 for
+   this 12px label on every pastel card, under the 4.5 AA bar for small text.
+   Soft (74%) measures about 5.3:1. */
 .lp .lp-proofcard-label {
   font-family: var(--lp-mono);
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--lp-ink-faint);
+  color: var(--lp-ink-soft);
 }
 .lp .lp-proofcard-value {
   font-family: var(--lp-display);
@@ -1128,7 +1131,8 @@
 /* Fourth card (mainnet) sits on --lp-ink like the inverted sections do — every
    text color on it needs to flip along with the background. */
 .lp .lp-proofcard:nth-child(4n) .lp-proofcard-label {
-  color: rgba(255, 255, 255, 0.62);
+  /* Was 62% white, 4.24:1 on the dark card; the soft token is 78%. */
+  color: var(--lp-on-dark-soft);
 }
 .lp .lp-proofcard:nth-child(4n) .lp-proofcard-value {
   color: var(--lp-paper);
