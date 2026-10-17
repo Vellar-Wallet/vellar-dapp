@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { resolvePairOrigins, PairOriginsMisconfiguredError } from "./pair-origins";
+import {
+  MAX_PAIRED_ORIGINS,
+  PairedOriginsLimitExceededError,
+  PairOriginsMisconfiguredError,
+  addPairedOrigin,
+  resolvePairOrigins,
+} from "./pair-origins";
 
 // L3: the set of web-app origins allowed to `pair` is resolved fail-closed.
 // Dev (COMMAND="serve") falls back to localhost; a production build
@@ -66,5 +72,67 @@ describe("resolvePairOrigins (L3 pair-origin allowlist)", () => {
         raw: "https://app.vellar.xyz, https://app.vellar.xyz",
       }),
     ).toEqual(["https://app.vellar.xyz"]);
+  });
+});
+
+describe("paired origins per-wallet limit (#579)", () => {
+  it("allows pairing up to the exact N-th origin and rejects the (N + 1)-th with PairedOriginsLimitExceededError", () => {
+    const limit = 3;
+    let origins: string[] = [];
+
+    origins = addPairedOrigin(origins, "https://one.vellar.xyz/", { maxOrigins: limit });
+    origins = addPairedOrigin(origins, "https://two.vellar.xyz", { maxOrigins: limit });
+    // Exact N-th pairing succeeds.
+    origins = addPairedOrigin(origins, "https://three.vellar.xyz", { maxOrigins: limit });
+    expect(origins).toEqual([
+      "https://one.vellar.xyz",
+      "https://two.vellar.xyz",
+      "https://three.vellar.xyz",
+    ]);
+
+    // (N + 1)-th distinct origin throws a named error suggesting unpairing an unused origin first.
+    expect(() =>
+      addPairedOrigin(origins, "https://four.vellar.xyz", { maxOrigins: limit }),
+    ).toThrow(PairedOriginsLimitExceededError);
+
+    try {
+      addPairedOrigin(origins, "https://four.vellar.xyz", { maxOrigins: limit });
+    } catch (err) {
+      expect(err).toBeInstanceOf(PairedOriginsLimitExceededError);
+      const limitErr = err as PairedOriginsLimitExceededError;
+      expect(limitErr.code).toBe("paired_origins_limit_exceeded");
+      expect(limitErr.maxOrigins).toBe(3);
+      expect(limitErr.currentCount).toBe(3);
+      expect(limitErr.attemptedOrigin).toBe("https://four.vellar.xyz");
+      expect(limitErr.message).toMatch(/unpair an unused origin first/i);
+    }
+  });
+
+  it("permits re-pairing an already-paired origin even when at the maximum limit", () => {
+    const existing = [
+      "https://one.vellar.xyz",
+      "https://two.vellar.xyz",
+      "https://three.vellar.xyz",
+    ];
+    // Trailing slash normalizes to the existing entry and does not consume a new slot.
+    const updated = addPairedOrigin(existing, "https://two.vellar.xyz/", { maxOrigins: 3 });
+    expect(updated).toEqual(existing);
+  });
+
+  it("enforces MAX_PAIRED_ORIGINS by default in both addPairedOrigin and resolvePairOrigins", () => {
+    expect(MAX_PAIRED_ORIGINS).toBeGreaterThanOrEqual(5);
+
+    const fullList = Array.from(
+      { length: MAX_PAIRED_ORIGINS },
+      (_, i) => `https://app-${i + 1}.vellar.xyz`,
+    );
+    expect(() => addPairedOrigin(fullList, "https://overflow.vellar.xyz")).toThrow(
+      PairedOriginsLimitExceededError,
+    );
+
+    const oversizedRaw = [...fullList, "https://overflow.vellar.xyz"].join(", ");
+    expect(() => resolvePairOrigins({ command: "build", raw: oversizedRaw })).toThrow(
+      PairedOriginsLimitExceededError,
+    );
   });
 });
