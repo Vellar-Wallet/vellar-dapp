@@ -86,6 +86,62 @@ describe("OnboardingActions", () => {
     );
     expect(push).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("passkey-cancelled-notice").textContent).toBe(
+      "The passkey prompt was dismissed. Try again when you're ready.",
+    );
+  });
+
+  it("handles passkey creation cancelled mid-flow (AbortError or cause-wrapped NotAllowedError), preserves username, and recovers cleanly on retry (#575)", async () => {
+    const abortErr = new Error("The operation either timed out or was not allowed.");
+    abortErr.name = "AbortError";
+    const wrappedCancel = new Error("WebAuthn registration failed", {
+      cause: Object.assign(new Error("User cancelled"), { name: "NotAllowedError" }),
+    });
+
+    const createWallet = vi
+      .fn()
+      .mockRejectedValueOnce(abortErr)
+      .mockRejectedValueOnce(wrappedCancel)
+      .mockResolvedValueOnce(session);
+
+    const connector = fakeConnector({ createWallet });
+    renderActions(connector);
+
+    const nameInput = screen.getByLabelText<HTMLInputElement>(/wallet name/i);
+    fireEvent.change(nameInput, { target: { value: "alice" } });
+
+    // First attempt: user aborts passkey dialog mid-flow
+    fireEvent.click(screen.getByRole("button", { name: "Create wallet" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", { name: "Create wallet" }).disabled,
+      ).toBe(false),
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("status").textContent).toMatch(/passkey prompt was dismissed/i);
+    expect(nameInput.value).toBe("alice");
+
+    // Second attempt: wrapped NotAllowedError cause is also treated as user cancellation
+    fireEvent.click(screen.getByRole("button", { name: "Create wallet" }));
+
+    await waitFor(() => expect(createWallet).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", { name: "Create wallet" }).disabled,
+      ).toBe(false),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("passkey-cancelled-notice")).toBeTruthy();
+
+    // Third attempt: user completes passkey creation — notice clears and navigates to dashboard
+    fireEvent.click(screen.getByRole("button", { name: "Create wallet" }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+    expect(createWallet).toHaveBeenCalledTimes(3);
+    expect(createWallet).toHaveBeenLastCalledWith({ username: "alice", network: "testnet" });
+    expect(screen.queryByTestId("passkey-cancelled-notice")).toBeNull();
   });
 
   it("surfaces real failures as an error message", async () => {

@@ -19,6 +19,22 @@ import { getAnalyticsTracker, walletCreationEvents, walletSignInEvents } from "@
 // passkey, or reconnect with an existing one. Advanced flows live behind the
 // dashboard once connected.
 
+export const PASSKEY_CANCELLED_NOTICE =
+  "The passkey prompt was dismissed. Try again when you're ready.";
+
+export function isPasskeyCancellation(err: unknown): boolean {
+  if (isUserCancellation(passkeyCause(err))) {
+    return true;
+  }
+  if (typeof err === "object" && err !== null && "cause" in err) {
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause !== undefined && isUserCancellation(cause)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function OnboardingActions({
   environment,
 }: {
@@ -33,6 +49,7 @@ export function OnboardingActions({
   const [username, setUsername] = useState("");
   const [busy, setBusy] = useState<"create" | "connect" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
 
   useEffect(() => {
     setSupport(detectPasskeySupport(environment ?? environmentFromWindow(window)));
@@ -46,8 +63,10 @@ export function OnboardingActions({
   const disabled = busy !== null || unsupported;
 
   async function run(kind: "create" | "connect", action: () => Promise<unknown>) {
+    if (busy !== null) return;
     setBusy(kind);
     setError(null);
+    setCancelled(false);
 
     const context = { network: config.network };
 
@@ -76,7 +95,8 @@ export function OnboardingActions({
       router.push("/dashboard");
     } catch (err) {
       // Changing your mind at the passkey prompt is not an error state.
-      if (isUserCancellation(passkeyCause(err))) {
+      if (isPasskeyCancellation(err)) {
+        setCancelled(true);
         if (kind === "create") {
           walletCreationEvents.creationCancelled(context);
         }
@@ -139,6 +159,11 @@ export function OnboardingActions({
           {support?.supported === false && support.reason === "insecure-context"
             ? "Passkeys need a secure (HTTPS) connection."
             : "This browser doesn't support passkeys. Try a current version of Chrome, Safari, Edge, or Firefox."}
+        </p>
+      )}
+      {cancelled && !error && (
+        <p role="status" data-testid="passkey-cancelled-notice" className="text-[13px] opacity-80">
+          {PASSKEY_CANCELLED_NOTICE}
         </p>
       )}
       {error && (
