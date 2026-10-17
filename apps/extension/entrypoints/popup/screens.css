@@ -238,11 +238,37 @@ body,
   padding: 6px 10px;
   font-size: 12px;
 }
+.empty-state {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper-tint);
+}
+.empty-state-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
 .empty {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--ink-faint);
+}
+.empty-steps {
+  margin: 10px 0 0;
+  padding: 0 0 0 18px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.empty-cta {
+  margin-top: 12px;
+}
+.empty-cta-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-soft);
 }
 
 /* Not-paired state */
