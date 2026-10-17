@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   AttachMismatchError,
+  AttachTimeoutError,
   AttachUnconfirmedError,
   verifyAttachTx,
   type TxLookup,
@@ -160,5 +161,46 @@ describe("verifyAttachTx (L1 full attach verification)", () => {
     await expect(verifyAttachTx(lookup, { txHash: "h", ...target })).rejects.toBeInstanceOf(
       AttachUnconfirmedError,
     );
+  });
+
+  it("throws AttachTimeoutError distinct from AttachMismatchError when RPC lookup times out (#525)", async () => {
+    const stallingLookup: TxLookup = () =>
+      new Promise((resolve) => setTimeout(() => resolve({ status: "SUCCESS" }), 500));
+
+    let thrown: unknown;
+    try {
+      await verifyAttachTx(stallingLookup, { txHash: "h", ...target }, { timeoutMs: 50 });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(AttachTimeoutError);
+    expect((thrown as AttachTimeoutError).code).toBe("attach_timeout");
+    expect((thrown as AttachTimeoutError).retryable).toBe(true);
+  });
+
+  it("permits subsequent successful verification when on-chain attach confirms after previous timeout (#525)", async () => {
+    const xdrStr = buildAddPolicyXdr({ wallet: WALLET, policy: POLICY });
+    let attempt = 0;
+    const transientTimeoutLookup: TxLookup = async () => {
+      attempt++;
+      if (attempt === 1) {
+        // First attempt: simulate stall
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return { status: "SUCCESS", envelopeXdr: xdrStr };
+      }
+      // Second attempt: succeeds promptly
+      return { status: "SUCCESS", envelopeXdr: xdrStr };
+    };
+
+    // First attempt fails with timeout
+    await expect(
+      verifyAttachTx(transientTimeoutLookup, { txHash: "h", ...target }, { timeoutMs: 30 }),
+    ).rejects.toBeInstanceOf(AttachTimeoutError);
+
+    // Second attempt resolves cleanly (not treated as a permanent failure)
+    await expect(
+      verifyAttachTx(transientTimeoutLookup, { txHash: "h", ...target }, { timeoutMs: 500 }),
+    ).resolves.toBeUndefined();
   });
 });

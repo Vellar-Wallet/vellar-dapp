@@ -13,7 +13,12 @@
  * No side effects beyond record updates passed to caller.
  */
 
-import { DEPLOY_FEE, PolicyDeployError, type PolicyDeployer } from "./deploy";
+import {
+  DEPLOY_FEE,
+  DeploymentCommitError,
+  PolicyDeployError,
+  type PolicyDeployer,
+} from "./deploy";
 import {
   AttachMismatchError,
   AttachUnconfirmedError,
@@ -29,7 +34,7 @@ import {
 import type { PolicyRecord, PolicyRepository } from "./server";
 import type { Network } from "@vellar/types";
 
-export { DEPLOY_FEE } from "./deploy";
+export { DEPLOY_FEE, DeploymentCommitError } from "./deploy";
 export type { PolicyDeployer, SimulateResult } from "./deploy";
 
 /**
@@ -159,10 +164,64 @@ export async function deployPolicyInstance(
     wallet,
     deployedAt: now().toISOString(),
   };
-  await deps.policies.update(record);
+
+  try {
+    await deps.policies.update(record);
+  } catch (commitErr) {
+    // Specific failure mode: on-chain deployment succeeded, but persisting the local record failed.
+    recordOutcome(domainMetrics.policyDeployed, "policy-service", "failure");
+    throw new DeploymentCommitError(
+      `On-chain deployment succeeded (contract: ${result.contractId}, tx: ${result.txHash}), but local record commit failed: ${commitErr instanceof Error ? commitErr.message : String(commitErr)}`,
+      {
+        contractId: result.contractId,
+        txHash: result.txHash,
+        wallet,
+      },
+      commitErr,
+    );
+  }
 
   recordOutcome(domainMetrics.policyDeployed, "policy-service", "success");
   return { record, contractId: result.contractId };
+}
+
+/**
+ * Reconciles an orphaned on-chain deployment back into local persistence.
+ * Discovers and backfills an unrecorded policy record from on-chain deployment data.
+ * Idempotent: If run twice against the same orphaned deployment, it safely returns
+ * without double-recording or duplicating state changes.
+ */
+export async function reconcileOrphanedDeployment(
+  deps: DeploymentDeps,
+  policyId: string,
+  orphaned: { contractId: string; txHash: string; wallet: string },
+): Promise<{ record: PolicyRecord; reconciled: boolean }> {
+  const record = await deps.policies.find(policyId);
+  if (!record) {
+    throw new Error(`Policy record not found: ${policyId}`);
+  }
+
+  // Idempotency: if already recorded with this contractId, do not double-record
+  if (
+    (record.status === "instance_deployed" || record.status === "deployed") &&
+    (record.instance?.contractId === orphaned.contractId ||
+      record.deployment?.contractId === orphaned.contractId)
+  ) {
+    return { record, reconciled: false };
+  }
+
+  const now = deps.now ?? (() => new Date());
+  record.status = "instance_deployed";
+  record.instance = {
+    contractId: orphaned.contractId,
+    txHash: orphaned.txHash,
+    wallet: orphaned.wallet,
+    deployedAt: record.instance?.deployedAt ?? now().toISOString(),
+  };
+
+  await deps.policies.update(record);
+  recordOutcome(domainMetrics.policyDeployed, "policy-service", "success");
+  return { record, reconciled: true };
 }
 
 /**

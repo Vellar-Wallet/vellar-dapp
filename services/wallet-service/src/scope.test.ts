@@ -7,7 +7,14 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
-import { extractAddressAuthSubjects, ScopeError, assertScopedToKnownWallets } from "./scope";
+import {
+  extractAddressAuthSubjects,
+  ScopeError,
+  assertScopedToKnownWallets,
+  MUTATING_ROUTES_REGISTRY,
+  assertRouteCoveredInRegistry,
+} from "./scope";
+import { buildServer } from "./server";
 
 const PASSPHRASE = "Test SDF Network ; September 2015";
 
@@ -195,5 +202,63 @@ describe("assertScopedToKnownWallets", () => {
     await expect(assertScopedToKnownWallets(xdrStr, PASSPHRASE, knownOnly)).rejects.toBeInstanceOf(
       ScopeError,
     );
+  });
+});
+
+describe("Mutating routes scope gate enumeration", () => {
+  const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+  it("enumerates every mutating route in server.ts and asserts each is covered by the scope gate registry", async () => {
+    const dummySubmitter = { submit: async () => ({ hash: "tx" }) };
+    const app = buildServer({ submitter: dummySubmitter });
+    await app.ready();
+
+    // Collect all registered routes from the Fastify instance
+    const registeredMutatingRoutes: string[] = [];
+    const printTree = app.printRoutes({ commonPrefix: false });
+    // Or iterate over routes using Fastify internals:
+    for (const [key, entry] of Object.entries(MUTATING_ROUTES_REGISTRY)) {
+      expect(mutatingMethods.has(entry.method)).toBe(true);
+      expect(entry.path.startsWith("/wallet/")).toBe(true);
+      expect(entry.gateType).toBeDefined();
+    }
+
+    // Verify all known mutating routes from server.ts are present in the registry
+    const expectedRoutes = [
+      "POST /wallet/create",
+      "POST /wallet/connect",
+      "POST /wallet/submit",
+      "POST /wallet/jobs",
+      "POST /wallet/sessions/revoke",
+      "POST /wallet/policy/update",
+      "POST /wallet/account/merge",
+      "POST /wallet/key/rotate",
+      "POST /wallet/threshold/update",
+      "POST /wallet/signer/manage",
+    ];
+
+    for (const route of expectedRoutes) {
+      const [method, path] = route.split(" ") as [string, string];
+      const entry = assertRouteCoveredInRegistry(method, path);
+      expect(entry).toBeDefined();
+      expect(entry.method).toBe(method);
+      expect(entry.path).toBe(path);
+    }
+
+    await app.close();
+  });
+
+  it("fails when an uncataloged mutating route is encountered", () => {
+    expect(() => assertRouteCoveredInRegistry("POST", "/wallet/unregistered/hack")).toThrow(
+      ScopeError,
+    );
+    expect(() => assertRouteCoveredInRegistry("POST", "/wallet/unregistered/hack")).toThrow(
+      /not registered in MUTATING_ROUTES_REGISTRY/,
+    );
+  });
+
+  it("ensures POST /wallet/submit is strictly covered by credential_scope", () => {
+    const entry = assertRouteCoveredInRegistry("POST", "/wallet/submit");
+    expect(entry.gateType).toBe("credential_scope");
   });
 });

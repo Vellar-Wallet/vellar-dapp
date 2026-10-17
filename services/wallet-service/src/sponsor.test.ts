@@ -9,8 +9,10 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   consumeSponsorBudget,
+  enforceBalanceFloor,
   enforceFeeCap,
   needsSponsorRebuild,
+  SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS,
   SPONSOR_DEFAULT_MAX_FEE_STROOPS,
 } from "./sponsor";
 import { SubmissionError } from "./relayer";
@@ -117,6 +119,52 @@ describe("enforceFeeCap", () => {
   it("honors a custom (looser) cap", () => {
     expect(() => enforceFeeCap("5000000", "10000000")).not.toThrow();
     expect(() => enforceFeeCap("10000001", "10000000")).toThrow(SubmissionError);
+  });
+});
+
+describe("enforceBalanceFloor", () => {
+  it("accepts a balance strictly above the floor", () => {
+    expect(() =>
+      enforceBalanceFloor("20000000", SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS),
+    ).not.toThrow();
+    expect(() => enforceBalanceFloor("10000001", "10000000")).not.toThrow();
+  });
+
+  it("rejects a balance at or below the floor with code sponsor_balance_below_floor", () => {
+    let thrownAtFloor: unknown;
+    try {
+      enforceBalanceFloor(
+        SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS,
+        SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS,
+      );
+    } catch (err) {
+      thrownAtFloor = err;
+    }
+    expect(thrownAtFloor).toBeInstanceOf(SubmissionError);
+    expect(thrownAtFloor).toMatchObject({ code: "sponsor_balance_below_floor" });
+
+    let thrownBelowFloor: unknown;
+    try {
+      enforceBalanceFloor("5000000", SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS);
+    } catch (err) {
+      thrownBelowFloor = err;
+    }
+    expect(thrownBelowFloor).toBeInstanceOf(SubmissionError);
+    expect(thrownBelowFloor).toMatchObject({ code: "sponsor_balance_below_floor" });
+  });
+
+  it("default balance floor is 1.0 XLM (10,000,000 stroops)", () => {
+    expect(SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS).toBe("10000000");
+  });
+
+  it("invokes onFloorReached callback when floor is reached or breached", () => {
+    const events: Array<{ current: string; floor: string }> = [];
+    const callback = (current: string, floor: string) => {
+      events.push({ current, floor });
+    };
+
+    expect(() => enforceBalanceFloor("9000000", "10000000", callback)).toThrow(SubmissionError);
+    expect(events).toEqual([{ current: "9000000", floor: "10000000" }]);
   });
 });
 

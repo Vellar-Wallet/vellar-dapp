@@ -32,6 +32,13 @@ export interface SponsorConfig {
   /** Network label for budget accounting — from server config, never a request
    * body (V5). Required when budget is set. */
   budgetNetwork?: BudgetNetwork;
+  /** Configurable minimum sponsor balance floor (stroops). Refuses to sponsor
+   * when the sponsor account is at or below this floor. */
+  balanceFloorStroops?: string;
+  /** Metric or callback emitted when the balance floor guard trips. */
+  onFloorReached?: (currentBalanceStroops: string, floorStroops: string) => void;
+  /** Optional balance lookup function for testing or customized account queries. */
+  getBalanceStroops?: (publicKey: string) => Promise<string | undefined>;
 }
 
 // Default per-call sponsor fee cap: 0.1 XLM. Replaces the old hardcoded
@@ -39,6 +46,33 @@ export interface SponsorConfig {
 // still simulation-derived (prepareTransaction sets the real fee); this is the
 // safety cap above which we refuse to pay. Override via SPONSOR_MAX_FEE_STROOPS.
 export const SPONSOR_DEFAULT_MAX_FEE_STROOPS = "1000000";
+
+// Default minimum sponsor account balance floor: 1.0 XLM (10,000,000 stroops).
+// Prevents the sponsor account from falling below its minimum reserve.
+export const SPONSOR_DEFAULT_BALANCE_FLOOR_STROOPS = "10000000";
+
+/** Throws SubmissionError("sponsor_balance_below_floor") when the sponsor account
+ * balance is at or below the minimum reserve floor. Emits a distinct log or metric.
+ * Pure so it can be unit-tested without a live RPC. */
+export function enforceBalanceFloor(
+  currentBalanceStroops: string,
+  floorStroops: string,
+  onFloorReached?: (currentBalanceStroops: string, floorStroops: string) => void,
+): void {
+  if (BigInt(currentBalanceStroops) <= BigInt(floorStroops)) {
+    if (onFloorReached) {
+      onFloorReached(currentBalanceStroops, floorStroops);
+    } else {
+      console.warn(
+        `[sponsor] Balance floor reached: sponsor balance ${currentBalanceStroops} stroops <= floor ${floorStroops} stroops`,
+      );
+    }
+    throw new SubmissionError(
+      `Sponsor account balance ${currentBalanceStroops} stroops is at or below the ${floorStroops}-stroop reserve floor; refusing to sponsor.`,
+      "sponsor_balance_below_floor",
+    );
+  }
+}
 
 /** Throws SubmissionError("sponsor_fee_too_high") when the simulation-derived
  * fee exceeds the cap. Pure so it can be unit-tested without a live RPC. */
@@ -114,6 +148,29 @@ export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmit
 
       // Rebuild around the signed auth entries with the sponsor as fee source.
       const account = await server.getAccount(sponsor.publicKey());
+
+      // Balance floor check: ensure sponsor account retains safe minimum reserve
+      const floorStroops = config.balanceFloorStroops;
+      if (floorStroops) {
+        let currentBalanceStroops: string | undefined;
+        if (config.getBalanceStroops) {
+          currentBalanceStroops = await config.getBalanceStroops(sponsor.publicKey());
+        } else if ("balances" in account && Array.isArray((account as any).balances)) {
+          const native = (account as any).balances.find(
+            (b: any) => (b.asset_type ?? b.assetType) === "native",
+          );
+          if (native?.balance) {
+            const parts = String(native.balance).split(".");
+            const whole = BigInt(parts[0] || "0") * 10000000n;
+            const frac = BigInt((parts[1] || "").padEnd(7, "0").slice(0, 7));
+            currentBalanceStroops = (whole + frac).toString();
+          }
+        }
+        if (currentBalanceStroops !== undefined) {
+          enforceBalanceFloor(currentBalanceStroops, floorStroops, config.onFloorReached);
+        }
+      }
+
       const rebuilt = new TransactionBuilder(account, {
         fee: bidCeiling,
         networkPassphrase: config.networkPassphrase,

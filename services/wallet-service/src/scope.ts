@@ -98,3 +98,123 @@ export async function assertScopedToKnownWallets(
     }
   }
 }
+
+/**
+ * ============================================================================
+ * Mutating Route Scope Gate Registry & Policy
+ * ============================================================================
+ *
+ * Every mutating HTTP route (POST, PUT, PATCH, DELETE) registered in server.ts
+ * must be explicitly categorized and covered by an appropriate security/scoping
+ * gate.
+ *
+ * Gating categories:
+ * 1. "credential_scope": Routes executing transactions on behalf of smart wallets,
+ *    gated by `assertScopedToKnownWallets`.
+ * 2. "derivation_gate": Routes creating new wallets, gated by `assertDerivedContractId`.
+ * 3. "session_capability": Routes modifying account configuration, sessions, or signers,
+ *    gated by `resolveSessionCapability`.
+ * 4. "public_auth": Authentication handshake routes (signed challenge).
+ * 5. "worker_internal": Internal async worker job enqueueing routes.
+ *
+ * Process for adding a new mutating route:
+ * 1. Identify the intended access model and security boundary.
+ * 2. Apply the corresponding gate middleware/assertion in server.ts.
+ * 3. Register the method and path in `MUTATING_ROUTES_REGISTRY` below with its
+ *    assigned gate type and description.
+ * 4. Run `pnpm test` (or vitest) to verify that the route enumeration test
+ *    confirms full coverage.
+ */
+
+export type RouteGateType =
+  | "credential_scope"
+  | "derivation_gate"
+  | "session_capability"
+  | "public_auth"
+  | "worker_internal";
+
+export interface MutatingRouteEntry {
+  method: "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  gateType: RouteGateType;
+  description: string;
+}
+
+export const MUTATING_ROUTES_REGISTRY: Record<string, MutatingRouteEntry> = {
+  "POST /wallet/create": {
+    method: "POST",
+    path: "/wallet/create",
+    gateType: "derivation_gate",
+    description: "KeyId-to-contract derivation gate via assertDerivedContractId and spend budget",
+  },
+  "POST /wallet/connect": {
+    method: "POST",
+    path: "/wallet/connect",
+    gateType: "public_auth",
+    description: "Session authentication handshake via challenge signature verification",
+  },
+  "POST /wallet/submit": {
+    method: "POST",
+    path: "/wallet/submit",
+    gateType: "credential_scope",
+    description: "Credential scope gate via assertScopedToKnownWallets and replay guard",
+  },
+  "POST /wallet/jobs": {
+    method: "POST",
+    path: "/wallet/jobs",
+    gateType: "worker_internal",
+    description: "Worker job enqueueing with correlationId and trace context",
+  },
+  "POST /wallet/sessions/revoke": {
+    method: "POST",
+    path: "/wallet/sessions/revoke",
+    gateType: "session_capability",
+    description: "Session revocation gated by resolveSessionCapability",
+  },
+  "POST /wallet/policy/update": {
+    method: "POST",
+    path: "/wallet/policy/update",
+    gateType: "session_capability",
+    description: "Policy update gated by resolveSessionCapability",
+  },
+  "POST /wallet/account/merge": {
+    method: "POST",
+    path: "/wallet/account/merge",
+    gateType: "session_capability",
+    description: "Account merge gated by resolveSessionCapability",
+  },
+  "POST /wallet/key/rotate": {
+    method: "POST",
+    path: "/wallet/key/rotate",
+    gateType: "session_capability",
+    description: "Key rotation gated by resolveSessionCapability",
+  },
+  "POST /wallet/threshold/update": {
+    method: "POST",
+    path: "/wallet/threshold/update",
+    gateType: "session_capability",
+    description: "Threshold update gated by resolveSessionCapability",
+  },
+  "POST /wallet/signer/manage": {
+    method: "POST",
+    path: "/wallet/signer/manage",
+    gateType: "session_capability",
+    description: "Signer management gated by resolveSessionCapability",
+  },
+};
+
+/**
+ * Asserts that a given route is registered and covered by the mutating route scope registry.
+ * Throws a ScopeError if the route is uncataloged / unguarded.
+ */
+export function assertRouteCoveredInRegistry(method: string, path: string): MutatingRouteEntry {
+  const key = `${method.toUpperCase()} ${path}`;
+  const entry = MUTATING_ROUTES_REGISTRY[key];
+  if (!entry) {
+    throw new ScopeError(
+      `Mutating route ${key} is not registered in MUTATING_ROUTES_REGISTRY. All mutating routes must be audited and registered.`,
+      "unguarded_mutating_route",
+    );
+  }
+  return entry;
+}

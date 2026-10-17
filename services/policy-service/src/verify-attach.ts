@@ -26,6 +26,18 @@ export class AttachUnconfirmedError extends Error {
   }
 }
 
+/** "The attach verification RPC timed out" — distinct from a confirmed rejection
+ * (AttachMismatchError) or not found (AttachUnconfirmedError). Enables caller
+ * to differentiate a slow RPC response from genuine attach failure and safely retry. */
+export class AttachTimeoutError extends Error {
+  readonly code = "attach_timeout";
+  readonly retryable = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "AttachTimeoutError";
+  }
+}
+
 /** "The chain confirmed something that does NOT match this record" — the tx
  * failed, or attached a different policy/wallet, or is an unrelated call. The
  * caller maps this to 422: a definite lie, not a transient. */
@@ -81,22 +93,59 @@ function collectAddresses(scv: xdr.ScVal, out: string[]): void {
   }
 }
 
+export interface VerifyAttachOptions {
+  networkPassphrase?: string;
+  timeoutMs?: number;
+}
+
 /**
  * Verify a client-claimed attach transaction on-chain before a record is marked
  * deployed. Throws AttachUnconfirmedError (503-worthy) when the chain can't
- * confirm, AttachMismatchError (422-worthy) when it confirms a mismatch.
+ * confirm, AttachMismatchError (422-worthy) when it confirms a mismatch, and
+ * AttachTimeoutError when the verification RPC stalls past timeoutMs.
  * Resolves only when the tx exists, succeeded, and invoked add_signer on
  * `wallet` binding `policyContractId`.
  */
 export async function verifyAttachTx(
   lookup: TxLookup,
   target: AttachTarget,
-  networkPassphrase = "Test SDF Network ; September 2015",
+  networkPassphraseOrOptions: string | VerifyAttachOptions = "Test SDF Network ; September 2015",
 ): Promise<void> {
+  const options: VerifyAttachOptions =
+    typeof networkPassphraseOrOptions === "string"
+      ? { networkPassphrase: networkPassphraseOrOptions }
+      : networkPassphraseOrOptions;
+  const networkPassphrase =
+    options.networkPassphrase ?? "Test SDF Network ; September 2015";
+  const timeoutMs = options.timeoutMs;
+
   let res: TxResult;
   try {
-    res = await lookup(target.txHash);
+    if (timeoutMs && timeoutMs > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new AttachTimeoutError(
+                `Attach verification timed out for tx ${target.txHash} after ${timeoutMs}ms`,
+              ),
+            ),
+          timeoutMs,
+        );
+      });
+      try {
+        res = await Promise.race([lookup(target.txHash), timeoutPromise]);
+      } finally {
+        clearTimeout(timer);
+      }
+    } else {
+      res = await lookup(target.txHash);
+    }
   } catch (err) {
+    if (err instanceof AttachTimeoutError) {
+      throw err;
+    }
     // RPC unreachable — cannot confirm. Fail closed, retryable.
     throw new AttachUnconfirmedError(
       `Could not reach the network to verify the attach tx: ${err instanceof Error ? err.message : String(err)}`,

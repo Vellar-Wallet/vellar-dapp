@@ -1,12 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
 import {
   deployPolicyInstance,
+  reconcileOrphanedDeployment,
   verifyAndRecordAttach,
   simulatePolicyDeploy,
   type DeploymentDeps,
 } from "./deployment";
 import { AttachUnconfirmedError, AttachMismatchError } from "./verify-attach";
-import { PolicyDeployError } from "./deploy";
+import { DeploymentCommitError, PolicyDeployError } from "./deploy";
 import type { PolicyRecord, PolicyRepository } from "./server";
 
 const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
@@ -410,5 +410,82 @@ describe("verifyAndRecordAttach", () => {
       txHash: "anytx",
       deployedAt: "2026-08-29T12:00:00.000Z",
     });
+  });
+});
+
+describe("Compensating rollback and reconciliation path (#522)", () => {
+  it("detects on-chain success with database commit failure and throws DeploymentCommitError", async () => {
+    const deployInstance = vi.fn().mockResolvedValue({ contractId: C1, txHash: "deploy-tx-123" });
+    const repoFail: PolicyRepository = {
+      insert: vi.fn(),
+      find: vi.fn(),
+      update: vi.fn().mockRejectedValue(new Error("DB connection terminated")),
+      listPage: vi.fn(),
+    };
+    const deps = createDeps({
+      policies: repoFail,
+      deployer: { deployInstance } as never,
+    });
+    const record = createRecord();
+
+    let thrown: unknown;
+    try {
+      await deployPolicyInstance(deps, record, WALLET);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(DeploymentCommitError);
+    const commitErr = thrown as DeploymentCommitError;
+    expect(commitErr.code).toBe("deploy_commit_failed");
+    expect(commitErr.deployment).toEqual({
+      contractId: C1,
+      txHash: "deploy-tx-123",
+      wallet: WALLET,
+    });
+  });
+
+  it("reconciles an orphaned deployment back into policy repository", async () => {
+    const record = createRecord({ id: "orphaned-policy" });
+    const deps = createDeps();
+    await deps.policies.insert(record);
+
+    const orphaned = {
+      contractId: C1,
+      txHash: "tx-reconciled",
+      wallet: WALLET,
+    };
+
+    const res = await reconcileOrphanedDeployment(deps, "orphaned-policy", orphaned);
+    expect(res.reconciled).toBe(true);
+    expect(res.record.status).toBe("instance_deployed");
+    expect(res.record.instance).toMatchObject({
+      contractId: C1,
+      txHash: "tx-reconciled",
+      wallet: WALLET,
+    });
+
+    const stored = await deps.policies.find("orphaned-policy");
+    expect(stored?.status).toBe("instance_deployed");
+    expect(stored?.instance?.contractId).toBe(C1);
+  });
+
+  it("idempotently handles reconciliation called twice against the same orphaned deployment without double-recording", async () => {
+    const record = createRecord({ id: "orphaned-policy-2" });
+    const deps = createDeps();
+    await deps.policies.insert(record);
+
+    const orphaned = {
+      contractId: C1,
+      txHash: "tx-reconciled-2",
+      wallet: WALLET,
+    };
+
+    const first = await reconcileOrphanedDeployment(deps, "orphaned-policy-2", orphaned);
+    expect(first.reconciled).toBe(true);
+
+    const second = await reconcileOrphanedDeployment(deps, "orphaned-policy-2", orphaned);
+    expect(second.reconciled).toBe(false);
+    expect(second.record.instance?.contractId).toBe(C1);
   });
 });

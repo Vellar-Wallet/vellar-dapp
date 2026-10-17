@@ -45,6 +45,22 @@ export class PolicyDeployError extends Error {
   }
 }
 
+/** Error thrown when an on-chain policy deployment succeeds, but committing
+ * the resulting instance record to local persistence fails. Distinct from a
+ * full failure because the on-chain contract exists and can be reconciled. */
+export class DeploymentCommitError extends Error {
+  readonly code = "deploy_commit_failed";
+  readonly retryable = true;
+  constructor(
+    message: string,
+    readonly deployment: { contractId: string; txHash: string; wallet: string },
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = "DeploymentCommitError";
+  }
+}
+
 /** Sentinel error thrown internally by `withTimeoutError`'s own race timer.
  * Never escapes this module — `withTimeoutError` always translates it into
  * a `PolicyDeployError` with code `"deploy_rpc_timeout"` before rethrowing.
