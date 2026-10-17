@@ -16,6 +16,36 @@ import { useUpgradeWallet, useWalletVersion } from "@/lib/wallet-version";
 // same balances; only the contract code changes. The target is always the
 // hash this app build is pinned to, never user input.
 
+export interface WalletWasmChangelogEntry {
+  version: string;
+  summary: string;
+  changelogUrl: string;
+}
+
+/**
+ * Maintained changelog registry keyed by normalized 64-character hex wallet
+ * contract wasm hash. Each entry summarizes what changed in that contract build
+ * and links to the full release notes.
+ */
+export const WALLET_WASM_CHANGELOG: Readonly<Record<string, WalletWasmChangelogEntry>> = {
+  fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0: {
+    version: "v1.0.0 (passkey-kit v0.14.0)",
+    summary:
+      "Canonical v1 smart-wallet contract with WebAuthn secp256r1 passkey verification, temporary Ed25519 device sessions, policy co-signer enforcement, and in-place contract upgrades.",
+    changelogUrl:
+      "https://github.com/Vellar-Wallet/vellar-dapp/blob/main/CHANGELOG.md#wallet-wasm-fdefad64",
+  },
+};
+
+export function getWalletWasmChangelog(
+  wasmHash: string,
+  registry: Readonly<Record<string, WalletWasmChangelogEntry>> = WALLET_WASM_CHANGELOG,
+): WalletWasmChangelogEntry | null {
+  const normalized = wasmHash.trim().toLowerCase().replace(/^0x/, "");
+  if (!normalized) return null;
+  return registry[normalized] ?? null;
+}
+
 type State =
   | { step: "idle" }
   | { step: "approving" }
@@ -23,7 +53,14 @@ type State =
   | { step: "done"; hash: string; toWasmHash: string }
   | { step: "error"; message: string };
 
-export function WalletUpgradeCard({ session }: { session: WalletSession }) {
+export function WalletUpgradeCard({
+  session,
+  changelogRegistry = WALLET_WASM_CHANGELOG,
+}: {
+  session: WalletSession;
+  /** Test seam: overrides the maintained wallet wasm changelog registry. */
+  changelogRegistry?: Readonly<Record<string, WalletWasmChangelogEntry>>;
+}) {
   const version = useWalletVersion(session.accountId, session.network);
   const upgrade = useUpgradeWallet(session.accountId, session.network, session.keyId);
   const [state, setState] = useState<State>({ step: "idle" });
@@ -45,6 +82,7 @@ export function WalletUpgradeCard({ session }: { session: WalletSession }) {
 
   const busy = state.step === "approving" || state.step === "confirming";
   const status = version.data;
+  const changelog = status ? getWalletWasmChangelog(status.targetHash, changelogRegistry) : null;
 
   return (
     <section className="lpa-panel" aria-labelledby="wallet-upgrade-heading">
@@ -79,6 +117,36 @@ export function WalletUpgradeCard({ session }: { session: WalletSession }) {
           <dt className="text-[var(--lp-ink-faint)]">Latest</dt>
           <dd className="m-0 break-all font-[family-name:var(--lp-mono)]">{status.targetHash}</dd>
         </dl>
+      )}
+
+      {status && (
+        <div className="lpa-well mt-3 text-xs leading-relaxed text-[var(--lp-ink-soft)]">
+          {changelog ? (
+            <div data-testid="wallet-upgrade-changelog" className="flex flex-col gap-1">
+              <p className="m-0! font-bold text-[var(--lp-ink)]">
+                What&apos;s in {changelog.version}
+              </p>
+              <p className="m-0!">{changelog.summary}</p>
+              <a
+                href={changelog.changelogUrl}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="wallet-upgrade-changelog-link"
+                className="mt-0.5 self-start font-bold underline decoration-[var(--lp-mint)] decoration-2 underline-offset-2"
+              >
+                View wallet wasm changelog →
+              </a>
+            </div>
+          ) : (
+            <p className="m-0!" data-testid="wallet-upgrade-changelog-fallback">
+              No changelog entry is published yet for wasm{" "}
+              <code className="font-[family-name:var(--lp-mono)]">
+                {status.targetHash.slice(0, 12)}…
+              </code>
+              .
+            </p>
+          )}
+        </div>
       )}
 
       {status?.state === "current" && state.step !== "done" && (
