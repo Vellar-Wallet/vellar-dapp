@@ -44,13 +44,27 @@ function historyClient(): HistoryClient {
   return client;
 }
 
+export interface ActivityPage {
+  rows: HistoryTx[];
+  nextCursor?: string;
+}
+
+export interface PaginatedActivityView {
+  rows: HistoryTx[];
+  totalFetched: number;
+  nextCursor: string | undefined;
+  hasMore: boolean;
+  /** False when the entire history fits within a single page and there is no nextCursor (#596). */
+  showPaginationControls: boolean;
+}
+
 /**
  * Flattens the fetched pages into one newest-first list, de-duplicated by row
  * id. The two rails can return the same underlying event on adjacent pages
  * when a cursor boundary lands mid-stream, and a repeated key would make React
  * drop a row.
  */
-function flattenPages(pages: Array<{ rows: HistoryTx[] }>): HistoryTx[] {
+export function flattenPages(pages: ReadonlyArray<{ rows: HistoryTx[] }>): HistoryTx[] {
   const seen = new Set<string>();
   const rows: HistoryTx[] = [];
   for (const page of pages) {
@@ -64,6 +78,62 @@ function flattenPages(pages: Array<{ rows: HistoryTx[] }>): HistoryTx[] {
 }
 
 /**
+ * Fetches a single cursor-paginated activity page (#596).
+ */
+export async function fetchActivityPage(input: {
+  accountId: string;
+  network: Network;
+  cursor?: string;
+  pageSize?: number;
+  client?: HistoryClient;
+}): Promise<ActivityPage> {
+  const pageSize = input.pageSize ?? HISTORY_PAGE_SIZE;
+  const activeClient = input.client ?? historyClient();
+  return activeClient.fetchPage({
+    accountId: input.accountId,
+    network: input.network,
+    cursor: input.cursor,
+    pageSize,
+  });
+}
+
+/**
+ * Computes the paginated slice and cursor state from the pages fetched so far (#596).
+ * Initial load renders at most one `pageSize` slice (never the full unpaginated history),
+ * and each subsequent page loaded advances the visible limit by `pageSize`.
+ */
+export function paginateActivityPages(
+  pages: ReadonlyArray<ActivityPage>,
+  pageSize: number = HISTORY_PAGE_SIZE,
+): PaginatedActivityView {
+  if (pages.length === 0) {
+    return {
+      rows: [],
+      totalFetched: 0,
+      nextCursor: undefined,
+      hasMore: false,
+      showPaginationControls: false,
+    };
+  }
+
+  const allRows = flattenPages(pages);
+  const pageCap = Math.min(pages.length * pageSize, HISTORY_DISPLAY_LIMIT);
+  const rows = allRows.slice(0, pageCap);
+  const lastPage = pages[pages.length - 1];
+  const nextCursor = lastPage?.nextCursor;
+  const hasMore = Boolean(nextCursor) || allRows.length > rows.length;
+  const showPaginationControls = hasMore || pages.length > 1;
+
+  return {
+    rows,
+    totalFetched: allRows.length,
+    nextCursor,
+    hasMore,
+    showPaginationControls,
+  };
+}
+
+/**
  * Activity for the account, newest first, paginated via `fetchNextPage`.
  *
  * A surfaced error is a real one: transient RPC failures are retried inside the
@@ -71,32 +141,38 @@ function flattenPages(pages: Array<{ rows: HistoryTx[] }>): HistoryTx[] {
  * consumer must show a "history unavailable — retry" state rather than an empty
  * list, per the issue's hard requirement.
  */
-export function useActivity(accountId: string | undefined, network: Network | undefined) {
+export function useActivity(
+  accountId: string | undefined,
+  network: Network | undefined,
+  options?: { pageSize?: number; client?: HistoryClient },
+) {
+  const pageSize = options?.pageSize ?? HISTORY_PAGE_SIZE;
   const query = useInfiniteQuery({
-    queryKey: ["activity", accountId, network],
+    queryKey: ["activity", accountId, network, pageSize],
     enabled: accountId !== undefined && network !== undefined,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
-      historyClient().fetchPage({
+      fetchActivityPage({
         accountId: accountId as string,
         network: network as Network,
         cursor: pageParam,
-        pageSize: HISTORY_PAGE_SIZE,
+        pageSize,
+        client: options?.client,
       }),
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     staleTime: 30_000,
   });
 
-  const allRows = query.data ? flattenPages(query.data.pages) : [];
-  // Newest first, so the cap keeps the most recent activity on screen.
-  const rows = allRows.slice(0, HISTORY_DISPLAY_LIMIT);
+  const paginated = query.data
+    ? paginateActivityPages(query.data.pages, pageSize)
+    : paginateActivityPages([], pageSize);
 
   return {
     ...query,
-    rows,
-    // More than the cap means there is genuinely more to see, either further
-    // back in this window or in an older one.
-    hasMore: query.hasNextPage || allRows.length > rows.length,
+    rows: paginated.rows,
+    nextCursor: paginated.nextCursor,
+    hasMore: query.hasNextPage || paginated.hasMore,
+    showPaginationControls: query.hasNextPage || paginated.showPaginationControls,
     isLoadingMore: query.isFetchingNextPage,
     loadMore: () => query.fetchNextPage(),
   };
