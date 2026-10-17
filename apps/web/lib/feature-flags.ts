@@ -38,29 +38,72 @@ const FLAG_ENV_PREFIX = "NEXT_PUBLIC_FLAG_";
  * references, so the `process.env` default is empty in the browser and the
  * flag would read as off (see app/policies/page.tsx).
  */
+export const DEFAULT_ROLLOUT_PERCENT = 0;
+
 export function readFlagConfig(
   name: string,
   env: Record<string, string | undefined> = process.env,
 ): FeatureFlagConfig {
   const key = toEnvKey(name);
-  const rolloutRaw = env[`${FLAG_ENV_PREFIX}${key}_ROLLOUT_PERCENT`];
+  const envVarName = `${FLAG_ENV_PREFIX}${key}_ROLLOUT_PERCENT`;
+  const rolloutRaw = env[envVarName];
   const allowlistRaw = env[`${FLAG_ENV_PREFIX}${key}_ALLOWLIST`];
 
-  let rolloutPercent = 0;
-  if (rolloutRaw !== undefined && rolloutRaw !== "") {
-    const parsed = Number(rolloutRaw);
+  let rolloutPercent = DEFAULT_ROLLOUT_PERCENT;
+  if (rolloutRaw !== undefined && rolloutRaw.trim() !== "") {
+    const parsed = Number(rolloutRaw.trim());
     // clamp: a misconfigured value (negative, >100, NaN) must fail closed
     // toward "fewer people see it" rather than silently rolling out to
     // everyone or crashing the page.
-    rolloutPercent = Number.isFinite(parsed) ? Math.min(100, Math.max(0, parsed)) : 0;
+    if (Number.isFinite(parsed)) {
+      rolloutPercent = Math.min(100, Math.max(0, parsed));
+    } else {
+      console.warn(
+        `[feature-flags] Failed to parse ${envVarName}="${String(rolloutRaw)}"; falling back to default (${DEFAULT_ROLLOUT_PERCENT}%).`,
+      );
+      rolloutPercent = DEFAULT_ROLLOUT_PERCENT;
+    }
   }
 
-  const allowlist = (allowlistRaw ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
+  let allowlist: string[] = [];
+  if (allowlistRaw !== undefined && allowlistRaw !== "") {
+    try {
+      allowlist = String(allowlistRaw)
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0);
+    } catch (err) {
+      console.warn(
+        `[feature-flags] Failed to parse ${FLAG_ENV_PREFIX}${key}_ALLOWLIST; falling back to empty allowlist.`,
+        err,
+      );
+      allowlist = [];
+    }
+  }
 
   return { rolloutPercent, allowlist };
+}
+
+/**
+ * Parses a boolean feature flag value (`"true"`/`"1"` vs `"false"`/`"0"`),
+ * falling back to `defaultValue` with a warning if the raw value cannot be parsed (#597).
+ */
+export function parseBooleanFlag(
+  name: string,
+  rawValue: string | undefined,
+  defaultValue = false,
+): boolean {
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return defaultValue;
+  }
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") return true;
+  if (normalized === "false" || normalized === "0") return false;
+
+  console.warn(
+    `[feature-flags] Failed to parse boolean flag "${name}" from value "${rawValue}"; falling back to default (${String(defaultValue)}).`,
+  );
+  return defaultValue;
 }
 
 function toEnvKey(name: string): string {

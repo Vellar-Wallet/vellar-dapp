@@ -1,11 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { bucketFor, isFlagEnabled, readFlagConfig } from "./feature-flags";
+import { describe, expect, it, vi } from "vitest";
+import {
+  bucketFor,
+  DEFAULT_ROLLOUT_PERCENT,
+  isFlagEnabled,
+  parseBooleanFlag,
+  readFlagConfig,
+} from "./feature-flags";
 
-describe("readFlagConfig (#335)", () => {
-  it("defaults to 0% rollout and an empty allowlist when unconfigured", () => {
-    const cfg = readFlagConfig("policyBuilderV2", {});
-    expect(cfg.rolloutPercent).toBe(0);
-    expect(cfg.allowlist).toEqual([]);
+describe("readFlagConfig (#335, #597)", () => {
+  it("defaults to 0% rollout and an empty allowlist when unconfigured (absent flags)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const cfg = readFlagConfig("policyBuilderV2", {});
+      expect(cfg.rolloutPercent).toBe(DEFAULT_ROLLOUT_PERCENT);
+      expect(cfg.allowlist).toEqual([]);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("reads rolloutPercent and allowlist from the camelCase-derived env var names", () => {
@@ -31,10 +43,24 @@ describe("readFlagConfig (#335)", () => {
     expect(cfg.allowlist).toEqual(["GACCT1", "GACCT2"]);
   });
 
-  it("fails closed (0%) on a non-numeric rolloutPercent rather than throwing", () => {
-    const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: "not-a-number" });
-    expect(cfg.rolloutPercent).toBe(0);
-  });
+  it.each(["not-a-number", "NaN", "Infinity", "-Infinity", "{bad-json}", "true"])(
+    "fails closed (0%% default) and logs a warning on unparseable rolloutPercent %s rather than throwing (#597)",
+    (badValue) => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: badValue });
+        expect(cfg.rolloutPercent).toBe(DEFAULT_ROLLOUT_PERCENT);
+        expect(cfg.allowlist).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /Failed to parse NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT.*falling back to default/i,
+          ),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    },
+  );
 
   it("clamps a rolloutPercent above 100 down to 100", () => {
     const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: "500" });
@@ -44,6 +70,33 @@ describe("readFlagConfig (#335)", () => {
   it("clamps a negative rolloutPercent up to 0", () => {
     const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: "-10" });
     expect(cfg.rolloutPercent).toBe(0);
+  });
+});
+
+describe("parseBooleanFlag (#597)", () => {
+  it("parses valid boolean strings and returns the documented default when absent", () => {
+    expect(parseBooleanFlag("experimentalSwap", "true", false)).toBe(true);
+    expect(parseBooleanFlag("experimentalSwap", "1", false)).toBe(true);
+    expect(parseBooleanFlag("experimentalSwap", "false", true)).toBe(false);
+    expect(parseBooleanFlag("experimentalSwap", "0", true)).toBe(false);
+    expect(parseBooleanFlag("experimentalSwap", undefined, true)).toBe(true);
+    expect(parseBooleanFlag("experimentalSwap", "", false)).toBe(false);
+  });
+
+  it("falls back to the documented default and logs a warning when a flag value fails to parse", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(parseBooleanFlag("experimentalSwap", "not-a-bool", false)).toBe(false);
+      expect(parseBooleanFlag("experimentalSwap", "{corrupt", true)).toBe(true);
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /Failed to parse boolean flag "experimentalSwap".*falling back to default/i,
+        ),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
