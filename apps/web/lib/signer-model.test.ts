@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   canRevokeSigner,
   classifySigners,
+  classifySignerType,
+  getSignerCategory,
+  isDeviceSigner,
   isLastPasskey,
+  isPasskeySigner,
+  isPolicySigner,
   signerMutationErrorMessage,
   walletContractErrorCode,
   type RawSigner,
@@ -147,5 +152,54 @@ describe("wallet contract error mapping", () => {
       /already exists/,
     );
     expect(signerMutationErrorMessage(new Error("boom"), "fallback")).toBe("fallback");
+  });
+});
+
+describe("shared signer category classifier (#594)", () => {
+  it("distinguishes passkey, policy, and device signers across SignerEntry, RawSigner, and SignerKeyRef shapes", () => {
+    const entries = classifySigners(
+      [
+        passkey("cred-1"),
+        ed("GDEVICE", { storage: "temporary", expiration: 1_800_000_000 }),
+        policy("CPOLICY"),
+      ],
+      opts,
+    );
+
+    const [passkeyEntry, deviceEntry, policyEntry] = entries;
+
+    expect(classifySignerType(passkeyEntry)).toBe("passkey");
+    expect(classifySignerType(passkey("cred-1"))).toBe("passkey");
+    expect(classifySignerType({ kind: "Secp256r1", value: "cred-1" })).toBe("passkey");
+    expect(isPasskeySigner(passkeyEntry)).toBe(true);
+    expect(isPolicySigner(passkeyEntry)).toBe(false);
+    expect(isDeviceSigner(passkeyEntry)).toBe(false);
+
+    expect(classifySignerType(policyEntry)).toBe("policy");
+    expect(classifySignerType(policy("CPOLICY"))).toBe("policy");
+    expect(classifySignerType({ kind: "Policy", value: "CPOLICY" })).toBe("policy");
+    expect(isPolicySigner(policyEntry)).toBe(true);
+    expect(isPolicySigner(policyEntry, "CPOLICY")).toBe(true);
+    expect(isPolicySigner(policyEntry, "COTHER")).toBe(false);
+
+    expect(classifySignerType(deviceEntry)).toBe("device");
+    expect(classifySignerType(ed("GDEVICE", { storage: "temporary" }))).toBe("device");
+    expect(classifySignerType({ kind: "Ed25519", value: "GDEVICE" })).toBe("device");
+    expect(isDeviceSigner(deviceEntry)).toBe(true);
+    expect(getSignerCategory(deviceEntry)).toBe("device");
+  });
+
+  it("returns 'unknown' and never throws on unrecognized or malformed signer inputs", () => {
+    const [agentEntry] = classifySigners(
+      [ed("GAGENT", { limits: new Map([["CTOKEN", [{ key: "Policy", value: "CPOLICY" }]]]) })],
+      opts,
+    );
+    expect(classifySignerType(agentEntry)).toBe("unknown");
+    expect(classifySignerType(null)).toBe("unknown");
+    expect(classifySignerType(undefined)).toBe("unknown");
+    expect(classifySignerType("not-an-object")).toBe("unknown");
+    expect(classifySignerType({})).toBe("unknown");
+    expect(classifySignerType({ kind: "unknown-future-signer" })).toBe("unknown");
+    expect(classifySignerType({ key: { key: "UnknownCurve", value: "x" } })).toBe("unknown");
   });
 });

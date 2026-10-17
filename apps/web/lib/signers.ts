@@ -13,8 +13,16 @@ import { classifySigners, type SignerEntry, type SignerKeyRef } from "./signer-m
 // is no authoritative local signer list. Isolated in this module so component
 // tests can mock it, mirroring lib/sessions.ts.
 
-export type { SignerEntry, SignerKeyRef, SignerKind } from "./signer-model";
-export { canRevokeSigner, isLastPasskey } from "./signer-model";
+export type { SignerCategory, SignerEntry, SignerKeyRef, SignerKind } from "./signer-model";
+export {
+  canRevokeSigner,
+  classifySignerType,
+  getSignerCategory,
+  isDeviceSigner,
+  isLastPasskey,
+  isPasskeySigner,
+  isPolicySigner,
+} from "./signer-model";
 
 export const signersKey = (accountId: string | undefined, network: Network) => [
   "signers",

@@ -19,7 +19,7 @@ import {
   writeProvenancePreference,
   type ProvenanceMode,
 } from "@/lib/provenance";
-import { useInvalidateSigners, useSigners } from "@/lib/signers";
+import { isPolicySigner, useInvalidateSigners, useSigners } from "@/lib/signers";
 import { trackTransaction } from "@/lib/track";
 
 // Verified-only signing (#398). Modes:
@@ -73,7 +73,7 @@ export function ProvenanceCard({ session }: { session: WalletSession }) {
   // another device) the on-chain enforcement is gone and we say so.
   const attachedOnChain =
     !!pref.policyContractId &&
-    (signers.data ?? []).some((s) => s.kind === "policy" && s.key.value === pref.policyContractId);
+    (signers.data ?? []).some((s) => isPolicySigner(s, pref.policyContractId));
   const onChainMode = pref.mode === "strict" || pref.mode === "trusted_publishers";
   const enforcementLost = onChainMode && signers.data !== undefined && !attachedOnChain;
 
