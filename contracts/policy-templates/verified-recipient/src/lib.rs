@@ -73,6 +73,20 @@
 //! Each instance is bound at deploy to ONE wallet; `install` and `policy__`
 //! reject any other. Same TTL renewal and permissionless-self-clean behavior
 //! as the sibling policies.
+//!
+//! ## Same-ledger revocation ordering (#591)
+//!
+//! Because `check_provenance` performs a synchronous cross-contract read
+//! (`registry.is_verified` or `registry.publisher_of`) against persistent
+//! storage rather than caching attestation state per ledger, intra-ledger
+//! ordering is strictly deterministic by transaction execution position:
+//! - A payment whose `__check_auth` (`policy__`) executes **before** a
+//!   `registry.revoke(contract)` transaction in the same ledger observes the
+//!   live attestation and is authorized.
+//! - A payment whose `__check_auth` (`policy__`) executes **after**
+//!   `registry.revoke(contract)` in the exact same ledger (identical ledger
+//!   `sequence_number` and `timestamp`) immediately observes the deleted
+//!   persistent record and fails closed with [`PolicyError::NotAllowed`].
 
 #![no_std]
 

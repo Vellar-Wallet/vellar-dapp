@@ -661,3 +661,95 @@ fn repeated_evaluation_is_idempotent_and_deterministic() {
         );
     }
 }
+
+// ============================================================================
+// #591: Same-ledger attestation check vs. revocation ordering
+//
+// Deliberate behavior & rationale:
+// Soroban executes transactions sequentially within a ledger close, committing
+// each transaction's storage mutations before the next transaction in the same
+// ledger runs. Neither `vela-attestation-registry` nor this policy caches
+// verification status by ledger sequence: `revoke` removes
+// `StorageKey::Attestation(contract)` from persistent storage immediately, and
+// `policy__` performs a live cross-contract read (`is_verified` /
+// `publisher_of`) on every authorization check.
+//
+// Consequently, when an attestation write/check and a `revoke` land in the
+// SAME ledger (identical `sequence_number` and `timestamp`):
+// 1. Any `policy__` check ordered BEFORE `revoke` in that ledger succeeds.
+// 2. Any `policy__` check ordered AFTER `revoke` in that same ledger fails
+//    closed immediately with `PolicyError::NotAllowed`, without waiting for
+//    the next ledger close.
+// ============================================================================
+
+#[test]
+fn same_ledger_revocation_is_strictly_ordered_by_execution_position_strict_mode() {
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    // Pin the ledger sequence and timestamp so every operation below executes
+    // within the exact same ledger (#591).
+    let fixed_ledger_seq = 42_u32;
+    let fixed_timestamp = 1_700_000_000_u64;
+    fx.env.ledger().with_mut(|l| {
+        l.sequence_number = fixed_ledger_seq;
+        l.timestamp = fixed_timestamp;
+    });
+
+    attest(&fx, &token);
+    assert_eq!(fx.env.ledger().sequence(), fixed_ledger_seq);
+
+    // 1. Tx 1 in ledger 42: payment check_auth runs while the attestation is live.
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(fx.env.ledger().sequence(), fixed_ledger_seq);
+
+    // 2. Tx 2 in the SAME ledger 42: attestor revokes the contract's verification.
+    fx.registry.revoke(&token);
+    assert_eq!(fx.env.ledger().sequence(), fixed_ledger_seq);
+    assert!(!fx.registry.is_verified(&token));
+
+    // 3. Tx 3 in the SAME ledger 42: subsequent payment check_auth immediately
+    //    sees the revoked state and fails closed with PolicyError::NotAllowed.
+    let after_revoke = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(after_revoke, contract_err(PolicyError::NotAllowed));
+    assert_eq!(fx.env.ledger().sequence(), fixed_ledger_seq);
+    assert_eq!(fx.env.ledger().timestamp(), fixed_timestamp);
+}
+
+#[test]
+fn same_ledger_revocation_is_strictly_ordered_by_execution_position_trusted_publishers_mode() {
+    let fx = setup_mode(false, trusted(0x42));
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    let fixed_ledger_seq = 100_u32;
+    let fixed_timestamp = 1_700_000_500_u64;
+    fx.env.ledger().with_mut(|l| {
+        l.sequence_number = fixed_ledger_seq;
+        l.timestamp = fixed_timestamp;
+    });
+
+    attest_by(&fx, &token, &publisher(&fx.env, 0x42));
+
+    // Before revocation in ledger 100: authorized.
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+
+    // Revocation in the same ledger 100 clears both attestation and publisher attribution.
+    fx.registry.revoke(&token);
+    assert_eq!(fx.env.ledger().sequence(), fixed_ledger_seq);
+    assert_eq!(fx.registry.publisher_of(&token), None);
+
+    // Immediately after revocation in ledger 100: fails closed with NotAllowed.
+    let res = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+    assert_eq!(fx.env.ledger().sequence(), fixed_ledger_seq);
+    assert_eq!(fx.env.ledger().timestamp(), fixed_timestamp);
+}
+
