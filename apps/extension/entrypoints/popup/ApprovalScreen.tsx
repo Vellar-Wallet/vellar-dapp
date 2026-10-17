@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { browser } from "wxt/browser";
 import { TrustBadge } from "@vellar/ui";
-import type { VerificationStatus } from "@vellar/verification-sdk";
+import type { VerificationClient } from "@vellar/verification-sdk";
 import type { PendingApprovalSummary } from "../../lib/messages";
 import type { PairedWallet } from "../../lib/state";
 import { sanitizeString } from "../../lib/sanitization";
 import { formatStroops, summarizeTransaction, type TransactionSummary } from "../../lib/tx-summary";
-import { verificationClient } from "../../lib/verification";
+import {
+  extractApprovalContractIds,
+  fetchApprovalTrustSignal,
+  resolveApprovalTrustSignal,
+  type ApprovalTrustSignal,
+} from "../../lib/verification";
 
 // Connect / approve dApp screen (design.md §8, technical-doc.md §8.2): a
 // full-frame takeover led by a trust-signal hero. The requesting origin is
@@ -92,10 +97,17 @@ function describeRequest(request: PendingApprovalSummary["request"]): RequestCop
 /** Decode a sign_transaction request into a review summary (§8.2 — the user
  * must see WHAT they sign). stellar-sdk is loaded lazily so the popup stays
  * light; a decode failure yields a safe generic summary, never a throw. */
-function useTxSummary(approval: PendingApprovalSummary): TransactionSummary | null {
-  const [summary, setSummary] = useState<TransactionSummary | null>(null);
+function useTxSummary(
+  approval: PendingApprovalSummary,
+  summaryOverride?: TransactionSummary | null,
+): TransactionSummary | null {
+  const [summary, setSummary] = useState<TransactionSummary | null>(summaryOverride ?? null);
   const request = approval.request;
   useEffect(() => {
+    if (summaryOverride !== undefined) {
+      setSummary(summaryOverride);
+      return;
+    }
     if (request.method !== "sign_transaction") {
       setSummary(null);
       return;
@@ -113,38 +125,48 @@ function useTxSummary(approval: PendingApprovalSummary): TransactionSummary | nu
     return () => {
       cancelled = true;
     };
-  }, [request]);
+  }, [request, summaryOverride]);
   return summary;
 }
 
-/** Trust signal for a contract a transaction will call (§5.5). Best-effort: a
- * lookup failure yields "unverified" so the badge degrades to neutral rather
- * than blocking the review. */
-function useContractTrust(contractId: string | undefined): VerificationStatus {
-  const [status, setStatus] = useState<VerificationStatus>("unverified");
+/** Trust signal for a contract a transaction or approval interacts with (§5.5).
+ * Distinguishes verified records, no-record contracts, and explicitly unverified/failed records. */
+function useContractTrust(
+  contractId: string | undefined,
+  clientOverride?: Pick<VerificationClient, "getStatus">,
+): ApprovalTrustSignal | null {
+  const [signal, setSignal] = useState<ApprovalTrustSignal | null>(() =>
+    contractId ? resolveApprovalTrustSignal({ contractId, status: "unverified" }) : null,
+  );
   useEffect(() => {
-    if (!contractId) return;
+    if (!contractId) {
+      setSignal(null);
+      return;
+    }
     let cancelled = false;
+    setSignal(resolveApprovalTrustSignal({ contractId, status: "unverified" }));
     void (async () => {
-      try {
-        const result = await verificationClient().getStatus(contractId);
-        if (!cancelled) setStatus(result.status);
-      } catch {
-        if (!cancelled) setStatus("unverified");
-      }
+      const resolved = await fetchApprovalTrustSignal(contractId, clientOverride);
+      if (!cancelled) setSignal(resolved);
     })();
     return () => {
       cancelled = true;
     };
-  }, [contractId]);
-  return status;
+  }, [contractId, clientOverride]);
+  return signal;
 }
 
 const short = (id: string) => `${id.slice(0, 6)}…${id.slice(-6)}`;
 
-function OperationLine({ op }: { op: TransactionSummary["operations"][number] }) {
+function OperationLine({
+  op,
+  clientOverride,
+}: {
+  op: TransactionSummary["operations"][number];
+  clientOverride?: Pick<VerificationClient, "getStatus">;
+}) {
   const contractId = op.kind === "contract-call" ? op.contract : undefined;
-  const trust = useContractTrust(contractId);
+  const trust = useContractTrust(contractId, clientOverride);
 
   if (op.kind === "transfer") {
     return (
@@ -158,14 +180,22 @@ function OperationLine({ op }: { op: TransactionSummary["operations"][number] })
   }
   if (op.kind === "contract-call") {
     return (
-      <div className="op">
+      <div className="op" data-contract-trust={trust?.state ?? "no_record"}>
         <span className="verb">Call contract</span>
         <p className="what">
           <strong>{op.fn}</strong> on {short(op.contract)}
         </p>
-        <div className="badge">
-          <TrustBadge status={trust} size="sm" />
-        </div>
+        {trust && (
+          <div className="badge" data-trust-state={trust.state} title={trust.detail}>
+            <TrustBadge status={trust.status} size="sm" />
+            <span
+              className={`trust-label trust-${trust.tone}`}
+              style={{ marginLeft: 6, fontSize: 11 }}
+            >
+              {trust.label}
+            </span>
+          </div>
+        )}
       </div>
     );
   }
@@ -202,18 +232,26 @@ export function ApprovalScreen({
   total,
   wallet,
   onResolved,
+  summaryOverride,
+  verificationClientOverride,
 }: {
   approval: PendingApprovalSummary;
   position: number;
   total: number;
   wallet: PairedWallet | undefined;
   onResolved: () => void;
+  summaryOverride?: TransactionSummary | null;
+  verificationClientOverride?: Pick<VerificationClient, "getStatus">;
 }) {
   const [busy, setBusy] = useState(false);
   const { host, secure } = parseOrigin(approval.origin);
   const isSign = SIGN_METHODS.has(approval.request.method);
   const copy = describeRequest(approval.request);
-  const summary = useTxSummary(approval);
+  const summary = useTxSummary(approval, summaryOverride);
+
+  const txContractIds = extractApprovalContractIds(summary);
+  const primaryContractId = txContractIds[0] ?? copy.address ?? wallet?.address;
+  const primaryTrust = useContractTrust(primaryContractId, verificationClientOverride);
 
   // A new approval in the queue must not inherit the previous one's busy lock.
   useEffect(() => setBusy(false), [approval.id]);
@@ -252,11 +290,48 @@ export function ApprovalScreen({
             <span className={secure ? "signal" : "signal bad"}>
               {secure ? "🔒 Secure origin" : "⚠ Not HTTPS"}
             </span>
+            {primaryTrust && (
+              <span
+                className={
+                  primaryTrust.tone === "warning"
+                    ? "signal bad"
+                    : primaryTrust.tone === "verified"
+                      ? "signal"
+                      : "signal warn"
+                }
+                data-testid="approval-trust-signal"
+                data-trust-state={primaryTrust.state}
+                title={primaryTrust.detail}
+              >
+                {primaryTrust.tone === "verified"
+                  ? "✓"
+                  : primaryTrust.tone === "warning"
+                    ? "⚠"
+                    : "•"}{" "}
+                {primaryTrust.label}
+              </span>
+            )}
           </div>
           <p className="ask">
             <strong>{host}</strong> {copy.ask}
           </p>
         </section>
+
+        {primaryTrust && (
+          <section
+            className="section"
+            aria-label="Contract verification"
+            data-testid="contract-verification-section"
+            data-trust-state={primaryTrust.state}
+          >
+            <div className="section-head">
+              <span className="eyebrow">Contract verification</span>
+              <TrustBadge status={primaryTrust.status} size="sm" />
+            </div>
+            <p style={{ margin: "0 0 4px", fontSize: 12, fontWeight: 600 }}>{primaryTrust.label}</p>
+            <p style={{ margin: 0, fontSize: 11, opacity: 0.85 }}>{primaryTrust.detail}</p>
+          </section>
+        )}
 
         {approval.request.method === "connect" && (
           <section className="section">
@@ -287,7 +362,7 @@ export function ApprovalScreen({
               <span className="count">{summary.operations.length} op</span>
             </div>
             {summary.operations.map((op, i) => (
-              <OperationLine key={i} op={op} />
+              <OperationLine key={i} op={op} clientOverride={verificationClientOverride} />
             ))}
             {summary.movesValue && (
               <div className="callout">
