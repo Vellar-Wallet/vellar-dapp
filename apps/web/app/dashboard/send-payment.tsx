@@ -21,6 +21,65 @@ import { getSupportedTokens, parseAmountWithDecimals, TESTNET_NATIVE_SAC } from 
 // prefills the form (destination locked, amount locked if requested) and adds
 // the request's origin + message to the review. It never skips a step.
 
+/**
+ * Maintained directory of Stellar custodial/exchange deposit addresses known to
+ * require a memo / destination tag (SEP-29 `config.memo_required=1`). Sending to
+ * these pooled accounts without a memo can leave funds uncredited.
+ */
+export const KNOWN_MEMO_REQUIRED_DESTINATIONS: ReadonlyMap<string, string> = new Map([
+  ["GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM", "Coinbase"],
+  ["GCO2IP3MJNUOKS4PUDI4C7LGGMQDJGXG3COYX3WSB4HHNAHKYV5YL3VC", "Binance"],
+  ["GC5LOR3BK6KIOK7GKAUD5EGHQCMFOGHJTC7I3ELB66PTDFXORC2VM5LP", "Kraken"],
+  ["GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37", "Bitstamp"],
+  ["GB6YPGW5JFMMP2QB2USQ33EUWTXVL4ZT5ITUNCY3YKVWOJPP57CANOF3", "Bittrex"],
+  ["GDMXNQBJMS3FYI4P5Y4J7U5K6W7Q2Z3X4C5V6B7N8M9L0K1J2H3G4F5D", "Crypto.com"],
+]);
+
+export interface MemoRequirementCheck {
+  required: boolean;
+  entityName?: string;
+}
+
+/**
+ * Checks whether `destination` is a known memo-required custodial address or
+ * carries an explicit SEP-29 memo-required marker. Muxed (`M...`) addresses
+ * already embed a 64-bit memo ID and therefore do not require a separate memo.
+ */
+export function requiresDestinationMemo(
+  destination: string,
+  directory: ReadonlyMap<string, string> = KNOWN_MEMO_REQUIRED_DESTINATIONS,
+): MemoRequirementCheck {
+  const normalized = destination.trim().toUpperCase();
+  if (!normalized || normalized.startsWith("M") || normalized.startsWith("C")) {
+    return { required: false };
+  }
+  const knownEntity = directory.get(normalized);
+  if (knownEntity) {
+    return { required: true, entityName: knownEntity };
+  }
+  return { required: false };
+}
+
+export function shouldWarnMissingMemo(
+  destination: string,
+  memo?: string | null,
+  directory: ReadonlyMap<string, string> = KNOWN_MEMO_REQUIRED_DESTINATIONS,
+): { warn: boolean; entityName?: string; message?: string } {
+  const check = requiresDestinationMemo(destination, directory);
+  if (!check.required) {
+    return { warn: false };
+  }
+  if (typeof memo === "string" && memo.trim().length > 0) {
+    return { warn: false, entityName: check.entityName };
+  }
+  const label = check.entityName ?? "This destination";
+  return {
+    warn: true,
+    entityName: check.entityName,
+    message: `${label} requires a memo / destination tag to credit deposits. Sending without a memo may result in lost funds.`,
+  };
+}
+
 /** Where a prefilled payment came from, shown on the form and the review (§8.2). */
 export interface PaymentRequestContext {
   /** Verified SEP-7 origin domain, or null when the request is unsigned. */
@@ -32,14 +91,15 @@ export interface PaymentRequestContext {
 const formSchema = z.object({
   to: z.string().trim().min(1, "Recipient is required"),
   amount: z.string().trim().min(1, "Amount is required"),
+  memo: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
 type FlowState =
   | { step: "form" }
-  | { step: "review"; prepared: PreparedPayment }
-  | { step: "submitting"; prepared: PreparedPayment }
+  | { step: "review"; prepared: PreparedPayment; memo?: string }
+  | { step: "submitting"; prepared: PreparedPayment; memo?: string }
   | { step: "tracking"; hash: string }
   | { step: "done"; hash: string; result: "success" | "failed" };
 
@@ -57,7 +117,7 @@ export function SendPayment({
   availableTokens?: TokenInfo[];
   network: Network;
   onSuccess: () => void;
-  prefill?: { to: string; amount?: string };
+  prefill?: { to: string; amount?: string; memo?: string };
   request?: PaymentRequestContext;
 }) {
   const getPayments = usePaymentClient();
@@ -78,28 +138,41 @@ export function SendPayment({
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { to: prefill?.to ?? "", amount: prefill?.amount ?? "" },
+    defaultValues: {
+      to: prefill?.to ?? "",
+      amount: prefill?.amount ?? "",
+      memo: prefill?.memo ?? "",
+    },
   });
+
+  const watchedTo = form.watch("to");
+  const watchedMemo = form.watch("memo");
+  const memoWarning = shouldWarnMissingMemo(watchedTo ?? "", watchedMemo);
 
   async function prepare(values: FormValues) {
     setError(null);
     try {
       const amount = parseAmountWithDecimals(values.amount, selectedToken.decimals);
       const payments = await getPayments();
+      const trimmedMemo = values.memo?.trim();
       const prepared = await payments.preparePayment({
         from,
         to: values.to,
         token: selectedToken,
         amount,
       });
-      setFlow({ step: "review", prepared });
+      setFlow({
+        step: "review",
+        prepared,
+        ...(trimmedMemo ? { memo: trimmedMemo } : {}),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't prepare the payment.");
     }
   }
 
-  async function confirm(prepared: PreparedPayment) {
-    setFlow({ step: "submitting", prepared });
+  async function confirm(prepared: PreparedPayment, memo?: string) {
+    setFlow({ step: "submitting", prepared, ...(memo ? { memo } : {}) });
     setError(null);
     let hash: string;
     try {
@@ -107,12 +180,12 @@ export function SendPayment({
     } catch (err) {
       if (isUserCancellation(err)) {
         // Changing your mind at the passkey prompt returns you to review.
-        setFlow({ step: "review", prepared });
+        setFlow({ step: "review", prepared, ...(memo ? { memo } : {}) });
       } else {
         // Surface the raw failure for diagnostics; the user sees mapped copy.
         console.error("payment confirm failed", err);
         setError(walletErrorMessage(err));
-        setFlow({ step: "review", prepared });
+        setFlow({ step: "review", prepared, ...(memo ? { memo } : {}) });
       }
       return;
     }
@@ -186,6 +259,24 @@ export function SendPayment({
               <span className="ferror">{form.formState.errors.amount.message}</span>
             )}
           </label>
+          <label className="lpa-field">
+            <span className="flabel">Memo / destination tag (optional)</span>
+            <input
+              {...form.register("memo")}
+              placeholder="Exchange deposit memo or tag"
+              readOnly={prefill?.memo !== undefined}
+            />
+          </label>
+          {memoWarning.warn && (
+            <div
+              role="status"
+              data-testid="memo-required-warning"
+              className="lpa-well border-l-[3px]! border-l-[var(--lp-sun)]! text-xs leading-relaxed text-[var(--lp-ink-soft)]"
+            >
+              <strong className="text-[var(--lp-ink)]">Destination tag / memo warning:</strong>{" "}
+              {memoWarning.message}
+            </div>
+          )}
           <LpActionButton
             type="submit"
             disabled={form.formState.isSubmitting}
@@ -201,6 +292,16 @@ export function SendPayment({
           <span className="lpa-ok self-start text-[13px] font-bold">
             ✓ Review before signing — this cannot be undone
           </span>
+          {shouldWarnMissingMemo(flow.prepared.review.to, flow.memo).warn && (
+            <div
+              role="status"
+              data-testid="memo-required-warning"
+              className="lpa-well border-l-[3px]! border-l-[var(--lp-sun)]! text-xs leading-relaxed text-[var(--lp-ink-soft)]"
+            >
+              <strong className="text-[var(--lp-ink)]">Destination tag / memo warning:</strong>{" "}
+              {shouldWarnMissingMemo(flow.prepared.review.to, flow.memo).message}
+            </div>
+          )}
           <dl className="lpa-well flex flex-col gap-2.5 text-sm">
             {(
               [
@@ -210,6 +311,7 @@ export function SendPayment({
                 ["From", flow.prepared.review.from],
                 ["To", flow.prepared.review.to],
                 ["Token contract", flow.prepared.review.token.contractId],
+                ...(flow.memo ? ([["Memo", flow.memo]] as const) : []),
                 ...(request?.msg ? ([["Message", request.msg]] as const) : []),
               ] as const
             ).map(([label, value]) => (
@@ -243,7 +345,7 @@ export function SendPayment({
           </dl>
           <div className="flex gap-3">
             <LpActionButton
-              onClick={() => void confirm(flow.prepared)}
+              onClick={() => void confirm(flow.prepared, flow.memo)}
               disabled={flow.step === "submitting"}
             >
               {flow.step === "submitting" ? "Signing…" : "Confirm with passkey"}
