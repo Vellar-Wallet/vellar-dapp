@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { isUserCancellation } from "@vellar/passkey";
 import { WalletApiError } from "./http-backend";
-import { passkeyCause, walletErrorMessage } from "./messages";
+import {
+  createExtensionPostMessage,
+  EXTENSION_POST_MESSAGE_CHANNEL,
+  MESSAGE_SCHEMA_VERSION,
+  parseIncomingExtensionMessage,
+  UnsupportedMessageSchemaError,
+  validateIncomingExtensionMessage,
+  passkeyCause,
+  walletErrorMessage,
+} from "./messages";
 
 // Shapes as passkey-kit@0.14 constructs them (dist/errors.js): PasskeyKitError
 // subclasses carry a numeric `code` and, for WebAuthnError, the DOMException as
@@ -38,3 +47,73 @@ describe("walletErrorMessage / passkeyCause (reconnect failure copy, #469)", () 
     expect(walletErrorMessage(notAllowed)).toMatch(/dismissed/);
   });
 });
+
+describe("extension-web postMessage schemaVersion protocol (#599)", () => {
+  it("stamps schemaVersion: 1 on outgoing messages and accepts valid v1 incoming messages", () => {
+    const outgoing = createExtensionPostMessage({
+      kind: "request",
+      id: "req-1",
+      payload: { method: "connect", params: { network: "testnet" } },
+    });
+
+    expect(outgoing.schemaVersion).toBe(1);
+    expect(outgoing.schemaVersion).toBe(MESSAGE_SCHEMA_VERSION);
+    expect(outgoing.channel).toBe(EXTENSION_POST_MESSAGE_CHANNEL);
+
+    const validated = validateIncomingExtensionMessage(outgoing);
+    expect(validated).toEqual(outgoing);
+    expect(parseIncomingExtensionMessage(outgoing)).toEqual(outgoing);
+  });
+
+  it("rejects incoming messages missing schemaVersion with a clear error log", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const missingVersionMsg = {
+        channel: EXTENSION_POST_MESSAGE_CHANNEL,
+        kind: "request",
+        id: "req-missing-version",
+        payload: { method: "connect", params: { network: "testnet" } },
+      };
+
+      expect(() => validateIncomingExtensionMessage(missingVersionMsg)).toThrow(
+        UnsupportedMessageSchemaError,
+      );
+      expect(() => validateIncomingExtensionMessage(missingVersionMsg)).toThrow(
+        /missing schemaVersion.*expected schemaVersion 1/i,
+      );
+      expect(parseIncomingExtensionMessage(missingVersionMsg)).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/missing schemaVersion/i),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("rejects incoming messages with an unknown future schemaVersion (999) with a clear error log", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const futureVersionMsg = {
+        schemaVersion: 999,
+        channel: EXTENSION_POST_MESSAGE_CHANNEL,
+        kind: "response",
+        id: "res-future-version",
+        payload: { method: "connect", result: { address: "CABC", network: "testnet" } },
+      };
+
+      expect(() => validateIncomingExtensionMessage(futureVersionMsg)).toThrow(
+        UnsupportedMessageSchemaError,
+      );
+      expect(() => validateIncomingExtensionMessage(futureVersionMsg)).toThrow(
+        /unsupported schemaVersion "999".*expected schemaVersion 1/i,
+      );
+      expect(parseIncomingExtensionMessage(futureVersionMsg)).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/unsupported schemaVersion "999"/i),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+

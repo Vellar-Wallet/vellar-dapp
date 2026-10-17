@@ -49,3 +49,115 @@ export function walletErrorMessage(err: unknown): string {
   if (kit !== undefined && kitMessages[kit]) return kitMessages[kit];
   return passkeyMessages[normalizePasskeyError(passkeyCause(err)).code];
 }
+
+// --- Extension <-> Web postMessage protocol schema versioning (#599) ---
+
+export const MESSAGE_SCHEMA_VERSION = 1 as const;
+export const EXTENSION_POST_MESSAGE_CHANNEL = "vela-provider" as const;
+
+export type ExtensionMessageKind = "request" | "response";
+
+export interface ExtensionPostMessage<TPayload = unknown> {
+  schemaVersion: typeof MESSAGE_SCHEMA_VERSION;
+  channel: typeof EXTENSION_POST_MESSAGE_CHANNEL;
+  kind: ExtensionMessageKind;
+  id: string;
+  payload: TPayload;
+}
+
+export class UnsupportedMessageSchemaError extends Error {
+  readonly receivedVersion: unknown;
+  readonly expectedVersion = MESSAGE_SCHEMA_VERSION;
+
+  constructor(receivedVersion: unknown) {
+    const detail =
+      receivedVersion === undefined
+        ? "missing schemaVersion"
+        : `unsupported schemaVersion "${String(receivedVersion)}"`;
+    super(
+      `Rejected extension postMessage: ${detail} (expected schemaVersion ${MESSAGE_SCHEMA_VERSION})`,
+    );
+    this.name = "UnsupportedMessageSchemaError";
+    this.receivedVersion = receivedVersion;
+  }
+}
+
+/**
+ * Builds a schema-versioned outgoing extension-web postMessage envelope (`schemaVersion: 1`).
+ */
+export function createExtensionPostMessage<TPayload>(input: {
+  kind: ExtensionMessageKind;
+  id: string;
+  payload: TPayload;
+}): ExtensionPostMessage<TPayload> {
+  return {
+    schemaVersion: MESSAGE_SCHEMA_VERSION,
+    channel: EXTENSION_POST_MESSAGE_CHANNEL,
+    kind: input.kind,
+    id: input.id,
+    payload: input.payload,
+  };
+}
+
+/**
+ * Validates an incoming extension-web postMessage envelope (#599).
+ * Rejects messages with a missing or unsupported `schemaVersion` with a clear
+ * error log and throws `UnsupportedMessageSchemaError`.
+ */
+export function validateIncomingExtensionMessage<TPayload = unknown>(
+  raw: unknown,
+): ExtensionPostMessage<TPayload> {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error("Rejected extension postMessage: message must be a non-null object");
+  }
+
+  const candidate = raw as Record<string, unknown>;
+  if (!("schemaVersion" in candidate) || candidate.schemaVersion === undefined) {
+    const err = new UnsupportedMessageSchemaError(undefined);
+    console.error(`[messages] ${err.message}`);
+    throw err;
+  }
+
+  if (candidate.schemaVersion !== MESSAGE_SCHEMA_VERSION) {
+    const err = new UnsupportedMessageSchemaError(candidate.schemaVersion);
+    console.error(`[messages] ${err.message}`);
+    throw err;
+  }
+
+  if (candidate.channel !== EXTENSION_POST_MESSAGE_CHANNEL) {
+    throw new Error(
+      `Rejected extension postMessage: invalid channel "${String(candidate.channel)}"`,
+    );
+  }
+
+  if (candidate.kind !== "request" && candidate.kind !== "response") {
+    throw new Error(`Rejected extension postMessage: invalid kind "${String(candidate.kind)}"`);
+  }
+
+  if (typeof candidate.id !== "string" || candidate.id.trim().length === 0) {
+    throw new Error("Rejected extension postMessage: message id must be a non-empty string");
+  }
+
+  return {
+    schemaVersion: MESSAGE_SCHEMA_VERSION,
+    channel: EXTENSION_POST_MESSAGE_CHANNEL,
+    kind: candidate.kind,
+    id: candidate.id,
+    payload: candidate.payload as TPayload,
+  };
+}
+
+/**
+ * Safe parser wrapper around `validateIncomingExtensionMessage` that logs and returns
+ * `undefined` when an incoming message has a missing/unsupported `schemaVersion` or is malformed.
+ */
+export function parseIncomingExtensionMessage<TPayload = unknown>(
+  raw: unknown,
+): ExtensionPostMessage<TPayload> | undefined {
+  try {
+    return validateIncomingExtensionMessage<TPayload>(raw);
+  } catch {
+    return undefined;
+  }
+}
+
