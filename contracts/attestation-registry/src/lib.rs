@@ -115,6 +115,24 @@ pub struct Attestation {
     pub publisher: Option<BytesN<32>>,
 }
 
+/// Event payload emitted on every attestation write (`upsert` and
+/// `upsert_with_publisher`) so off-chain indexers can subscribe incrementally
+/// instead of scanning persistent contract storage.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttestationWriteEvent {
+    /// Contract address whose verification status was attested.
+    pub contract: Address,
+    /// Reproduced WASM hash recorded for `contract`.
+    pub wasm_hash: BytesN<32>,
+    /// Ledger sequence at which the attestation was written.
+    pub attested_ledger: u32,
+    /// First ledger sequence at which this attestation expires.
+    pub expires_ledger: u32,
+    /// Optional publisher attribution identifier.
+    pub publisher: Option<BytesN<32>>,
+}
+
 #[contract]
 pub struct Contract;
 
@@ -251,7 +269,7 @@ fn write_attestation(
             wasm_hash: wasm_hash.clone(),
             attested_ledger: now,
             expires_ledger,
-            publisher,
+            publisher: publisher.clone(),
         },
     );
 
@@ -263,8 +281,14 @@ fn write_attestation(
     renew_instance(env);
 
     env.events().publish(
-        (symbol_short!("attest"), contract),
-        (wasm_hash, expires_ledger),
+        (symbol_short!("attest"), contract.clone()),
+        AttestationWriteEvent {
+            contract,
+            wasm_hash,
+            attested_ledger: now,
+            expires_ledger,
+            publisher,
+        },
     );
 }
 

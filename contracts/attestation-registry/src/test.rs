@@ -12,11 +12,12 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-    Address, BytesN, Env, IntoVal,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
+    vec, Address, BytesN, Env, IntoVal,
 };
 
-use crate::{Contract, ContractClient};
+use crate::{AttestationWriteEvent, Contract, ContractClient};
 
 struct Fixture {
     env: Env,
@@ -450,3 +451,102 @@ fn revoke_clears_publisher_and_reupsert_without_publisher_drops_attribution() {
     assert!(f.registry.is_verified(&contract));
     assert_eq!(f.registry.publisher_of(&contract), None);
 }
+
+// ----- Event emission (#592) -----
+
+#[test]
+fn upsert_emits_attestation_write_event() {
+    let f = setup();
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0xCD);
+    let now = f.env.ledger().sequence();
+    let expires = now + 1000;
+
+    assert!(upsert_as(&f, &f.attestor, &contract, &hash, expires));
+
+    assert_eq!(
+        f.env.events().all(),
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("attest"), contract.clone()).into_val(&f.env),
+                AttestationWriteEvent {
+                    contract,
+                    wasm_hash: hash,
+                    attested_ledger: now,
+                    expires_ledger: expires,
+                    publisher: None,
+                }
+                .into_val(&f.env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn upsert_with_publisher_emits_attributed_attestation_write_event() {
+    let f = setup();
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0xEF);
+    let pub_id = publisher_id(&f.env, 0x77);
+    let now = f.env.ledger().sequence();
+    let expires = now + 2000;
+
+    assert!(upsert_with_publisher_as(
+        &f,
+        &f.attestor,
+        &contract,
+        &hash,
+        &pub_id,
+        expires
+    ));
+
+    assert_eq!(
+        f.env.events().all(),
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("attest"), contract.clone()).into_val(&f.env),
+                AttestationWriteEvent {
+                    contract,
+                    wasm_hash: hash,
+                    attested_ledger: now,
+                    expires_ledger: expires,
+                    publisher: Some(pub_id),
+                }
+                .into_val(&f.env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn rejected_writes_emit_no_events() {
+    let f = setup();
+    let mallory = Address::generate(&f.env);
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0x01);
+    let now = f.env.ledger().sequence();
+
+    // Unauthorized upsert emits no events
+    assert!(!upsert_as(&f, &mallory, &contract, &hash, now + 1000));
+    assert!(f.env.events().all().events().is_empty());
+
+    // Unauthorized attributed upsert emits no events
+    assert!(!upsert_with_publisher_as(
+        &f,
+        &mallory,
+        &contract,
+        &hash,
+        &publisher_id(&f.env, 0x42),
+        now + 1000
+    ));
+    assert!(f.env.events().all().events().is_empty());
+
+    // Invalid expiry (not strictly in the future) emits no events
+    assert!(!upsert_as(&f, &f.attestor, &contract, &hash, now));
+    assert!(f.env.events().all().events().is_empty());
+}
+
