@@ -20,7 +20,9 @@ export class DuplicateWalletError extends Error {
 }
 
 export interface WalletRepository {
-  /** Rejects with DuplicateWalletError when the keyId is already mapped on that network. */
+  /** Rejects with DuplicateWalletError when the keyId is already mapped on that network.
+   * Concurrency policy (#602): first-write-wins with optimistic-concurrency rejection
+   * (`DuplicateWalletError`) for duplicate inserts on the same `(keyId, network)`. */
   insert(record: WalletRecord): Promise<void>;
   findByKeyId(keyId: string, network: Network): Promise<WalletRecord | undefined>;
   /** True when the server has a wallet record for this contract on this network.
@@ -34,6 +36,15 @@ export interface WalletRepository {
    * only real authority. (See the derivation-gate limitation note in
    * docs/security-audit.md.) */
   existsByContractId(contractId: string, network: Network): Promise<boolean>;
+  /** Optional serialized atomic read-modify-write / update for a wallet record (#602).
+   * Concurrent calls targeting the same `(keyId, network)` are serialized in FIFO
+   * last-write-wins order so async read-modify-write cycles never interleave into
+   * a half-updated record. */
+  update?(
+    keyId: string,
+    network: Network,
+    updater: (current: WalletRecord) => Partial<Pick<WalletRecord, "contractId" | "createdAt">> | WalletRecord | Promise<Partial<Pick<WalletRecord, "contractId" | "createdAt">> | WalletRecord>,
+  ): Promise<WalletRecord>;
 }
 
 export interface SessionRecord {
@@ -115,17 +126,44 @@ export interface AuditLog {
   listPage(filter: { type?: string; actor?: string; limit: number; after?: AuditCursor }): Promise<AuditPage>;
 }
 
-export function createMemoryWalletRepository(): WalletRepository {
+export function createMemoryWalletRepository(): Required<WalletRepository> {
   const byKey = new Map<string, WalletRecord>();
+  const locks = new Map<string, Promise<unknown>>();
   const key = (keyId: string, network: Network) => `${network}:${keyId}`;
+  const clone = (r: WalletRecord): WalletRecord => ({
+    keyId: r.keyId,
+    contractId: r.contractId,
+    network: r.network,
+    createdAt: r.createdAt,
+  });
+
+  function withKeyLock<T>(k: string, fn: () => Promise<T>): Promise<T> {
+    const prev = locks.get(k) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    const tracked = next
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        if (locks.get(k) === tracked) locks.delete(k);
+      });
+    locks.set(k, tracked);
+    return next;
+  }
+
   return {
     async insert(record) {
       const k = key(record.keyId, record.network);
-      if (byKey.has(k)) throw new DuplicateWalletError(record.keyId, record.network);
-      byKey.set(k, record);
+      const snapshot = clone(record);
+      return withKeyLock(k, async () => {
+        if (byKey.has(k)) throw new DuplicateWalletError(snapshot.keyId, snapshot.network);
+        byKey.set(k, snapshot);
+      });
     },
     async findByKeyId(keyId, network) {
-      return byKey.get(key(keyId, network));
+      const found = byKey.get(key(keyId, network));
+      return found ? clone(found) : undefined;
     },
     async existsByContractId(contractId, network) {
       for (const record of byKey.values()) {
@@ -133,30 +171,60 @@ export function createMemoryWalletRepository(): WalletRepository {
       }
       return false;
     },
+    async update(keyId, network, updater) {
+      const k = key(keyId, network);
+      return withKeyLock(k, async () => {
+        const current = byKey.get(k);
+        if (!current) {
+          throw new Error(`Wallet not found for keyId ${keyId} on ${network}`);
+        }
+        const patch = await updater(clone(current));
+        const updated: WalletRecord = {
+          keyId: current.keyId,
+          network: current.network,
+          contractId: patch.contractId ?? current.contractId,
+          createdAt: patch.createdAt ?? current.createdAt,
+        };
+        byKey.set(k, updated);
+        return clone(updated);
+      });
+    },
   };
 }
 
 export function createMemorySessionRepository(): SessionRepository {
   const sessions = new Map<string, SessionRecord>();
   const isLive = (s: SessionRecord, asOf: Date) => new Date(s.expiresAt).getTime() > asOf.getTime();
+  const clone = (s: SessionRecord): SessionRecord => ({
+    id: s.id,
+    contractId: s.contractId,
+    network: s.network,
+    createdAt: s.createdAt,
+    lastActiveAt: s.lastActiveAt,
+    expiresAt: s.expiresAt,
+  });
   return {
     async insert(record) {
-      sessions.set(record.id, record);
+      sessions.set(record.id, clone(record));
     },
     async find(id, asOf = new Date()) {
       const s = sessions.get(id);
-      return s && isLive(s, asOf) ? s : undefined;
+      return s && isLive(s, asOf) ? clone(s) : undefined;
     },
     async listByContract(contractId, network, asOf = new Date()) {
       return [...sessions.values()]
         .filter((s) => s.contractId === contractId && s.network === network && isLive(s, asOf))
-        .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));
+        .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))
+        .map(clone);
     },
     async touch(id, at, newExpiresAt) {
       const s = sessions.get(id);
       if (!s || !isLive(s, at)) return false;
-      s.lastActiveAt = at.toISOString();
-      s.expiresAt = newExpiresAt.toISOString();
+      sessions.set(id, {
+        ...s,
+        lastActiveAt: at.toISOString(),
+        expiresAt: newExpiresAt.toISOString(),
+      });
       return true;
     },
     async delete(id) {
