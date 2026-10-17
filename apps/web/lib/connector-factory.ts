@@ -295,8 +295,16 @@ export function getWalletRuntime(): Promise<WalletRuntime> {
         SignerStore: enums.SignerStore,
       });
     }
-  })();
+  })().catch((err) => {
+    runtimePromise = undefined;
+    throw err;
+  });
   return runtimePromise;
+}
+
+/** Clears the cached wallet runtime promise (test seam and retry recovery). */
+export function resetWalletRuntime(): void {
+  runtimePromise = undefined;
 }
 
 /** Upper bound on indexer rows confirmed per listing (one ledger read each). */
@@ -337,8 +345,129 @@ function signerKeyFrom(
   }
 }
 
-export function createRealConnector(): Promise<WalletConnector> {
-  return getWalletRuntime().then((runtime) => runtime.connector);
+export type ConnectorFactoryCandidate = () => Promise<WalletConnector> | WalletConnector;
+
+export interface CreateConnectorOptions {
+  /** Ordered priority list of connector factories (preferred first, then fallbacks). */
+  candidates?: readonly ConnectorFactoryCandidate[];
+  /** Optional preferred connector factory override. */
+  preferred?: ConnectorFactoryCandidate;
+  /** Optional secondary/fallback connector factory override. */
+  fallback?: ConnectorFactoryCandidate;
+}
+
+/**
+ * Structured error thrown when all candidate wallet connectors fail to initialize (#601).
+ */
+export class ConnectorInitializationError extends Error {
+  readonly code = "CONNECTOR_INIT_FAILED" as const;
+  readonly causes: readonly unknown[];
+
+  constructor(
+    message = "No supported wallet connector available",
+    causes: readonly unknown[] = [],
+  ) {
+    super(message, causes.length > 0 ? { cause: causes[causes.length - 1] } : undefined);
+    this.name = "ConnectorInitializationError";
+    this.causes = causes;
+  }
+}
+
+/**
+ * Secondary/fallback connector backed by the injected Vellar browser extension
+ * provider (`window.vela`), used when the preferred PasskeyKit connector fails
+ * to initialize.
+ */
+export function createExtensionFallbackConnector(): WalletConnector {
+  if (typeof window === "undefined") {
+    throw new Error("Browser window is unavailable for extension fallback connector");
+  }
+  const provider = (
+    window as {
+      vela?: {
+        connect(network: "testnet" | "mainnet"): Promise<{ address: string; network: string }>;
+        signTransaction(input: {
+          xdr: string;
+          network: "testnet" | "mainnet";
+        }): Promise<{ signedXdr: string }>;
+      };
+    }
+  ).vela;
+  if (!provider) {
+    throw new Error("No injected Vellar extension provider available");
+  }
+
+  return {
+    async createWallet(input) {
+      const { address } = await provider.connect(input.network);
+      const now = new Date().toISOString();
+      return {
+        accountId: address,
+        network: input.network,
+        connected: true,
+        authMethod: "passkey",
+        createdAt: now,
+        lastActiveAt: now,
+      };
+    },
+    async connectWallet(network) {
+      const { address } = await provider.connect(network);
+      const now = new Date().toISOString();
+      return {
+        accountId: address,
+        network,
+        connected: true,
+        authMethod: "passkey",
+        createdAt: now,
+        lastActiveAt: now,
+      };
+    },
+    async signTransaction(input) {
+      return provider.signTransaction({ xdr: input.xdr, network: input.network });
+    },
+  };
+}
+
+/**
+ * Attempts to initialize the preferred connector and falls back through secondary
+ * candidates in priority order if initialization fails (#601).
+ */
+export async function createConnectorWithFallback(
+  options: CreateConnectorOptions = {},
+): Promise<WalletConnector> {
+  const defaultPreferred: ConnectorFactoryCandidate = () =>
+    getWalletRuntime().then((runtime) => runtime.connector);
+  const candidates: readonly ConnectorFactoryCandidate[] = options.candidates ?? [
+    options.preferred ?? defaultPreferred,
+    options.fallback ?? createExtensionFallbackConnector,
+  ];
+
+  const failures: unknown[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i]!;
+    try {
+      const connector = await candidate();
+      if (!connector) {
+        throw new Error(`Connector candidate #${i + 1} returned an empty connector`);
+      }
+      return connector;
+    } catch (err) {
+      failures.push(err);
+      console.warn(
+        `[connector-factory] Connector candidate #${i + 1} failed to initialize${
+          i + 1 < candidates.length ? "; attempting fallback connector" : ""
+        }:`,
+        err,
+      );
+    }
+  }
+
+  throw new ConnectorInitializationError("No supported wallet connector available", failures);
+}
+
+export function createRealConnector(options?: CreateConnectorOptions): Promise<WalletConnector> {
+  return createConnectorWithFallback(options);
 }
 
 /** Payment client with the kit connection resumed for the given session key. */
