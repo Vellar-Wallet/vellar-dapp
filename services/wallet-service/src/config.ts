@@ -18,11 +18,68 @@ export interface WalletServiceConfig {
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
 
+/**
+ * Validates `RELAYER_BASE_URL` at service boot (#603).
+ *
+ * Policy:
+ * - Must be a parseable URL with an explicit `https:` or `http:` scheme and non-empty host.
+ * - Scheme-less values (e.g. `"relayer.example.com"`) and non-HTTP schemes (`ftp:`, `ws:`, etc.)
+ *   are rejected immediately with an error naming the offending URL.
+ * - `https://` is always accepted.
+ * - `http://` is accepted in non-production environments (`NODE_ENV !== "production"`) with a
+ *   warning for local development, and rejected when `NODE_ENV === "production"`.
+ */
+export function validateRelayerUrl(
+  rawUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed || !/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmed)) {
+    throw new Error(
+      `Invalid RELAYER_BASE_URL "${rawUrl}": URL is missing a scheme (expected https:// or http://)`,
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(
+      `Invalid RELAYER_BASE_URL "${rawUrl}": malformed URL (expected https:// or http://)`,
+    );
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(
+      `Invalid RELAYER_BASE_URL "${rawUrl}": unsupported scheme "${parsed.protocol.replace(/:$/, "")}" (expected https:// or http://)`,
+    );
+  }
+
+  if (!parsed.hostname) {
+    throw new Error(`Invalid RELAYER_BASE_URL "${rawUrl}": URL is missing a hostname`);
+  }
+
+  if (parsed.protocol === "http:") {
+    if (env.NODE_ENV === "production") {
+      throw new Error(
+        `Invalid RELAYER_BASE_URL "${rawUrl}": plain http:// is not allowed in production (use https://)`,
+      );
+    }
+    console.warn(
+      `[wallet-service] RELAYER_BASE_URL "${rawUrl}" uses plain http://; only https:// is permitted in production.`,
+    );
+  }
+
+  return trimmed;
+}
+
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WalletServiceConfig {
-  const baseUrl = env.RELAYER_BASE_URL;
+  const rawBaseUrl = env.RELAYER_BASE_URL;
   const apiKey = env.RELAYER_API_KEY;
   const databaseUrl = env.DATABASE_URL || undefined;
   const sponsorSecretKey = env.SPONSOR_SECRET_KEY || undefined;
+
+  const baseUrl = rawBaseUrl ? validateRelayerUrl(rawBaseUrl, env) : undefined;
 
   if (!baseUrl || !apiKey) return { relayer: undefined, sponsorSecretKey, databaseUrl };
 
