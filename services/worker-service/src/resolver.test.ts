@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { rpc, xdr } from "@stellar/stellar-sdk";
 import { ArtifactResolveError, createRpcArtifactResolver, isContractId } from "./resolver";
+import { hashArtifact } from "./artifact";
+
 
 const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
 
@@ -104,3 +106,52 @@ describe("isContractId", () => {
     expect(isContractId("not-a-contract-id")).toBe(false);
   });
 });
+
+describe("createRpcArtifactResolver — fetchDeployedWasm", () => {
+  it("fetches wasm bytes and verifies their hash", async () => {
+    const wasmBytes = Buffer.from("\x00asm\x01\x00\x00\x00", "utf-8");
+    const hash = hashArtifact(wasmBytes);
+    const server = {
+      getContractData: vi.fn(),
+      getContractWasmByHash: vi.fn().mockResolvedValue(wasmBytes),
+    };
+    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server });
+    expect(resolver.fetchDeployedWasm).toBeDefined();
+    const fetched = await resolver.fetchDeployedWasm!(hash);
+    expect(fetched).toEqual(new Uint8Array(wasmBytes));
+  });
+
+  it("throws rpc_error when server has no getContractWasmByHash", async () => {
+    const server = { getContractData: vi.fn() };
+    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server });
+    await expect(resolver.fetchDeployedWasm!("ab".repeat(32))).rejects.toMatchObject({
+      code: "rpc_error",
+      message: "resolver cannot fetch wasm bytes",
+    });
+  });
+
+  it("throws rpc_error when returned bytes do not hash to expected hash", async () => {
+    const wasmBytes = Buffer.from("\x00asm\x01\x00\x00\x00", "utf-8");
+    const server = {
+      getContractData: vi.fn(),
+      getContractWasmByHash: vi.fn().mockResolvedValue(wasmBytes),
+    };
+    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server });
+    await expect(resolver.fetchDeployedWasm!("cd".repeat(32))).rejects.toMatchObject({
+      code: "rpc_error",
+      message: expect.stringContaining("does not hash to"),
+    });
+  });
+
+  it("throws not_found when wasm is missing on-chain", async () => {
+    const server = {
+      getContractData: vi.fn(),
+      getContractWasmByHash: vi.fn().mockRejectedValue(new Error("wasm could not be found")),
+    };
+    const resolver = createRpcArtifactResolver({ rpcUrl: "https://example.test", server });
+    await expect(resolver.fetchDeployedWasm!("ab".repeat(32))).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
+});
+

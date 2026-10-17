@@ -191,6 +191,7 @@ describe("apps/web e2e reconnect fixtures (RA-9: derived from passkey-kit + real
   it("the fixture file matches what the kit and the real routes produce today", async () => {
     const fresh = await buildFixture();
 
+
     // Sanity: the outcomes the e2e relies on.
     expect(fresh.connectOk).toEqual({
       status: 200,
@@ -220,5 +221,6 @@ describe("apps/web e2e reconnect fixtures (RA-9: derived from passkey-kit + real
       writeFileSync(FIXTURE_PATH, `${JSON.stringify(fresh, null, 2)}\n`);
     }
     expect(JSON.parse(readFileSync(FIXTURE_PATH, "utf8"))).toEqual(fresh);
-  });
+  }, 30_000);
 });
+

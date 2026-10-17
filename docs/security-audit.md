@@ -1116,7 +1116,7 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) v
 - **Open / partial:** RA-7 (latent IPv6, Info); RA-6/L-3 (connector-factory delegation-edge test — cheap follow-up);
   RA-3's L-1/L-2/L-5 (list-route inject-clock seam, sibling-id exposure, stale-record display — all Low,
   acceptable-with-documentation).
-- **Mainnet: NO-GO** until the deferred prerequisites (M5 multisig attestor, V3 detach UI) are done and the
+- **Mainnet: NO-GO** until the deferred prerequisite (M5 multisig attestor) is done and the
   two V6 dashboard facts (L2 port firewalling, M9 autoDeploy/branch-protection) are confirmed. The funding-path Highs (RA-1/RA-2),
   session/client Highs (RA-11-A/B), and policy deploy seam (RA-11-E) are now fixed+tested. Every verdict remains conditional on the
   **unaudited**
@@ -1167,7 +1167,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 | **I1**      | Markdown injection in bot comment                        | Info | open (accepted — no code exec; escape recommended)                                                 |
 | **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                            |
 | **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                      |
-| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                    |
+| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | **closed-by-UI** (detach UI wired #401; tested in `apps/web/app/settings/page.test.tsx` and `policy-signer.test.ts`) |
 | **V4**      | H2+L2 don't compose into spend (refuted)                 | —    | n/a (analysis; reachability tracked under H2/L2)                                                   |
 | **V5**      | `network` is a label, not routing input                  | —    | enforced (guards key off config; RA-11-B closed last gap)                                          |
 | **V6**      | Two infra facts gated on dashboard                       | —    | **open — OWNER: operator** (see blockers below)                                                    |
@@ -1192,9 +1192,10 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 1. **M5 — multisig / smart-account attestor** — _OWNER: contracts + backend._ Today only a boot guard
    refuses single-key-on-mainnet (`ALLOW_SINGLE_KEY_ATTESTOR` escape hatch). A real threshold attestor
    must exist before any mainnet attestation registry goes live. Deferred by design.
-2. **V3 detach UI** — _OWNER: web._ The standalone-signer detach recovery exists in code + is invariant-
-   tested (RA-6), but there is no wired UI to trigger `kit.remove(SignerKey.Policy)`. Needed before
-   `verified_only` policies are offered on mainnet.
+2. **V3 detach UI** — _CLOSED (#401)._ The standalone-signer detach recovery is wired in the UI
+   (`apps/web/app/settings/signers-card.tsx` and `apps/web/app/policies/page.tsx`) to
+   `kit.remove(SignerKey.Policy)` with passkey confirmation, and exercised by integration tests in
+   `apps/web/app/settings/page.test.tsx` and `apps/web/lib/policy-signer.test.ts`.
 3. **V6 fact #1 — port exposure (L2 final severity)** — _OWNER: operator (dashboard)._ Confirm the
    platform edge firewalls the internal 4001–4004 listeners. Repo binds loopback + publishes only
    `$PORT`; whether the platform blocks the rest is a dashboard fact, not provable here.
@@ -1215,11 +1216,12 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 ### Go / no-go
 
 **NO-GO for mainnet.** The Critical and all funding-path/session Highs found across the audits are
-fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the two deferred
-prerequisites (M5, V3), the two operator-owned V6 dashboard facts, and — conditioning every verdict —
-the unaudited `vellar-sdk`/`passkey-kit`. (RA-11-E is verified and closed by test). Testnet posture
+fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the deferred
+prerequisite M5, the two operator-owned V6 dashboard facts, and — conditioning every verdict —
+the unaudited `vellar-sdk`/`passkey-kit`. (V3 is closed by UI and test; RA-11-E is verified and closed by test). Testnet posture
 is sound today. The residual open items are Low/Info (I1, RA-7, RA-6/L-3, RA-3/L-1/L-2/L-5) and are
 acceptable-with-documentation, not go/no-go gates.
+
 
 ### External review (#415) — status
 

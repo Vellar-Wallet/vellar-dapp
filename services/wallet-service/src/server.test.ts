@@ -767,16 +767,7 @@ describe("sensitive wallet action audit logging (#313)", () => {
     });
     expect(rotateRes.statusCode).toBe(200);
 
-    // 4. threshold.updated
-    const thresholdRes = await server.inject({
-      method: "POST",
-      url: "/wallet/threshold/update",
-      headers: bearer(createSessionId),
-      payload: { threshold: 2 },
-    });
-    expect(thresholdRes.statusCode).toBe(200);
-
-    // 5. signer.added & signer.removed
+    // 4. signer.added & signer.removed
     const addSignerRes = await server.inject({
       method: "POST",
       url: "/wallet/signer/manage",
@@ -784,6 +775,15 @@ describe("sensitive wallet action audit logging (#313)", () => {
       payload: { action: "add", signerKey: "GNEWKEY", weight: 1 },
     });
     expect(addSignerRes.statusCode).toBe(200);
+
+    // 5. threshold.updated (now 2 signers on the account, so threshold 2 is valid)
+    const thresholdRes = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 2 },
+    });
+    expect(thresholdRes.statusCode).toBe(200);
 
     const removeSignerRes = await server.inject({
       method: "POST",
@@ -813,6 +813,159 @@ describe("sensitive wallet action audit logging (#313)", () => {
       expect(log.actor).toBe("CCONTRACT");
       expect(log.at).toBeDefined();
     }
+  });
+});
+
+describe("POST /wallet/threshold/update (issue #508)", () => {
+  const bearer = (id: string) => ({ authorization: `Bearer ${id}` });
+
+  it("accepts threshold equal to signer count (boundary condition)", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    // Initial signer count is 1. Threshold = 1 is valid (1 == 1).
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "threshold_updated", threshold: 1 });
+  });
+
+  it("accepts threshold less than signer count", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    // Add 2 signers (total 3: 1 initial + 2 added)
+    await server.inject({
+      method: "POST",
+      url: "/wallet/signer/manage",
+      headers: bearer(createSessionId),
+      payload: { action: "add", signerKey: "GSIGNER1" },
+    });
+    await server.inject({
+      method: "POST",
+      url: "/wallet/signer/manage",
+      headers: bearer(createSessionId),
+      payload: { action: "add", signerKey: "GSIGNER2" },
+    });
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 2 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "threshold_updated", threshold: 2 });
+  });
+
+  it("accepts explicit signerCount and threshold <= signerCount", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 3, signerCount: 3 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: "threshold_updated", threshold: 3 });
+  });
+
+  it("rejects threshold exceeding signer count with clear 400 error", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    // Default account has 1 signer, requested threshold is 2
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 2 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: "threshold_exceeds_signers",
+      message: "Threshold 2 exceeds signer count 1",
+      threshold: 2,
+      signerCount: 1,
+    });
+  });
+
+  it("rejects threshold exceeding explicit signerCount", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 5, signerCount: 3 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: "threshold_exceeds_signers",
+      message: "Threshold 5 exceeds signer count 3",
+      threshold: 5,
+      signerCount: 3,
+    });
+  });
+
+  it("rejects threshold of zero with invalid_threshold error", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: 0 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: "invalid_threshold",
+      message: "Threshold must be greater than zero",
+      threshold: 0,
+    });
+  });
+
+  it("rejects negative threshold with invalid_threshold error", async () => {
+    const audit = createMemoryAuditLog();
+    const server = build(workingSubmitter(), audit);
+    const { createSessionId } = await createAndConnect(server);
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      headers: bearer(createSessionId),
+      payload: { threshold: -1 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: "invalid_threshold",
+      message: "Threshold must be greater than zero",
+      threshold: -1,
+    });
+  });
+
+  it("rejects missing bearer with 401", async () => {
+    const server = build(workingSubmitter());
+    const res = await server.inject({
+      method: "POST",
+      url: "/wallet/threshold/update",
+      payload: { threshold: 1 },
+    });
+    expect(res.statusCode).toBe(401);
   });
 });
 

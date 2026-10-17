@@ -528,7 +528,8 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     if (!session || session.contractId !== contractId || session.network !== network) {
       return reply.code(401).send({ error: "unauthorized" });
     }
-    return reply.send({ sessions: await sessions.listByContract(contractId, network) });
+    return reply.send({ sessions: await sessions.listByContract(contractId, network, now()) });
+
   });
 
   // Cursor-paginated transaction history for an account (issue #256). Same
@@ -683,24 +684,59 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     if (!session) return reply.code(401).send({ error: "unauthorized" });
 
     const schema = z.object({
-      threshold: z.number().min(1),
+      threshold: z.number().int(),
+      signerCount: z.number().int().min(1).optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
 
+    const { threshold } = parsed.data;
+    if (threshold <= 0) {
+      return reply.code(400).send({
+        error: "invalid_threshold",
+        message: "Threshold must be greater than zero",
+        threshold,
+      });
+    }
+
+    let signerCount = parsed.data.signerCount;
+    if (signerCount === undefined) {
+      // Calculate current signer count from audit history:
+      // Starts with 1 (the initial passkey/owner), plus added signers, minus removed signers.
+      const logs = await audit.list({ actor: session.contractId });
+      let netSigners = 1;
+      for (const log of logs) {
+        if (log.type === "signer.added") {
+          netSigners += 1;
+        } else if (log.type === "signer.removed") {
+          netSigners = Math.max(1, netSigners - 1);
+        }
+      }
+      signerCount = netSigners;
+    }
+
+    if (threshold > signerCount) {
+      return reply.code(400).send({
+        error: "threshold_exceeds_signers",
+        message: `Threshold ${threshold} exceeds signer count ${signerCount}`,
+        threshold,
+        signerCount,
+      });
+    }
+
     await audit.record(
       "threshold.updated",
       {
         contractId: session.contractId,
-        threshold: parsed.data.threshold,
+        threshold,
         network: session.network,
       },
       session.contractId,
     );
 
-    return reply.send({ status: "threshold_updated", threshold: parsed.data.threshold });
+    return reply.send({ status: "threshold_updated", threshold });
   });
 
   // Signer add/remove sensitive action endpoint

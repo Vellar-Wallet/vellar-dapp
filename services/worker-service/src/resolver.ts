@@ -1,7 +1,7 @@
 import { Contract, rpc, xdr } from "@stellar/stellar-sdk";
 import { hashArtifact, normalizeHash } from "./artifact";
 import { withRpcFailover, type RpcPool } from "@vellar/service-kit";
-import { normalizeHash } from "./artifact";
+
 
 // ContractArtifactResolver (idea.md §6.3): resolves the wasm hash actually
 // deployed on-chain for a contract id. This is the trust anchor of the whole
@@ -41,12 +41,11 @@ export interface ContractArtifactResolver {
 
 export interface RpcArtifactResolverOptions {
   rpcUrl: string;
-  /** Injected for tests; defaults to a real rpc.Server. */
-  server?: Pick<rpc.Server, "getContractData"> &
-    Partial<Pick<rpc.Server, "getContractWasmByHash">>;
   /** Injected for tests; defaults to a real rpc.Server. Takes precedence
    * over `rpcPool`. */
-  server?: Pick<rpc.Server, "getContractData">;
+  server?: Pick<rpc.Server, "getContractData"> &
+    Partial<Pick<rpc.Server, "getContractWasmByHash">>;
+
   /** Health-checked endpoint pool. When set, each lookup runs against the
    * pool's healthy endpoints in priority order and fails over to the next
    * one on a transport error or timeout (never on not_found/not_wasm — those
@@ -77,7 +76,10 @@ export function createRpcArtifactResolver(
   options: RpcArtifactResolverOptions,
 ): ContractArtifactResolver {
   const timeoutMs = options.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS;
-  const servers = new Map<string, Pick<rpc.Server, "getContractData">>();
+  const servers = new Map<
+    string,
+    Pick<rpc.Server, "getContractData"> & Partial<Pick<rpc.Server, "getContractWasmByHash">>
+  >();
   const serverFor = (url: string) => {
     let server = servers.get(url);
     if (!server) {
@@ -95,6 +97,16 @@ export function createRpcArtifactResolver(
       return withRpcFailover(
         pool!,
         (url) => lookup(serverFor(url), contractId),
+        (err) =>
+          err instanceof ArtifactResolveError && (err.code === "rpc_error" || err.code === "timeout"),
+      );
+    },
+
+    async fetchDeployedWasm(wasmHash) {
+      if (fixedServer) return fetchWasm(fixedServer, wasmHash);
+      return withRpcFailover(
+        pool!,
+        (url) => fetchWasm(serverFor(url), wasmHash),
         (err) =>
           err instanceof ArtifactResolveError && (err.code === "rpc_error" || err.code === "timeout"),
       );
@@ -136,42 +148,6 @@ export function createRpcArtifactResolver(
       throw new ArtifactResolveError(message, "rpc_error");
     }
 
-      const wasmHash = executable.wasmHash();
-      return normalizeHash(Buffer.from(wasmHash).toString("hex"));
-    },
-
-    async fetchDeployedWasm(wasmHash) {
-      const hash = normalizeHash(wasmHash);
-      if (!server.getContractWasmByHash) {
-        throw new ArtifactResolveError("resolver cannot fetch wasm bytes", "rpc_error");
-      }
-      let bytes: Buffer;
-      try {
-        bytes = await withTimeout(server.getContractWasmByHash(hash, "hex"), timeoutMs);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message === "__rpc_timeout__") {
-          throw new ArtifactResolveError(
-            `wasm fetch for ${hash} timed out after ${timeoutMs}ms`,
-            "timeout",
-          );
-        }
-        if (/not found|could not (be )?found|missing/i.test(message)) {
-          throw new ArtifactResolveError(`wasm ${hash} not found on-chain`, "not_found");
-        }
-        throw new ArtifactResolveError(message, "rpc_error");
-      }
-      // The ledger keys contract code by sha256(bytes); an RPC that returns
-      // anything else is not the deployed artifact. Never compare against it.
-      if (hashArtifact(bytes) !== hash) {
-        throw new ArtifactResolveError(
-          `RPC returned wasm that does not hash to ${hash}`,
-          "rpc_error",
-        );
-      }
-      return new Uint8Array(bytes);
-    },
-  };
     const instance = entry.val.contractData().val().instance();
     const executable = instance.executable();
     if (executable.switch() !== xdr.ContractExecutableType.contractExecutableWasm()) {
@@ -184,6 +160,42 @@ export function createRpcArtifactResolver(
 
     const wasmHash = executable.wasmHash();
     return normalizeHash(Buffer.from(wasmHash).toString("hex"));
+  }
+
+  async function fetchWasm(
+    server: Pick<rpc.Server, "getContractData"> &
+      Partial<Pick<rpc.Server, "getContractWasmByHash">>,
+    wasmHash: string,
+  ): Promise<Uint8Array> {
+    const hash = normalizeHash(wasmHash);
+    if (!server.getContractWasmByHash) {
+      throw new ArtifactResolveError("resolver cannot fetch wasm bytes", "rpc_error");
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await withTimeout(server.getContractWasmByHash(hash, "hex"), timeoutMs);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === "__rpc_timeout__") {
+        throw new ArtifactResolveError(
+          `wasm fetch for ${hash} timed out after ${timeoutMs}ms`,
+          "timeout",
+        );
+      }
+      if (/not found|could not (be )?found|missing/i.test(message)) {
+        throw new ArtifactResolveError(`wasm ${hash} not found on-chain`, "not_found");
+      }
+      throw new ArtifactResolveError(message, "rpc_error");
+    }
+    // The ledger keys contract code by sha256(bytes); an RPC that returns
+    // anything else is not the deployed artifact. Never compare against it.
+    if (hashArtifact(bytes) !== hash) {
+      throw new ArtifactResolveError(
+        `RPC returned wasm that does not hash to ${hash}`,
+        "rpc_error",
+      );
+    }
+    return new Uint8Array(bytes);
   }
 }
 
