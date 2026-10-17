@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 import type { PermissionGrant } from "@vellar/provider-sdk";
 import type { ExtensionState, PairedWallet } from "../../lib/state";
-import { monogram } from "./ApprovalScreen";
 
 // Popup home (design.md §8): a flat 360×600 frame — header, balance header,
 // three quick actions, connected dApps. High-frequency actions live here;
 // advanced workflows deep-link to the web app (technical-doc.md §4.2).
+
+export function monogram(origin: string): string {
+  try {
+    const host = new URL(origin).host.replace(/^www\./, "");
+    return (host.match(/[a-z0-9]/i)?.[0] ?? "?").toUpperCase();
+  } catch {
+    return (origin.match(/[a-z0-9]/i)?.[0] ?? "?").toUpperCase();
+  }
+}
 
 const NETWORK_PASSPHRASES = {
   testnet: "Test SDF Network ; September 2015",
@@ -94,7 +102,7 @@ function Unpaired() {
     <main className="frame">
       <Header wallet={undefined} />
       <div className="frame-body">
-        <section className="unpaired">
+        <section className="unpaired" data-testid="unpaired-wallet-empty-state">
           <span className="eyebrow">Not paired</span>
           <h1>Connect your wallet</h1>
           <p>Pair this extension with your Vellar smart account to approve dApps from here.</p>
@@ -106,6 +114,39 @@ function Unpaired() {
         </section>
       </div>
     </main>
+  );
+}
+
+export function PairedOriginsEmptyState({
+  webAppOrigin,
+  onOpenWebApp,
+}: {
+  webAppOrigin?: string;
+  onOpenWebApp?: () => void;
+}) {
+  return (
+    <div className="empty-state" data-testid="paired-origins-empty-state" role="status">
+      <p className="empty-state-title">No paired origins yet</p>
+      <p className="empty">
+        No sites connected. dApps you approve will appear here once you pair an origin with Vellar.
+      </p>
+      <ol className="empty-steps" aria-label="How pairing with a dApp works">
+        <li>Open a supported Stellar dApp in your browser</li>
+        <li>Click Connect Wallet and choose Vellar</li>
+        <li>Approve the origin pairing request in this popup</li>
+      </ol>
+      <div className="empty-cta" data-testid="paired-origins-cta">
+        {webAppOrigin ? (
+          <button type="button" className="btn btn-outline btn-sm" onClick={onOpenWebApp}>
+            Open Vellar app to pair a dApp
+          </button>
+        ) : (
+          <p className="empty-cta-hint">
+            Visit any Stellar dApp and select Connect Wallet to pair your first origin.
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -181,10 +222,17 @@ export function HomeScreen({
             {grants.length > 0 && <span className="count">{grants.length}</span>}
           </div>
           {grants.length === 0 ? (
-            <p className="empty">No sites connected. dApps you approve will appear here.</p>
+            <PairedOriginsEmptyState
+              webAppOrigin={app}
+              onOpenWebApp={() => openApp("/dashboard")}
+            />
           ) : (
             grants.map((grant) => (
-              <div key={`${grant.origin}-${grant.network}`} className="row">
+              <div
+                key={`${grant.origin}-${grant.network}`}
+                className="row"
+                data-testid="paired-origin-row"
+              >
                 <div className="mono-mark" aria-hidden>
                   {monogram(grant.origin)}
                 </div>
