@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   createMemoryAuditLog,
+  createMemorySessionRepository,
+  createMemoryWalletRepository,
   decodeAuditCursor,
+  DuplicateWalletError,
   encodeAuditCursor,
   paginateAuditEvents,
   type AuditEvent,
+  type WalletRecord,
 } from "./repository";
 
 // Direct unit coverage for the keyset pagination logic behind
@@ -99,3 +103,166 @@ describe("createMemoryAuditLog.listPage (issue #256)", () => {
     expect(page.events[0]!.id).not.toBe(page.events[1]!.id);
   });
 });
+
+describe("concurrent wallet & session repository writes (issue #602)", () => {
+  it("deterministically resolves first-write-wins and rejects the second concurrent insert with DuplicateWalletError", async () => {
+    const repo = createMemoryWalletRepository();
+    const recordA: WalletRecord = {
+      keyId: "cred-concurrent-1",
+      contractId: "C_CONTRACT_A",
+      network: "testnet",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const recordB: WalletRecord = {
+      keyId: "cred-concurrent-1",
+      contractId: "C_CONTRACT_B",
+      network: "testnet",
+      createdAt: "2026-01-01T00:00:05.000Z",
+    };
+
+    const [resA, resB] = await Promise.allSettled([repo.insert(recordA), repo.insert(recordB)]);
+
+    expect(resA.status).toBe("fulfilled");
+    expect(resB.status).toBe("rejected");
+    if (resB.status === "rejected") {
+      expect(resB.reason).toBeInstanceOf(DuplicateWalletError);
+    }
+
+    const stored = await repo.findByKeyId("cred-concurrent-1", "testnet");
+    expect(stored).toEqual({
+      keyId: "cred-concurrent-1",
+      contractId: "C_CONTRACT_A",
+      network: "testnet",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(await repo.existsByContractId("C_CONTRACT_A", "testnet")).toBe(true);
+    expect(await repo.existsByContractId("C_CONTRACT_B", "testnet")).toBe(false);
+  });
+
+  it("serializes two concurrent updates to the same wallet record (FIFO last-write-wins, no half-updated record)", async () => {
+    const repo = createMemoryWalletRepository();
+    await repo.insert({
+      keyId: "cred-concurrent-update",
+      contractId: "C_INITIAL",
+      network: "testnet",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const writeA = repo.update("cred-concurrent-update", "testnet", async (current) => {
+      // Yield across microtasks so writeB is in-flight concurrently
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return {
+        ...current,
+        contractId: "C_FROM_WRITE_A",
+        createdAt: "2026-01-01T00:01:00.000Z",
+      };
+    });
+
+    const writeB = repo.update("cred-concurrent-update", "testnet", async (current) => {
+      // Because updates are serialized per key, writeB observes writeA's committed state
+      expect(current.contractId).toBe("C_FROM_WRITE_A");
+      return {
+        ...current,
+        contractId: "C_FROM_WRITE_B",
+        createdAt: "2026-01-01T00:02:00.000Z",
+      };
+    });
+
+    const [afterA, afterB] = await Promise.all([writeA, writeB]);
+    expect(afterA.contractId).toBe("C_FROM_WRITE_A");
+    expect(afterB.contractId).toBe("C_FROM_WRITE_B");
+
+    const finalRecord = await repo.findByKeyId("cred-concurrent-update", "testnet");
+    expect(finalRecord).toEqual({
+      keyId: "cred-concurrent-update",
+      contractId: "C_FROM_WRITE_B",
+      network: "testnet",
+      createdAt: "2026-01-01T00:02:00.000Z",
+    });
+  });
+
+  it("protects against a read-modify-write cycle racing a pure write without producing a torn/corrupted record", async () => {
+    const repo = createMemoryWalletRepository();
+    const initial: WalletRecord = {
+      keyId: "cred-rmw",
+      contractId: "C_V0",
+      network: "testnet",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await repo.insert(initial);
+
+    // Mutating the original caller object after insert must never corrupt the stored record
+    initial.contractId = "C_CORRUPTED_BY_CALLER";
+
+    const readModifyWrite = (async () => {
+      const snapshot = await repo.findByKeyId("cred-rmw", "testnet");
+      expect(snapshot).toBeDefined();
+      // Attempt in-place mutation on the read snapshot while a concurrent update runs
+      snapshot!.contractId = "C_UNSAFE_IN_PLACE_MUTATION";
+      return repo.update("cred-rmw", "testnet", async (current) => ({
+        contractId: `${current.contractId}_RMW`,
+      }));
+    })();
+
+    const pureWrite = repo.update("cred-rmw", "testnet", () => ({
+      contractId: "C_PURE_WRITE",
+      createdAt: "2026-01-01T00:05:00.000Z",
+    }));
+
+    await Promise.all([readModifyWrite, pureWrite]);
+
+    const finalRecord = await repo.findByKeyId("cred-rmw", "testnet");
+    expect(finalRecord).toBeDefined();
+    expect(finalRecord!.contractId).not.toContain("CORRUPTED");
+    expect(finalRecord!.contractId).not.toContain("UNSAFE");
+    // Serialized execution: pureWrite was queued first, then readModifyWrite appended _RMW to it
+    expect(finalRecord).toEqual({
+      keyId: "cred-rmw",
+      contractId: "C_PURE_WRITE_RMW",
+      network: "testnet",
+      createdAt: "2026-01-01T00:05:00.000Z",
+    });
+  });
+
+  it("isolates concurrent SessionRepository touch and insert writes from mutating read snapshots in place", async () => {
+    const sessions = createMemorySessionRepository();
+    const t0 = new Date("2026-01-01T00:00:00.000Z");
+    const t1 = new Date("2026-01-01T01:00:00.000Z");
+    const exp0 = new Date("2026-01-08T00:00:00.000Z");
+    const exp1 = new Date("2026-01-08T01:00:00.000Z");
+
+    await sessions.insert({
+      id: "sess-1",
+      contractId: "C_WALLET",
+      network: "testnet",
+      createdAt: t0.toISOString(),
+      lastActiveAt: t0.toISOString(),
+      expiresAt: exp0.toISOString(),
+    });
+
+    const snapshotBefore = await sessions.find("sess-1", t0);
+    expect(snapshotBefore).toBeDefined();
+
+    await Promise.all([
+      sessions.touch("sess-1", t1, exp1),
+      (async () => {
+        // Concurrent reader mutating its local object must not corrupt the stored session
+        snapshotBefore!.contractId = "C_TAMPERED";
+      })(),
+    ]);
+
+    // Previously read snapshot was not mutated by touch's timestamp update
+    expect(snapshotBefore!.lastActiveAt).toBe(t0.toISOString());
+
+    const storedAfter = await sessions.find("sess-1", t1);
+    expect(storedAfter).toEqual({
+      id: "sess-1",
+      contractId: "C_WALLET",
+      network: "testnet",
+      createdAt: t0.toISOString(),
+      lastActiveAt: t1.toISOString(),
+      expiresAt: exp1.toISOString(),
+    });
+  });
+});
+
