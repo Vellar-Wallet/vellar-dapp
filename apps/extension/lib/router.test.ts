@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionGrant, ProviderRequest } from "@vellar/provider-sdk";
-import { routeProviderRequest } from "./router";
+import { createConcurrentRequestQueue, routeProviderRequest } from "./router";
 import type { ExtensionState } from "./state";
 
 const ORIGIN = "https://dapp.example";
@@ -207,6 +207,210 @@ describe("routeProviderRequest", () => {
           networkPassphrase: "Test SDF Network ; September 2015",
         },
       },
+    });
+  });
+
+  describe("concurrent dApp requests from different tabs targeting the same wallet (#582)", () => {
+    const TAB_A_ORIGIN = "https://dex-a.example";
+    const TAB_B_ORIGIN = "https://lending-b.example";
+
+    it("queues two concurrent connect requests from different tabs without overwriting each other and isolates approval/rejection state", async () => {
+      const queue = createConcurrentRequestQueue(paired);
+
+      const tabAPromise = queue.submit({
+        id: "req-tab-a-connect",
+        tabId: 101,
+        origin: TAB_A_ORIGIN,
+        request: { method: "connect", params: { network: "testnet" } },
+      });
+
+      const tabBPromise = queue.submit({
+        id: "req-tab-b-connect",
+        tabId: 202,
+        origin: TAB_B_ORIGIN,
+        request: { method: "connect", params: { network: "testnet" } },
+      });
+
+      // Both requests are queued concurrently and neither overwrote the other.
+      expect(queue.listPending()).toEqual([
+        {
+          id: "req-tab-a-connect",
+          tabId: 101,
+          origin: TAB_A_ORIGIN,
+          request: { method: "connect", params: { network: "testnet" } },
+        },
+        {
+          id: "req-tab-b-connect",
+          tabId: 202,
+          origin: TAB_B_ORIGIN,
+          request: { method: "connect", params: { network: "testnet" } },
+        },
+      ]);
+
+      // Approve Tab A and reject Tab B.
+      expect(
+        queue.resolvePending("req-tab-a-connect", true, {
+          nowIso: "2026-07-16T12:00:00.000Z",
+        }),
+      ).toBe(true);
+      expect(queue.resolvePending("req-tab-b-connect", false)).toBe(true);
+
+      await expect(tabAPromise).resolves.toEqual({
+        method: "connect",
+        result: { address: "CABC", network: "testnet" },
+      });
+      await expect(tabBPromise).resolves.toEqual({
+        error: { code: "rejected", message: "The user declined the request" },
+      });
+
+      expect(queue.listPending()).toEqual([]);
+
+      // State contains a grant ONLY for Tab A; Tab B has zero capabilities.
+      const finalState = queue.getState();
+      expect(finalState.grants).toHaveLength(1);
+      expect(finalState.grants[0]?.origin).toBe(TAB_A_ORIGIN);
+
+      // Follow-up get_address from Tab A succeeds immediately, while Tab B is unauthorized.
+      await expect(
+        queue.submit({
+          id: "req-tab-a-addr",
+          tabId: 101,
+          origin: TAB_A_ORIGIN,
+          request: { method: "get_address", params: { network: "testnet" } },
+        }),
+      ).resolves.toEqual({
+        method: "get_address",
+        result: { address: "CABC", network: "testnet" },
+      });
+
+      await expect(
+        queue.submit({
+          id: "req-tab-b-addr",
+          tabId: 202,
+          origin: TAB_B_ORIGIN,
+          request: { method: "get_address", params: { network: "testnet" } },
+        }),
+      ).resolves.toMatchObject({
+        error: { code: "unauthorized" },
+      });
+    });
+
+    it("handles two concurrent sign_transaction requests from different connected tabs independently when one is rejected and the other approved", async () => {
+      const bothGrantedState: ExtensionState = {
+        ...paired,
+        grants: [
+          {
+            origin: TAB_A_ORIGIN,
+            accountId: "CABC",
+            network: "testnet",
+            capabilities: ["connect", "view_address", "sign"],
+            grantedAt: "2026-07-16T10:00:00.000Z",
+          },
+          {
+            origin: TAB_B_ORIGIN,
+            accountId: "CABC",
+            network: "testnet",
+            capabilities: ["connect", "view_address", "sign"],
+            grantedAt: "2026-07-16T10:05:00.000Z",
+          },
+        ],
+      };
+
+      const queue = createConcurrentRequestQueue(bothGrantedState);
+
+      const signAPromise = queue.submit({
+        id: "req-sign-a",
+        tabId: 101,
+        origin: TAB_A_ORIGIN,
+        request: {
+          method: "sign_transaction",
+          params: { xdr: "XDR_SWAP_TAB_A", network: "testnet" },
+        },
+      });
+
+      const signBPromise = queue.submit({
+        id: "req-sign-b",
+        tabId: 202,
+        origin: TAB_B_ORIGIN,
+        request: {
+          method: "sign_transaction",
+          params: { xdr: "XDR_BORROW_TAB_B", network: "testnet" },
+        },
+      });
+
+      expect(queue.listPending()).toHaveLength(2);
+
+      // Reject Tab A's transaction first, then approve Tab B's transaction.
+      expect(queue.resolvePending("req-sign-a", false)).toBe(true);
+      expect(
+        queue.resolvePending("req-sign-b", true, {
+          signedXdr: "SIGNED_XDR_BORROW_TAB_B",
+        }),
+      ).toBe(true);
+
+      await expect(signAPromise).resolves.toEqual({
+        error: { code: "rejected", message: "The user declined the request" },
+      });
+      await expect(signBPromise).resolves.toEqual({
+        method: "sign_transaction",
+        result: { signedXdr: "SIGNED_XDR_BORROW_TAB_B" },
+      });
+
+      // Both tabs retain their grants; rejecting a single tx never revokes either tab's grant.
+      expect(queue.getState().grants.map((g) => g.origin)).toEqual([TAB_A_ORIGIN, TAB_B_ORIGIN]);
+    });
+
+    it("disconnecting from one tab while another tab has an in-flight sign_transaction does not affect the other tab", async () => {
+      const bothGrantedState: ExtensionState = {
+        ...paired,
+        grants: [
+          {
+            origin: TAB_A_ORIGIN,
+            accountId: "CABC",
+            network: "testnet",
+            capabilities: ["connect", "view_address", "sign"],
+            grantedAt: "2026-07-16T10:00:00.000Z",
+          },
+          {
+            origin: TAB_B_ORIGIN,
+            accountId: "CABC",
+            network: "testnet",
+            capabilities: ["connect", "view_address", "sign"],
+            grantedAt: "2026-07-16T10:05:00.000Z",
+          },
+        ],
+      };
+
+      const queue = createConcurrentRequestQueue(bothGrantedState);
+
+      const signBPromise = queue.submit({
+        id: "req-sign-b",
+        tabId: 202,
+        origin: TAB_B_ORIGIN,
+        request: {
+          method: "sign_transaction",
+          params: { xdr: "XDR_TAB_B", network: "testnet" },
+        },
+      });
+
+      // Tab A disconnects while Tab B's sign_transaction is awaiting approval.
+      const disconnectAResult = await queue.submit({
+        id: "req-disconnect-a",
+        tabId: 101,
+        origin: TAB_A_ORIGIN,
+        request: { method: "disconnect", params: {} },
+      });
+      expect(disconnectAResult).toEqual({ method: "disconnect", result: {} });
+
+      // Only Tab A's grant was revoked; Tab B's pending approval is still intact and resolves.
+      expect(queue.getState().grants.map((g) => g.origin)).toEqual([TAB_B_ORIGIN]);
+      expect(queue.listPending()).toHaveLength(1);
+
+      queue.resolvePending("req-sign-b", true, { signedXdr: "SIGNED_XDR_TAB_B" });
+      await expect(signBPromise).resolves.toEqual({
+        method: "sign_transaction",
+        result: { signedXdr: "SIGNED_XDR_TAB_B" },
+      });
     });
   });
 });
