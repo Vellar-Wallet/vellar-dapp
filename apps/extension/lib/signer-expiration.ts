@@ -81,3 +81,54 @@ export function configuredMainnetRpcUrl(): string | undefined {
   const env = typeof import.meta !== "undefined" ? import.meta.env : undefined;
   return (env?.WXT_PUBLIC_MAINNET_RPC_URL as string | undefined) || undefined;
 }
+
+/**
+ * Thrown when a device signer's expiration timestamp has been reached or passed
+ * at the moment a signing request is evaluated.
+ */
+export class SignerExpiredError extends Error {
+  readonly code = "signer_expired" as const;
+  readonly expiresAtMs: number;
+  readonly requestTimeMs: number;
+
+  constructor(expiresAtMs: number, requestTimeMs: number) {
+    super(
+      `Device signer expired at ${expiresAtMs}ms (request evaluated at ${requestTimeMs}ms); re-pair the extension to continue signing.`,
+    );
+    this.name = "SignerExpiredError";
+    this.expiresAtMs = expiresAtMs;
+    this.requestTimeMs = requestTimeMs;
+  }
+}
+
+/**
+ * Evaluates whether a device signer with expiration timestamp `expiresAtMs`
+ * has expired at `requestTimeMs`.
+ *
+ * Boundary semantics (fail-closed at exact expiry instant `t`):
+ * - `expiresAtMs = t - 1` (`requestTimeMs > expiresAtMs`): **expired** (`true`)
+ * - `expiresAtMs = t` (`requestTimeMs === expiresAtMs`): **expired** (`true`)
+ *   — a signer whose validity window `[createdAt, expiresAtMs)` ends at `t`
+ *   is no longer valid at instant `t`.
+ * - `expiresAtMs = t + 1` (`requestTimeMs < expiresAtMs`): **active** (`false`)
+ */
+export function isSignerExpired(expiresAtMs: number, requestTimeMs: number = Date.now()): boolean {
+  if (!Number.isFinite(expiresAtMs) || !Number.isFinite(requestTimeMs)) {
+    throw new Error("Signer expiration and request timestamps must be finite numbers");
+  }
+  return requestTimeMs >= expiresAtMs;
+}
+
+/**
+ * Asserts that a signer has not expired at `requestTimeMs`.
+ * Throws `SignerExpiredError` when `requestTimeMs >= expiresAtMs`.
+ */
+export function assertSignerNotExpired(
+  expiresAtMs: number | undefined,
+  requestTimeMs: number = Date.now(),
+): void {
+  if (expiresAtMs === undefined) return;
+  if (isSignerExpired(expiresAtMs, requestTimeMs)) {
+    throw new SignerExpiredError(expiresAtMs, requestTimeMs);
+  }
+}
