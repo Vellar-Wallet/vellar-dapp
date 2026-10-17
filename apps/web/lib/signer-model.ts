@@ -136,15 +136,87 @@ export function classifySigners(rows: RawSigner[], opts: ClassifyOptions): Signe
     .sort((a, b) => order[a.kind] - order[b.kind] || Number(b.isCurrent) - Number(a.isCurrent));
 }
 
+export type SignerCategory = "passkey" | "policy" | "device" | "unknown";
+
+/**
+ * Shared classifier that distinguishes a passkey signer, a policy signer, and a
+ * device signer in one place (#594). Accepts `SignerEntry`, `RawSigner`,
+ * `SignerKeyRef`, or arbitrary unknown values and never throws.
+ */
+export function classifySignerType(signer: unknown): SignerCategory {
+  if (typeof signer !== "object" || signer === null) {
+    return "unknown";
+  }
+
+  const record = signer as Record<string, unknown>;
+  const directKind = typeof record.kind === "string" ? record.kind : undefined;
+  const nestedKey =
+    typeof record.key === "object" && record.key !== null
+      ? (record.key as Record<string, unknown>)
+      : undefined;
+  const keyTag =
+    typeof nestedKey?.kind === "string"
+      ? nestedKey.kind
+      : typeof nestedKey?.key === "string"
+        ? nestedKey.key
+        : undefined;
+
+  const tag = directKind ?? keyTag;
+
+  if (tag === "passkey" || tag === "Secp256r1") {
+    return "passkey";
+  }
+  if (tag === "policy" || tag === "Policy") {
+    return "policy";
+  }
+  if (tag === "device" || tag === "device-session") {
+    return "device";
+  }
+  if (tag === "Ed25519") {
+    const limits = record.limits;
+    const hasLimits =
+      (limits instanceof Map && limits.size > 0) || (Array.isArray(limits) && limits.length > 0);
+    if (hasLimits) {
+      return "unknown";
+    }
+    return "device";
+  }
+
+  return "unknown";
+}
+
+export const getSignerCategory = classifySignerType;
+
+export function isPasskeySigner(signer: unknown): boolean {
+  return classifySignerType(signer) === "passkey";
+}
+
+export function isPolicySigner(signer: unknown, policyContractId?: string): boolean {
+  if (classifySignerType(signer) !== "policy") return false;
+  if (policyContractId === undefined) return true;
+  const record = signer as { key?: { value?: unknown }; value?: unknown };
+  const value =
+    typeof record.key?.value === "string"
+      ? record.key.value
+      : typeof record.value === "string"
+        ? record.value
+        : undefined;
+  return value === policyContractId;
+}
+
+export function isDeviceSigner(signer: unknown): boolean {
+  return classifySignerType(signer) === "device";
+}
+
 /** Live passkeys that keep the account recoverable. */
 export function livePasskeys(entries: SignerEntry[]): SignerEntry[] {
-  return entries.filter((e) => e.kind === "passkey" && e.status === "live");
+  return entries.filter((e) => isPasskeySigner(e) && e.status === "live");
 }
 
 /** Whether removing `entry` would leave the account without a human passkey.
  * Counts LIVE passkeys only: an expired/evicted passkey cannot authorize. */
 export function isLastPasskey(entry: SignerEntry, entries: SignerEntry[]): boolean {
-  if (entry.kind !== "passkey") return false;
+  if (!isPasskeySigner(entry)) return false;
   return livePasskeys(entries).filter((e) => e.id !== entry.id).length === 0;
 }
 

@@ -5,7 +5,7 @@ import type { WalletSession } from "@vellar/types";
 import { Eyebrow, LpActionButton } from "@/app/landing/ui";
 import { isUserCancellation } from "@vellar/passkey";
 import { walletErrorMessage } from "@/lib/messages";
-import { signerMutationErrorMessage } from "@/lib/signer-model";
+import { isPasskeySigner, isPolicySigner, signerMutationErrorMessage } from "@/lib/signer-model";
 import {
   canRevokeSigner,
   useRevokeSigner,
@@ -149,7 +149,8 @@ function SignerRow({
   const mine = state.step !== "idle" && state.id === entry.id;
   const busy = state.step === "approving" || state.step === "confirming";
   const verdict = canRevokeSigner(entry, entries);
-  const actionLabel = entry.kind === "policy" ? "Detach policy" : "Revoke";
+  const policySigner = isPolicySigner(entry);
+  const actionLabel = policySigner ? "Detach policy" : "Revoke";
 
   return (
     <li className="lpa-well flex flex-col gap-2.5" data-testid={`signer-${entry.kind}`}>
@@ -167,9 +168,7 @@ function SignerRow({
             <StatusPill status={entry.status} />
           </p>
           <p className="mt-1! break-all font-[family-name:var(--lp-mono)] text-xs">
-            {entry.key.kind === "Secp256r1"
-              ? `credential ${shorten(entry.key.value)}`
-              : entry.key.value}
+            {isPasskeySigner(entry) ? `credential ${shorten(entry.key.value)}` : entry.key.value}
           </p>
           <p className="mt-1! text-xs text-[var(--lp-ink-faint)]">{KIND_BLURB[entry.kind]}</p>
           <p className="mt-1! text-xs text-[var(--lp-ink-faint)]">
@@ -225,9 +224,7 @@ function SignerRow({
           </p>
           <div className="flex gap-2.5">
             <LpActionButton size="sm" onClick={onConfirm}>
-              {entry.kind === "policy"
-                ? "Approve detach with passkey"
-                : `Approve revoke with passkey`}
+              {policySigner ? "Approve detach with passkey" : `Approve revoke with passkey`}
             </LpActionButton>
             <LpActionButton variant="outline" size="sm" onClick={onCancel}>
               Keep it
