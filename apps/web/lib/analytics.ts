@@ -57,6 +57,36 @@ function hashSensitiveValue(value?: string | null): string {
 }
 
 /**
+ * Matches raw 56-character Stellar StrKey public keys (`G...`) and Soroban contract IDs (`C...`).
+ */
+export const STELLAR_ADDRESS_OR_CONTRACT_REGEX = /(?<![A-Z2-7])[GC][A-Z2-7]{55}(?![A-Z2-7])/g;
+
+/**
+ * Replaces any raw Stellar public key (`G[A-Z2-7]{55}`) or Soroban contract ID (`C[A-Z2-7]{55}`)
+ * in a string with its 12-character SHA-256 hash so raw addresses/contract IDs are never emitted (#598).
+ */
+export function redactStellarIdentifiers(input: string): string {
+  return input.replace(STELLAR_ADDRESS_OR_CONTRACT_REGEX, (match) => hashSensitiveValue(match));
+}
+
+function sanitizeAnalyticsValue<T>(value: T): T {
+  if (typeof value === "string") {
+    return redactStellarIdentifiers(value) as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeAnalyticsValue(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeAnalyticsValue(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/**
  * Create a new analytics tracker instance.
  *
  * Initializes a page session ID (persists across page reloads within a tab)
@@ -89,13 +119,15 @@ export function createAnalyticsTracker() {
     properties?: Record<string, unknown>,
     context?: Partial<EventContext>,
   ) {
+    const sanitizedProperties = properties ? sanitizeAnalyticsValue(properties) : undefined;
+    const sanitizedContext = context ? sanitizeAnalyticsValue(context) : undefined;
     const event: AnalyticsEvent = {
       name,
-      properties,
+      properties: sanitizedProperties,
       context: {
         timestamp: new Date().toISOString(),
         pageSessionId,
-        ...context,
+        ...sanitizedContext,
       },
     };
     eventQueue.push(event);
