@@ -105,12 +105,32 @@ function bearerSessionId(request: FastifyRequest): string | undefined {
   return match?.[1];
 }
 
+export interface SubmissionDedupStore {
+  get(hash: string): Promise<{ hash: string } | undefined> | { hash: string } | undefined;
+  set(hash: string, result: { hash: string }): Promise<void> | void;
+}
+
+export type JobStatus = "queued" | "building" | "stuck" | "completed" | "failed";
+
+export interface WalletJobRecord {
+  recordId: string;
+  contractId: string;
+  status: JobStatus;
+  createdAt: string;
+  updatedAt: string;
+  sourceType?: string;
+  toolchainVersion?: string;
+  [key: string]: unknown;
+}
+
 export interface WalletServiceDeps {
   submitter: TransactionSubmitter;
   wallets?: WalletRepository;
   sessions?: SessionRepository;
   audit?: AuditLog;
   cache?: CacheOperation;
+  submissionDedup?: SubmissionDedupStore;
+  jobStuckThresholdMs?: number;
   now?: () => Date;
   /** Passphrase used to parse submitted XDR for funding-path scoping. Keyed off
    * server config, NEVER the request body's network field (security-audit V5).
@@ -144,6 +164,8 @@ export interface WalletServiceDeps {
       correlationId?: string;
       [key: string]: unknown;
     }): Promise<void>;
+    get?(recordId: string): Promise<WalletJobRecord | undefined> | WalletJobRecord | undefined;
+    updateStatus?(recordId: string, status: JobStatus): Promise<void> | void;
   };
 }
 
@@ -155,6 +177,17 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const replayGuard = deps.replayGuard ?? createMemoryReplayGuard();
   const now = deps.now ?? (() => new Date());
   const { submitter } = deps;
+
+  const memorySubmissionDedup = new Map<string, { hash: string }>();
+  const submissionDedup: SubmissionDedupStore = deps.submissionDedup ?? {
+    get: (h: string) => memorySubmissionDedup.get(h),
+    set: (h: string, res: { hash: string }) => {
+      memorySubmissionDedup.set(h, res);
+    },
+  };
+
+  const memoryJobs = new Map<string, WalletJobRecord>();
+  const jobStuckThresholdMs = deps.jobStuckThresholdMs ?? 5 * 60 * 1000;
 
   const connectRateLimits = new Map<string, { count: number; resetAt: number }>();
   const passkeyRateLimitMax = deps.passkeyRateLimitMax ?? 5;
@@ -344,6 +377,21 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     }
     const { signedXdr, network } = parsed.data;
 
+    // Idempotent replay detection keyed on the signed XDR hash (Issue #515).
+    // The signed XDR is a tamper-proof dedup key. Repeated identical envelopes
+    // return the cached submission result instead of resubmitting or triggering
+    // replay rejection.
+    const envelopeHash = createHash("sha256").update(signedXdr).digest("hex");
+    const cachedSubmission = await submissionDedup.get(envelopeHash);
+    if (cachedSubmission) {
+      request.log.info(
+        { envelopeHash, hash: cachedSubmission.hash },
+        "returning existing submission result for idempotent replay",
+      );
+      recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
+      return reply.send(cachedSubmission);
+    }
+
     // Address-credential auth subjects (the wallet contractId(s) this tx acts
     // on behalf of), extracted once and reused for both the scoping check
     // below and the tx history audit record (issue #256), so a submitted tx
@@ -426,6 +474,16 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     try {
       const { hash } = await submitter.submit(signedXdr);
+      await submissionDedup.set(envelopeHash, { hash });
+
+      // Invalidate balance cache entry for affected wallets after confirmed submission (#520)
+      for (const contractId of walletSubjects) {
+        if (typeof cache.invalidateBalance === "function") {
+          await cache.invalidateBalance(contractId);
+        } else {
+          await cache.delete("balance", contractId);
+        }
+      }
       // One audit row per wallet subject: a tx with two address-credential
       // subjects (rare, but the type allows it) must show up in BOTH wallets'
       // history, not just the first.
@@ -440,7 +498,11 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         // No address-credential subject (e.g. networkPassphrase unset) — still
         // record the event, just without wallet attribution, matching prior
         // behavior exactly.
-        await audit.record("tx.submitted", { network, txHash: hash, correlationId: request.correlationId });
+        await audit.record("tx.submitted", {
+          network,
+          txHash: hash,
+          correlationId: request.correlationId,
+        });
       }
       recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
       return reply.send({ hash });
@@ -479,6 +541,18 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
     const correlationId = request.correlationId;
+    const nowIso = now().toISOString();
+    const jobRecord: WalletJobRecord = {
+      recordId: parsed.data.recordId,
+      contractId: parsed.data.contractId,
+      sourceType: parsed.data.sourceType,
+      toolchainVersion: parsed.data.toolchainVersion,
+      status: "queued",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    memoryJobs.set(parsed.data.recordId, jobRecord);
+
     if (deps.jobQueue) {
       await deps.jobQueue.enqueue({
         ...parsed.data,
@@ -496,7 +570,81 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     return reply.code(202).send({
       enqueued: true,
       recordId: parsed.data.recordId,
+      status: "queued",
       correlationId,
+    });
+  });
+
+  function getEffectiveJobStatus(job: WalletJobRecord): JobStatus {
+    if (job.status === "building") {
+      const updatedAtMs = new Date(job.updatedAt).getTime();
+      if (now().getTime() - updatedAtMs > jobStuckThresholdMs) {
+        return "stuck";
+      }
+    }
+    return job.status;
+  }
+
+  // Status endpoint distinguishing queued, building, and stuck states (Issue #516)
+  app.get("/wallet/jobs/:recordId", async (request, reply) => {
+    const { recordId } = request.params as { recordId: string };
+    const job = (await deps.jobQueue?.get?.(recordId)) ?? memoryJobs.get(recordId);
+    if (!job) {
+      return reply.code(404).send({ error: "job_not_found" });
+    }
+    const status = getEffectiveJobStatus(job);
+    return reply.send({
+      recordId: job.recordId,
+      contractId: job.contractId,
+      status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    });
+  });
+
+  // Query lookup compatibility (?recordId=)
+  app.get("/wallet/jobs", async (request, reply) => {
+    const { recordId } = (request.query ?? {}) as { recordId?: string };
+    if (!recordId) {
+      return reply.code(400).send({ error: "invalid_query", message: "recordId is required" });
+    }
+    const job = (await deps.jobQueue?.get?.(recordId)) ?? memoryJobs.get(recordId);
+    if (!job) {
+      return reply.code(404).send({ error: "job_not_found" });
+    }
+    const status = getEffectiveJobStatus(job);
+    return reply.send({
+      recordId: job.recordId,
+      contractId: job.contractId,
+      status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    });
+  });
+
+  // Status transition endpoint for workers/tests
+  app.patch("/wallet/jobs/:recordId", async (request, reply) => {
+    const { recordId } = request.params as { recordId: string };
+    const schema = z.object({
+      status: z.enum(["queued", "building", "stuck", "completed", "failed"]),
+    });
+    const parsed = schema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+    const job = (await deps.jobQueue?.get?.(recordId)) ?? memoryJobs.get(recordId);
+    if (!job) {
+      return reply.code(404).send({ error: "job_not_found" });
+    }
+    job.status = parsed.data.status;
+    job.updatedAt = now().toISOString();
+    if (deps.jobQueue?.updateStatus) {
+      await deps.jobQueue.updateStatus(recordId, parsed.data.status);
+    }
+    return reply.send({
+      recordId: job.recordId,
+      status: job.status,
+      updatedAt: job.updatedAt,
     });
   });
 
@@ -509,10 +657,24 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   // identically for a missing, unknown, expired, or wrong-account bearer, so no
   // response reveals whether an id was ever valid.
 
+  const getSessionQuerySchema = z.object({
+    contractId: z.string().min(1).optional(),
+  });
+
   // The caller's OWN session (from the bearer). No id in the URL.
+  // When contractId query parameter is provided, validates that the session belongs to it.
   app.get("/wallet/session", async (request, reply) => {
+    const queryParsed = getSessionQuerySchema.safeParse(request.query);
+    if (!queryParsed.success) {
+      return reply.code(400).send({ error: "invalid_query", details: queryParsed.error.issues });
+    }
     const session = await resolveSessionCapability(request);
-    if (!session) return reply.code(401).send({ error: "unauthorized" });
+    if (
+      !session ||
+      (queryParsed.data.contractId && session.contractId !== queryParsed.data.contractId)
+    ) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
     return reply.send(session);
   });
 
@@ -557,7 +719,9 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     try {
       page = await audit.listPage({ type: "tx.submitted", actor: contractId, limit, after });
     } catch {
-      return reply.code(400).send({ error: "invalid_cursor", message: "cursor is not a valid pagination cursor" });
+      return reply
+        .code(400)
+        .send({ error: "invalid_cursor", message: "cursor is not a valid pagination cursor" });
     }
     return reply.send({
       transactions: page.events.map((e) => ({ at: e.at, ...e.data })),

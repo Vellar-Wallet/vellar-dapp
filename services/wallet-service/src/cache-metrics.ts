@@ -49,6 +49,16 @@ export interface CacheOperation {
    * Delete a key from the cache. No-op if key doesn't exist.
    */
   delete(resource: CacheResourceType, key: string): Promise<void>;
+
+  /**
+   * Invalidate a key manually from the cache.
+   */
+  invalidate?(resource: CacheResourceType, key: string): Promise<void>;
+
+  /**
+   * Invalidate a balance key manually from the cache.
+   */
+  invalidateBalance?(key: string): Promise<void>;
 }
 
 // --- Metric definitions --------------------------------------------------------
@@ -136,6 +146,20 @@ export function createCacheMetricsWrapper(cache: CacheOperation): CacheOperation
 
     async delete(resource: CacheResourceType, key: string): Promise<void> {
       return cache.delete(resource, key);
+    },
+
+    async invalidate(resource: CacheResourceType, key: string): Promise<void> {
+      if (typeof cache.invalidate === "function") {
+        return cache.invalidate(resource, key);
+      }
+      return cache.delete(resource, key);
+    },
+
+    async invalidateBalance(key: string): Promise<void> {
+      if (typeof cache.invalidateBalance === "function") {
+        return cache.invalidateBalance(key);
+      }
+      return cache.delete("balance", key);
     },
   };
 }

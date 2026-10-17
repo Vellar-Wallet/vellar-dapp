@@ -133,6 +133,89 @@ describe("MemoryCacheStore", () => {
     expect(object.value).toEqual({ id: 1, name: "test" });
     expect(array.value).toEqual([1, 2, 3]);
   });
+
+  describe("explicit eviction and max-age ceiling (#520)", () => {
+    it("treats balance entries as stale when exceeding balanceMaxAgeMs even if TTL was refreshed", async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new MemoryCacheStore({ ttlMs: 1000, balanceMaxAgeMs: 200 });
+        await store.set("balance", "acc-123", { xlm: 50 });
+
+        // Advance 150ms and touch/refresh TTL
+        vi.advanceTimersByTime(150);
+        const touched = await store.touch("balance", "acc-123");
+        expect(touched).toBe(true);
+
+        // Advance another 100ms: total age is 250ms (> 200ms balanceMaxAgeMs, but within 1000ms TTL)
+        vi.advanceTimersByTime(100);
+        const result = await store.get("balance", "acc-123");
+        expect(result.hit).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not apply balanceMaxAgeMs to non-balance resources", async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new MemoryCacheStore({ ttlMs: 1000, balanceMaxAgeMs: 200 });
+        await store.set("account", "acc-123", { name: "alice" });
+
+        vi.advanceTimersByTime(150);
+        await store.touch("account", "acc-123");
+        vi.advanceTimersByTime(100);
+
+        const result = await store.get("account", "acc-123");
+        expect(result.hit).toBe(true);
+        expect(result.value).toEqual({ name: "alice" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("manually invalidates balance entry before its TTL would have expired", async () => {
+      const store = new MemoryCacheStore(5000);
+      await store.set("balance", "acc-456", { xlm: 100 });
+
+      const before = await store.get("balance", "acc-456");
+      expect(before.hit).toBe(true);
+
+      await store.invalidateBalance("acc-456");
+
+      const after = await store.get("balance", "acc-456");
+      expect(after.hit).toBe(false);
+    });
+
+    it("manually invalidates generic resource using invalidate()", async () => {
+      const store = new MemoryCacheStore(5000);
+      await store.set("nonce", "nonce-1", 42);
+      expect((await store.get("nonce", "nonce-1")).hit).toBe(true);
+
+      await store.invalidate("nonce", "nonce-1");
+      expect((await store.get("nonce", "nonce-1")).hit).toBe(false);
+    });
+
+    it("cleans up entries exceeding balanceMaxAgeMs during cleanup()", async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new MemoryCacheStore({ ttlMs: 1000, balanceMaxAgeMs: 200 });
+        await store.set("balance", "stale-balance", { xlm: 10 });
+        await store.set("account", "fresh-account", { name: "bob" });
+
+        vi.advanceTimersByTime(250);
+
+        const removed = await store.cleanup();
+        expect(removed).toBe(1);
+        expect(await store.get("balance", "stale-balance")).toEqual({ hit: false });
+        expect(await store.get("account", "fresh-account")).toEqual({
+          hit: true,
+          value: { name: "bob" },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });
 
 describe("NoOpCache", () => {
@@ -155,6 +238,12 @@ describe("NoOpCache", () => {
 
   it("delete is no-op", async () => {
     await cache.delete("balance", "key");
+    // Should not throw
+  });
+
+  it("invalidate and invalidateBalance are no-ops", async () => {
+    await cache.invalidate("balance", "key");
+    await cache.invalidateBalance("key");
     // Should not throw
   });
 });

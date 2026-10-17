@@ -9,6 +9,62 @@ During Stellar RPC endpoint degradation or transient outages, `wallet-service` a
 - **Exponential Backoff**: Retries failed submission attempts up to `maxRetries` (default: 3) using base delay `initialDelayMs` (default: 100ms), multiplier factor 2, capped at `maxDelayMs` (default: 3000ms), combined with 0-50% random jitter to avoid thundering herd problems.
 - **Circuit Breaker**: Tracks consecutive submission/transport failures. When failures reach `failureThreshold` (default: 5), the circuit state transitions to `OPEN` for `resetTimeoutMs` (default: 30000ms). Submissions attempted while the breaker is OPEN immediately reject with `CircuitBreakerOpenError` without placing further load on the upstream RPC network.
 
+## Route Reference
+
+### GET /wallet/session (#517)
+
+Fetches the caller's active session capability. The session ID travels strictly in the `Authorization: Bearer <sessionId>` header.
+
+- **Optional Query**: `?contractId=<address>`: When provided, verifies that the active bearer session is bound to the requested contract.
+- **200 OK**: Active session found and valid:
+  ```json
+  {
+    "id": "e6a2139e-...",
+    "contractId": "CAFK7NMQOT...",
+    "network": "testnet",
+    "createdAt": "2026-08-01T00:00:00.000Z",
+    "lastActiveAt": "2026-08-01T00:00:00.000Z",
+    "expiresAt": "2026-08-08T00:00:00.000Z"
+  }
+  ```
+- **401 Unauthorized**: No active session exists, the session has expired, or the contract ID does not match:
+  ```json
+  {
+    "error": "unauthorized"
+  }
+  ```
+  _Note:_ Missing, expired, and unknown sessions return identical `401 unauthorized` responses by design to prevent credential/account enumeration while allowing clients (`apps/web/lib/sessions.ts`) to reliably branch to onboarding or reconnect UI.
+
+### POST /wallet/jobs & GET /wallet/jobs/:recordId (#516)
+
+- **POST /wallet/jobs**: Enqueues a build or verification job. Returns `202 Accepted`:
+  ```json
+  {
+    "enqueued": true,
+    "recordId": "rec-001",
+    "status": "queued",
+    "correlationId": "corr-xyz"
+  }
+  ```
+- **GET /wallet/jobs/:recordId**: Returns the job status distinguishing `queued`, `building`, and `stuck` states:
+  ```json
+  {
+    "recordId": "rec-001",
+    "contractId": "CAFK7NMQOT...",
+    "status": "queued",
+    "createdAt": "2026-08-01T12:00:00.000Z",
+    "updatedAt": "2026-08-01T12:00:00.000Z"
+  }
+  ```
+  Jobs in `building` status whose last update exceeds the configurable age threshold (default 5 minutes) transition dynamically to `stuck` without requiring external events.
+
+### POST /wallet/submit (#515, #520)
+
+- Enforces idempotent replay detection keyed on the SHA-256 hash of the signed transaction envelope.
+- Repeated submissions of the exact same signed envelope return the original submission result `{ hash }` without re-submitting or rejecting.
+- Distinct signed envelopes for the same logical intent produce distinct hashes and are handled independently.
+- Confirmed submissions automatically evict cached balance entries for affected wallet contracts to prevent serving stale on-chain balances.
+
 ## Deploy rollback runbook (#334)
 
 ### What this covers, honestly

@@ -16,26 +16,46 @@ import type { CacheResourceType, CacheGetResult, CacheOperation } from "./cache-
 interface CacheEntry<T> {
   value: T;
   expiresAt: number;
+  createdAt: number;
+}
+
+export interface MemoryCacheStoreOptions {
+  ttlMs?: number;
+  balanceMaxAgeMs?: number;
 }
 
 /**
- * In-memory TTL-based cache. Entries expire after the specified TTL.
+ * In-memory TTL-based cache. Entries expire after the specified TTL or balance max-age ceiling.
  */
 export class MemoryCacheStore implements CacheOperation {
   private store = new Map<string, CacheEntry<unknown>>();
   private ttlMs: number;
+  private balanceMaxAgeMs?: number;
 
-  constructor(ttlMs = 5 * 60 * 1000) {
-    // Default 5 minutes
-    this.ttlMs = ttlMs;
+  constructor(options?: number | MemoryCacheStoreOptions) {
+    if (typeof options === "number") {
+      this.ttlMs = options;
+    } else {
+      this.ttlMs = options?.ttlMs ?? 5 * 60 * 1000;
+      this.balanceMaxAgeMs = options?.balanceMaxAgeMs;
+    }
   }
 
   private makeKey(resource: CacheResourceType, key: string): string {
     return `${resource}:${key}`;
   }
 
-  private isExpired(entry: CacheEntry<unknown>): boolean {
-    return Date.now() > entry.expiresAt;
+  private isExpired(entry: CacheEntry<unknown>, resource?: CacheResourceType): boolean {
+    const now = Date.now();
+    if (now > entry.expiresAt) {
+      return true;
+    }
+    if (resource === "balance" && this.balanceMaxAgeMs !== undefined) {
+      if (now - entry.createdAt > this.balanceMaxAgeMs) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async get<T = unknown>(resource: CacheResourceType, key: string): Promise<CacheGetResult<T>> {
@@ -46,7 +66,7 @@ export class MemoryCacheStore implements CacheOperation {
       return { hit: false };
     }
 
-    if (this.isExpired(entry)) {
+    if (this.isExpired(entry, resource)) {
       this.store.delete(fullKey);
       return { hit: false };
     }
@@ -54,17 +74,54 @@ export class MemoryCacheStore implements CacheOperation {
     return { hit: true, value: entry.value as T };
   }
 
-  async set<T = unknown>(resource: CacheResourceType, key: string, value: T): Promise<void> {
+  async set<T = unknown>(
+    resource: CacheResourceType,
+    key: string,
+    value: T,
+    options?: { preserveCreatedAt?: boolean },
+  ): Promise<void> {
     const fullKey = this.makeKey(resource, key);
+    const existing = this.store.get(fullKey);
+    const now = Date.now();
+    const createdAt = options?.preserveCreatedAt && existing ? existing.createdAt : now;
     this.store.set(fullKey, {
       value,
-      expiresAt: Date.now() + this.ttlMs,
+      expiresAt: now + this.ttlMs,
+      createdAt,
     });
+  }
+
+  /**
+   * Refreshes the TTL of an existing entry without updating its createdAt timestamp.
+   */
+  async touch(resource: CacheResourceType, key: string): Promise<boolean> {
+    const fullKey = this.makeKey(resource, key);
+    const entry = this.store.get(fullKey);
+    if (!entry || this.isExpired(entry, resource)) {
+      this.store.delete(fullKey);
+      return false;
+    }
+    entry.expiresAt = Date.now() + this.ttlMs;
+    return true;
   }
 
   async delete(resource: CacheResourceType, key: string): Promise<void> {
     const fullKey = this.makeKey(resource, key);
     this.store.delete(fullKey);
+  }
+
+  /**
+   * Explicitly invalidate a cache entry manually.
+   */
+  async invalidate(resource: CacheResourceType, key: string): Promise<void> {
+    await this.delete(resource, key);
+  }
+
+  /**
+   * Explicitly invalidate a balance cache entry manually (e.g. after a confirmed transaction).
+   */
+  async invalidateBalance(key: string): Promise<void> {
+    await this.delete("balance", key);
   }
 
   /**
@@ -86,10 +143,10 @@ export class MemoryCacheStore implements CacheOperation {
    */
   async cleanup(): Promise<number> {
     let removed = 0;
-    const now = Date.now();
 
     for (const [key, entry] of this.store.entries()) {
-      if (now > entry.expiresAt) {
+      const resource = key.split(":")[0] as CacheResourceType;
+      if (this.isExpired(entry, resource)) {
         this.store.delete(key);
         removed += 1;
       }
@@ -112,6 +169,14 @@ export class NoOpCache implements CacheOperation {
   }
 
   async delete(_resource: CacheResourceType, _key: string): Promise<void> {
+    // no-op
+  }
+
+  async invalidate(_resource: CacheResourceType, _key: string): Promise<void> {
+    // no-op
+  }
+
+  async invalidateBalance(_key: string): Promise<void> {
     // no-op
   }
 }
