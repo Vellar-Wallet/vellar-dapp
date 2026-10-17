@@ -40,6 +40,64 @@ import { trackTransaction } from "@/lib/track";
 // is gated on the smart-contract security checklist (idea.md §12). The card
 // refuses to mint on any other network.
 
+/** Default warning window (24 hours in ms) before an agent key's expiry. */
+export const DEFAULT_EXPIRY_WARNING_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+export type AgentKeyExpiryStatus =
+  | { kind: "no-expiry" }
+  | { kind: "expired"; remainingMs: 0; label: string }
+  | { kind: "nearing-expiry"; remainingMs: number; countdown: string; label: string }
+  | { kind: "healthy"; remainingMs: number };
+
+export function formatExpiryCountdown(remainingMs: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+export function computeAgentKeyExpiryStatus(
+  expiresAt: string | number | undefined | null,
+  nowMs: number = Date.now(),
+  thresholdMs: number = DEFAULT_EXPIRY_WARNING_THRESHOLD_MS,
+): AgentKeyExpiryStatus {
+  if (expiresAt === undefined || expiresAt === null || expiresAt === "") {
+    return { kind: "no-expiry" };
+  }
+  const expiresAtMs =
+    typeof expiresAt === "number"
+      ? expiresAt < 1e12
+        ? expiresAt * 1000
+        : expiresAt
+      : Date.parse(expiresAt);
+
+  if (!Number.isFinite(expiresAtMs)) {
+    return { kind: "no-expiry" };
+  }
+
+  const remainingMs = expiresAtMs - nowMs;
+  if (remainingMs <= 0) {
+    return { kind: "expired", remainingMs: 0, label: "Expired" };
+  }
+  if (remainingMs <= thresholdMs) {
+    const countdown = formatExpiryCountdown(remainingMs);
+    return {
+      kind: "nearing-expiry",
+      remainingMs,
+      countdown,
+      label: `Expires in ${countdown}`,
+    };
+  }
+  return { kind: "healthy", remainingMs };
+}
+
 const EXPIRY_OPTIONS: Array<{ label: string; seconds?: number }> = [
   { label: "1 hour", seconds: 60 * 60 },
   { label: "24 hours", seconds: 24 * 60 * 60 },
@@ -54,7 +112,17 @@ const WINDOW_OPTIONS: Array<{ label: string; seconds: number }> = [
   { label: "per 7 days", seconds: 7 * 24 * 60 * 60 },
 ];
 
-export function AgentKeysCard({ session }: { session: WalletSession }) {
+export function AgentKeysCard({
+  session,
+  expiryWarningThresholdMs = DEFAULT_EXPIRY_WARNING_THRESHOLD_MS,
+  nowMs,
+}: {
+  session: WalletSession;
+  /** Configurable threshold (in ms) before expiry at which a key shows a countdown warning. */
+  expiryWarningThresholdMs?: number;
+  /** Optional clock override for deterministic testing. */
+  nowMs?: number;
+}) {
   const balances = useBalances(session.accountId);
   const signers = useSigners(session.accountId, session.network, session.keyId);
   const invalidateSigners = useInvalidateSigners(session.accountId, session.network);
@@ -70,6 +138,8 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
   const token = tokens.find((t) => t.contractId === tokenId) ?? tokens[0];
   const testnet = session.network === "testnet";
   const busy = isMintBusy(state);
+  const agentSigners = (signers.data ?? []).filter((s) => s.kind === "agent");
+  const currentNowMs = nowMs ?? Date.now();
 
   // #398 composition: when a verified-provenance policy is attached to the
   // account (strict / trusted publishers), every agent key minted from here
@@ -221,6 +291,68 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
         as a signer that can only spend through that policy. You approve both steps with your
         passkey; this is an explicit grant of bounded, pre-authorised delegation.
       </p>
+
+      {agentSigners.length > 0 && (
+        <ul
+          className="mt-3 m-0 flex list-none flex-col gap-2 p-0"
+          data-testid="agent-keys-expiry-list"
+        >
+          {agentSigners.map((signer) => {
+            const expiryStatus =
+              signer.status === "expired"
+                ? ({ kind: "expired", remainingMs: 0, label: "Expired" } as const)
+                : computeAgentKeyExpiryStatus(
+                    signer.expiresAt,
+                    currentNowMs,
+                    expiryWarningThresholdMs,
+                  );
+
+            return (
+              <li
+                key={signer.id}
+                data-testid="agent-key-expiry-item"
+                className="lpa-well flex flex-wrap items-center justify-between gap-2 text-xs"
+              >
+                <span className="font-[family-name:var(--lp-mono)]">
+                  {signer.key.value.slice(0, 6)}…{signer.key.value.slice(-6)}
+                </span>
+                {expiryStatus.kind === "nearing-expiry" && (
+                  <span
+                    data-testid="agent-key-expiry-countdown"
+                    className="rounded bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800"
+                  >
+                    ⚠ {expiryStatus.label}
+                  </span>
+                )}
+                {expiryStatus.kind === "expired" && (
+                  <span
+                    data-testid="agent-key-expired-badge"
+                    className="rounded bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700"
+                  >
+                    Expired
+                  </span>
+                )}
+                {expiryStatus.kind === "no-expiry" && (
+                  <span
+                    data-testid="agent-key-no-expiry"
+                    className="text-[11px] text-[var(--lp-ink-faint)]"
+                  >
+                    No expiry set
+                  </span>
+                )}
+                {expiryStatus.kind === "healthy" && signer.expiresAt && (
+                  <span
+                    data-testid="agent-key-expiry-healthy"
+                    className="text-[11px] text-[var(--lp-ink-soft)]"
+                  >
+                    Active until {new Date(signer.expiresAt).toLocaleDateString()}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {!testnet && (
         <p role="alert" className="lpa-bad mt-3.5! text-sm">
