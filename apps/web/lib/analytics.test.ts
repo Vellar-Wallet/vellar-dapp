@@ -521,7 +521,7 @@ describe("Privacy and security constraints", () => {
     expect(allEventJson).not.toContain(sensitiveData.password);
   });
 
-  it("contractId is OK to include (not sensitive, it's a public address)", () => {
+  it("hashes raw 56-char Soroban contractId before emission (#598)", () => {
     const globalTracker = getAnalyticsTracker();
     globalTracker.getQueue().splice(0);
 
@@ -535,7 +535,8 @@ describe("Privacy and security constraints", () => {
     const queue = globalTracker.getQueue();
     const event = queue.find((e) => e.name === "wallet.created");
 
-    expect(event?.context.contractId).toBe(publicContractId);
+    expect(event?.context.contractId).toBe(globalTracker.hashValue(publicContractId));
+    expect(JSON.stringify(queue)).not.toContain(publicContractId);
   });
 
   it("network is OK to include (not sensitive, it's public)", () => {
@@ -565,4 +566,88 @@ describe("Privacy and security constraints", () => {
 
     expect(event?.properties?.hasUsername).toBe(true);
   });
+
+  it("never sends a raw wallet address (G...) or contract ID (C...) across any exported analytics helper (#598)", async () => {
+    const globalTracker = getAnalyticsTracker();
+    globalTracker.clearQueue();
+
+    const rawWalletAddress = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+    const rawContractId = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+    expect(rawWalletAddress).toMatch(/^G[A-Z2-7]{55}$/);
+    expect(rawContractId).toMatch(/^C[A-Z2-7]{55}$/);
+
+    const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
+
+    const sharedContext: Partial<EventContext> = {
+      network: "testnet",
+      contractId: rawContractId,
+      sessionId: `session-for-${rawWalletAddress}`,
+    };
+
+    // Exercise every exported helper in walletCreationEvents
+    walletCreationEvents.funnelStart(sharedContext);
+    walletCreationEvents.createInitiated({ hasUsername: true }, sharedContext);
+    walletCreationEvents.creationCancelled(sharedContext);
+    walletCreationEvents.passkeyConfirmed(sharedContext);
+    walletCreationEvents.walletCreated({ network: "testnet", hasUsername: true }, sharedContext);
+    walletCreationEvents.creationFailed(
+      {
+        failureReason: `Failed to deploy contract ${rawContractId} for signer ${rawWalletAddress}`,
+        step: "backend",
+      },
+      sharedContext,
+    );
+    walletCreationEvents.funnelCompleted(sharedContext);
+    walletCreationEvents.funnelAbandoned(
+      { step: `abandoned_at_${rawWalletAddress}_${rawContractId}` },
+      sharedContext,
+    );
+
+    // Exercise every exported helper in walletSignInEvents
+    walletSignInEvents.signInInitiated(sharedContext);
+    walletSignInEvents.signinPasskeyConfirmed(sharedContext);
+    walletSignInEvents.signinCompleted({ network: "testnet" }, sharedContext);
+    walletSignInEvents.signinFailed(
+      {
+        failureReason: `Signer ${rawWalletAddress} is not attached to wallet ${rawContractId}`,
+      },
+      sharedContext,
+    );
+
+    // Also exercise direct tracker.emit with nested properties containing raw G... and C...
+    globalTracker.emit(
+      "wallet.custom.event",
+      {
+        recipient: rawWalletAddress,
+        contract: rawContractId,
+        nested: { accounts: [rawWalletAddress, rawContractId] },
+      },
+      sharedContext,
+    );
+
+    const queuedEvents = globalTracker.getQueue();
+    expect(queuedEvents).toHaveLength(13);
+
+    const serializedQueue = JSON.stringify(queuedEvents);
+    expect(serializedQueue).not.toContain(rawWalletAddress);
+    expect(serializedQueue).not.toContain(rawContractId);
+    expect(serializedQueue).not.toMatch(/\b[GC][A-Z2-7]{55}\b/);
+
+    // Flush through the transport and verify the outgoing serialized payload on the spy
+    await globalTracker.flush();
+    expect(setItemSpy).toHaveBeenCalledTimes(1);
+    const [storageKey, serializedPayload] = setItemSpy.mock.calls[0]!;
+    expect(storageKey).toBe("vellar.analytics.events");
+    expect(serializedPayload).not.toContain(rawWalletAddress);
+    expect(serializedPayload).not.toContain(rawContractId);
+    expect(serializedPayload).not.toMatch(/\b[GC][A-Z2-7]{55}\b/);
+
+    // Deterministic 12-char hashes are preserved for correlation
+    expect(serializedPayload).toContain(globalTracker.hashValue(rawWalletAddress));
+    expect(serializedPayload).toContain(globalTracker.hashValue(rawContractId));
+
+    setItemSpy.mockRestore();
+  });
 });
+
