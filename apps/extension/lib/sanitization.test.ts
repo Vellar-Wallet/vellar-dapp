@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { escapeHtml, sanitizeUrl, sanitizeString, sanitizeDAppMetadata } from "./sanitization";
+import {
+  escapeHtml,
+  MAX_MEMO_LENGTH,
+  sanitizeDAppMetadata,
+  sanitizeMemo,
+  sanitizeString,
+  sanitizeUrl,
+  stripControlAndBidiChars,
+} from "./sanitization";
 
 describe("input sanitization helpers (#312)", () => {
   describe("escapeHtml", () => {
@@ -74,6 +82,36 @@ describe("input sanitization helpers (#312)", () => {
     it("provides fallback for missing or empty name", () => {
       const result = sanitizeDAppMetadata({ name: "" });
       expect(result.name).toBe("Unknown dApp");
+    });
+  });
+
+  describe("dApp-supplied memo field control & bidi override sanitization (#578)", () => {
+    it("strips C0 and C1 non-printable control characters from memo fields", () => {
+      const rawMemo = "Invoice\x00#42\x07\x08\x1B[31m\x7F\u0085\u009Bpaid";
+      expect(sanitizeMemo(rawMemo, 100)).toBe("Invoice#42[31mpaid");
+    });
+
+    it("strips Unicode bidirectional text override and isolate characters (RLO/LRO/LRI/RLI/FSI/PDI)", () => {
+      // Attack: RLO (\u202E) visually reverses text to spoof amount/recipient in approval UI.
+      const bidiSpoofedMemo =
+        "Pay \u202E000,1 XLM to CEVIL\u202C\u2066\u2067\u2068\u2069\u200E\u200F\u061C";
+      const sanitized = sanitizeMemo(bidiSpoofedMemo, 100);
+      expect(sanitized).toBe("Pay 000,1 XLM to CEVIL");
+      expect(sanitized).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/);
+      expect(stripControlAndBidiChars(bidiSpoofedMemo)).toBe("Pay 000,1 XLM to CEVIL");
+    });
+
+    it("strips zero-width invisible characters and collapses multi-line breaks in memos", () => {
+      const multilineMemo =
+        "Order\u200B#10\r\nFake Approval Line: 0 XLM\n\t\u2028\u2029\uFEFFVerified";
+      expect(sanitizeMemo(multilineMemo, 100)).toBe("Order#10 Fake Approval Line: 0 XLM Verified");
+    });
+
+    it("enforces MAX_MEMO_LENGTH (28 chars) by default and handles nullish inputs", () => {
+      expect(MAX_MEMO_LENGTH).toBe(28);
+      expect(sanitizeMemo("A".repeat(60))).toHaveLength(28);
+      expect(sanitizeMemo(null)).toBe("");
+      expect(sanitizeMemo(undefined)).toBe("");
     });
   });
 });
