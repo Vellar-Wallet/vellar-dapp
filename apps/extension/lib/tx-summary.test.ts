@@ -10,7 +10,12 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { formatStroops, summarizeTransaction } from "./tx-summary";
+import {
+  formatOperationSummary,
+  formatStroops,
+  formatTransactionBatchSummary,
+  summarizeTransaction,
+} from "./tx-summary";
 
 // Build real transaction XDRs and decode them through the summarizer, so the
 // decode path is exercised for real rather than against a hand-rolled mock.
@@ -27,6 +32,7 @@ const SOURCE = Keypair.random().publicKey();
 const WALLET = contractId();
 const TOKEN = contractId();
 const DEST = contractId();
+const ROUTER = contractId();
 
 function buildTx(op: xdr.Operation): string {
   const account = new Account(SOURCE, "0");
@@ -55,6 +61,7 @@ describe("summarizeTransaction", () => {
     const summary = summarizeTransaction(xdrStr, "testnet", sdk);
 
     expect(summary.movesValue).toBe(true);
+    expect(summary.isBatch).toBe(false);
     expect(summary.operations).toHaveLength(1);
     const op = summary.operations[0]!;
     expect(op.kind).toBe("transfer");
@@ -102,6 +109,75 @@ describe("summarizeTransaction", () => {
     const summary = summarizeTransaction(xdrStr, "testnet", sdk);
     expect(summary.operations).toHaveLength(2);
     expect(summary.movesValue).toBe(true);
+    expect(summary.isBatch).toBe(true);
+  });
+
+  it("summarizes a Soroban multi-operation batch transaction and formats each step in order (#577)", () => {
+    const approveOp = Operation.invokeContractFunction({
+      contract: TOKEN,
+      function: "approve",
+      args: [nativeToScVal(1, { type: "u32" })],
+    });
+    const swapOp = Operation.invokeContractFunction({
+      contract: ROUTER,
+      function: "swap_exact_tokens",
+      args: [nativeToScVal(25_000_000n, { type: "i128" })],
+    });
+    const account = new Account(SOURCE, "0");
+    const xdrStr = new TransactionBuilder(account, {
+      fee: "300",
+      networkPassphrase: PASSPHRASE,
+    })
+      .addOperation(approveOp)
+      .addOperation(transferOp("25000000"))
+      .addOperation(swapOp)
+      .setTimeout(30)
+      .build()
+      .toXDR();
+
+    const summary = summarizeTransaction(xdrStr, "testnet", sdk);
+    expect(summary.isBatch).toBe(true);
+    expect(summary.movesValue).toBe(true);
+    expect(summary.operations).toEqual([
+      { kind: "contract-call", contract: TOKEN, fn: "approve" },
+      { kind: "transfer", token: TOKEN, to: DEST, amount: "25000000" },
+      { kind: "contract-call", contract: ROUTER, fn: "swap_exact_tokens" },
+    ]);
+
+    const lines = formatTransactionBatchSummary(summary);
+    expect(lines).toEqual([
+      `Step 1 of 3: Call approve on ${TOKEN.slice(0, 6)}…${TOKEN.slice(-6)}`,
+      `Step 2 of 3: Send 2.5 XLM → ${DEST.slice(0, 6)}…${DEST.slice(-6)}`,
+      `Step 3 of 3: Call swap_exact_tokens on ${ROUTER.slice(0, 6)}…${ROUTER.slice(-6)}`,
+    ]);
+  });
+
+  it("expands a Soroban smart-wallet execute_batch call and falls back gracefully on unrecognized sub-operations (#577)", () => {
+    const batchCallOp = Operation.invokeContractFunction({
+      contract: WALLET,
+      function: "execute_batch",
+      args: [xdr.ScVal.scvVec([xdr.ScVal.scvU32(1)])],
+    });
+    const summary = summarizeTransaction(buildTx(batchCallOp), "testnet", {
+      TransactionBuilder,
+      Address,
+      scValToNative: () => [
+        { contract: TOKEN, fn: "approve", args: [WALLET, ROUTER, "10000000"] },
+        { contract: TOKEN, fn: "transfer", args: [WALLET, DEST, "10000000"] },
+        { malformed: true },
+      ],
+    });
+
+    expect(summary.isBatch).toBe(true);
+    expect(summary.movesValue).toBe(true);
+    expect(summary.operations).toEqual([
+      { kind: "contract-call", contract: TOKEN, fn: "approve" },
+      { kind: "transfer", token: TOKEN, to: DEST, amount: "10000000" },
+      { kind: "other", label: "Unrecognized batch operation" },
+    ]);
+    expect(formatOperationSummary(summary.operations[2]!, 2, 3)).toBe(
+      "Step 3 of 3: Operation: Unrecognized batch operation",
+    );
   });
 
   it("degrades to a safe generic summary for undecodable input", () => {
