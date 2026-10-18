@@ -143,3 +143,185 @@ export function routeProviderRequest(
     }
   }
 }
+
+export interface ConcurrentTabRequest {
+  id: string;
+  tabId: number;
+  origin: string;
+  request: ProviderRequest;
+}
+
+export interface PendingTabApproval {
+  id: string;
+  tabId: number;
+  origin: string;
+  request: ProviderRequest;
+}
+
+/**
+ * Coordinates concurrent dApp provider requests arriving from multiple browser
+ * tabs targeting the same wallet.
+ *
+ * Guarantees:
+ * - Requests from distinct `(origin, method)` pairs across different tabs never
+ *   overwrite or supersede one another in the pending approval queue.
+ * - Approving one tab's request while rejecting another's mutates grants only
+ *   for the approved origin and never cross-contaminates state or responses.
+ */
+export function createConcurrentRequestQueue(
+  initialState: ExtensionState,
+  pairOrigins: PairOriginPolicy = "any",
+) {
+  let state: ExtensionState = {
+    pairedWallet: initialState.pairedWallet ? { ...initialState.pairedWallet } : undefined,
+    grants: initialState.grants.map((g) => ({ ...g, capabilities: [...g.capabilities] })),
+  };
+
+  const pending = new Map<
+    string,
+    PendingTabApproval & { resolve: (payload: ResponsePayload) => void }
+  >();
+
+  function submit(req: ConcurrentTabRequest): Promise<ResponsePayload> {
+    const decision = routeProviderRequest(req.request, req.origin, state, pairOrigins);
+    if (decision.kind === "respond") {
+      if (decision.revokeGrant && state.pairedWallet) {
+        const normalized = normalizeOrigin(req.origin);
+        state = {
+          ...state,
+          grants: state.grants.filter(
+            (g) => !(g.origin === normalized && g.network === state.pairedWallet?.network),
+          ),
+        };
+      }
+      return Promise.resolve(decision.payload);
+    }
+
+    // Supersede only when BOTH normalized origin and method match. Concurrent
+    // requests from different tabs/origins must coexist independently.
+    for (const [oldId, existing] of pending) {
+      if (existing.origin === decision.origin && existing.request.method === req.request.method) {
+        existing.resolve(errorPayload("rejected", "Superseded by a newer request"));
+        pending.delete(oldId);
+      }
+    }
+
+    return new Promise<ResponsePayload>((resolve) => {
+      pending.set(req.id, {
+        id: req.id,
+        tabId: req.tabId,
+        origin: decision.origin,
+        request: req.request,
+        resolve,
+      });
+    });
+  }
+
+  function resolvePending(
+    id: string,
+    approved: boolean,
+    options?: { signedXdr?: string; devicePublicKeyHex?: string; nowIso?: string },
+  ): boolean {
+    const entry = pending.get(id);
+    if (!entry) return false;
+    pending.delete(id);
+
+    if (!approved) {
+      entry.resolve(errorPayload("rejected", "The user declined the request"));
+      return true;
+    }
+
+    if (entry.request.method === "pair") {
+      const { address, network, rpcUrl, keyId, walletWasmHash } = entry.request.params;
+      state = {
+        ...state,
+        pairedWallet: {
+          address,
+          network,
+          rpcUrl,
+          keyId,
+          walletWasmHash,
+          webAppOrigin: entry.origin,
+        },
+      };
+      entry.resolve({
+        method: "pair",
+        result: { devicePublicKeyHex: options?.devicePublicKeyHex ?? "ab".repeat(32) },
+      });
+      return true;
+    }
+
+    const wallet = state.pairedWallet;
+    if (!wallet) {
+      entry.resolve(errorPayload("disconnected", "No wallet is paired"));
+      return true;
+    }
+
+    if (entry.request.method === "connect") {
+      const filtered = state.grants.filter(
+        (g) => !(g.origin === entry.origin && g.network === wallet.network),
+      );
+      state = {
+        ...state,
+        grants: [
+          ...filtered,
+          {
+            origin: entry.origin,
+            accountId: wallet.address,
+            network: wallet.network,
+            capabilities: ["connect", "view_address", "sign"],
+            grantedAt: options?.nowIso ?? new Date().toISOString(),
+          },
+        ],
+      };
+      entry.resolve({
+        method: "connect",
+        result: { address: wallet.address, network: wallet.network },
+      });
+      return true;
+    }
+
+    if (entry.request.method === "sign_transaction") {
+      entry.resolve({
+        method: "sign_transaction",
+        result: { signedXdr: options?.signedXdr ?? `signed:${entry.request.params.xdr}` },
+      });
+      return true;
+    }
+
+    if (entry.request.method === "sign_auth_entry") {
+      entry.resolve({
+        method: "sign_auth_entry",
+        result: { signedAuthEntry: `signed:${entry.request.params.authEntry}` },
+      });
+      return true;
+    }
+
+    if (entry.request.method === "sign_message") {
+      entry.resolve({
+        method: "sign_message",
+        result: { signedMessage: `signed:${entry.request.params.message}` },
+      });
+      return true;
+    }
+
+    entry.resolve(errorPayload("internal", `Unexpected approval for ${entry.request.method}`));
+    return true;
+  }
+
+  return {
+    submit,
+    resolvePending,
+    listPending: (): PendingTabApproval[] =>
+      [...pending.values()].map(({ id, tabId, origin, request }) => ({
+        id,
+        tabId,
+        origin,
+        request,
+      })),
+    getState: (): ExtensionState => ({
+      pairedWallet: state.pairedWallet ? { ...state.pairedWallet } : undefined,
+      grants: state.grants.map((g) => ({ ...g, capabilities: [...g.capabilities] })),
+    }),
+  };
+}
