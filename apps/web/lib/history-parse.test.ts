@@ -7,12 +7,17 @@ import {
   contractIdOf,
   decimalToRaw,
   decodePageCursor,
+  describeHistoryOperation,
   encodePageCursor,
   isSACTransferEvent,
+  isSorobanInvocationOp,
   mapTransientRpcError,
   mergeHistoryPages,
   parseSACTransfer,
+  parseSorobanInvocationOp,
   TransientHistoryError,
+  UNKNOWN_OPERATION_FALLBACK,
+  UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK,
   withTransientRetry,
   type ClassicOp,
   type RawEvent,
@@ -240,7 +245,9 @@ describe("classicOpToRow", () => {
     expect(row!.asset.code).toBe("XLM");
     expect(row!.amount).toBe(100_000_000n);
     expect(row!.direction).toBe("out");
-    expect(row!.counterparty).toBe("GOTHER1111111111111111111111111111111111111111111111111111111AAAA");
+    expect(row!.counterparty).toBe(
+      "GOTHER1111111111111111111111111111111111111111111111111111111AAAA",
+    );
   });
 
   it("parses a credit-alphanum payment carrying code and issuer", () => {
@@ -278,7 +285,9 @@ describe("classicOpToRow", () => {
 
   it("skips operations that carry no amount to show", () => {
     expect(classicOpToRow(ACCOUNT, classicPayment({ type: "set_options" }))).toBeUndefined();
-    expect(classicOpToRow(ACCOUNT, classicPayment({ type: "invoke_host_function" }))).toBeUndefined();
+    expect(
+      classicOpToRow(ACCOUNT, classicPayment({ type: "invoke_host_function" })),
+    ).toBeUndefined();
     // A payment with no asset information would render a bare number.
     expect(classicOpToRow(ACCOUNT, classicPayment({ asset_type: undefined }))).toBeUndefined();
   });
@@ -318,10 +327,7 @@ describe("mergeHistoryPages", () => {
     const { rows, pageHasMore } = mergeHistoryPages({
       accountId: USDC_EVENT.to,
       events: [liveEvent(USDC_EVENT)],
-      ops: [
-        classicPayment(),
-        classicPayment({ id: "2", created_at: "2026-09-22T00:00:00Z" }),
-      ],
+      ops: [classicPayment(), classicPayment({ id: "2", created_at: "2026-09-22T00:00:00Z" })],
       assetOf: () => USDC_ASSET,
       pageSize: 2,
       decoder: decode,
@@ -419,7 +425,10 @@ describe("cursor packing", () => {
   it("produces a URL-safe cursor (no +, / or = padding)", () => {
     // Real getEvents/Horizon paging tokens contain characters that break a
     // naive base64 round trip through a query string.
-    const cursor = encodePageCursor("0021080979389022208-0000000017/abc+def==", "21115403551948801")!;
+    const cursor = encodePageCursor(
+      "0021080979389022208-0000000017/abc+def==",
+      "21115403551948801",
+    )!;
     expect(cursor).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(decodePageCursor(cursor)).toEqual({
       events: "0021080979389022208-0000000017/abc+def==",
@@ -470,7 +479,8 @@ describe("withTransientRetry", () => {
     const value = await withTransientRetry(
       async () => {
         calls += 1;
-        if (calls < 2) throw new Error("startLedger must be within the ledger range: 4795309 - 4916268");
+        if (calls < 2)
+          throw new Error("startLedger must be within the ledger range: 4795309 - 4916268");
         return 1;
       },
       { retries: 3, baseDelayMs: 1, sleep: () => Promise.resolve() },
@@ -528,7 +538,9 @@ describe("withTransientRetry", () => {
 
 describe("mapTransientRpcError", () => {
   it("maps known codes to TransientHistoryError", () => {
-    expect(mapTransientRpcError(new Error("boom: txNoAccount"))).toBeInstanceOf(TransientHistoryError);
+    expect(mapTransientRpcError(new Error("boom: txNoAccount"))).toBeInstanceOf(
+      TransientHistoryError,
+    );
     expect(mapTransientRpcError("plain MissingValue string")).toBeInstanceOf(TransientHistoryError);
   });
 
@@ -638,5 +650,107 @@ describe("buildClassicRail", () => {
 
     expect(page.rows.map((r) => r.id)).toEqual(["classic:op-0", "classic:op-2"]);
     expect(page.resume).toBe("token-2");
+  });
+});
+
+describe("Soroban contract invocation operation parsing (#557)", () => {
+  it("parses a recognized Soroban contract call and produces a human-readable description distinct from unknown-operation fallback", () => {
+    const op = {
+      id: "99887766",
+      type: "invoke_host_function",
+      transaction_successful: true,
+      created_at: "2026-09-28T03:13:02Z",
+      transaction_hash: USDC_EVENT.txHash,
+      function: "HostFunctionTypeHostFunctionTypeInvokeContract",
+      contract_id: USDC_CONTRACT,
+      function_name: "transfer",
+      asset_balance_changes: [
+        {
+          type: "transfer",
+          from: ACCOUNT,
+          to: USDC_EVENT.to,
+          amount: "25.5000000",
+          asset_type: "credit_alphanum4",
+          asset_code: "USDC",
+          asset_issuer: "GISSUER",
+        },
+      ],
+    };
+
+    expect(isSorobanInvocationOp(op)).toBe(true);
+    const parsed = parseSorobanInvocationOp(op, { accountId: ACCOUNT, decoder: decode });
+    expect(parsed).toBeDefined();
+    expect(parsed!.recognized).toBe(true);
+    expect(parsed!.hostFunctionType).toBe("invoke_contract");
+    expect(parsed!.contractId).toBe(USDC_CONTRACT);
+    expect(parsed!.functionName).toBe("transfer");
+    expect(parsed!.description).toBe("Soroban token transfer (transfer on CBIEL…DAMA)");
+    expect(parsed!.description).not.toBe(UNKNOWN_OPERATION_FALLBACK);
+    expect(parsed!.description).not.toBe(UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK);
+    expect(parsed!.transferRow).toMatchObject({
+      id: "soroban:op:99887766",
+      kind: "soroban",
+      direction: "out",
+      counterparty: USDC_EVENT.to,
+      amount: 255_000_000n,
+    });
+    expect(describeHistoryOperation(op, { decoder: decode })).toBe(
+      "Soroban token transfer (transfer on CBIEL…DAMA)",
+    );
+  });
+
+  it("extracts contract ID and function name from ScVal parameters when top-level fields are omitted", () => {
+    const op = {
+      id: "99887767",
+      type: "invokeHostFunction",
+      transaction_successful: true,
+      created_at: "2026-09-28T04:00:00Z",
+      transaction_hash: XLM_EVENT.txHash,
+      parameters: [
+        { type: "Address", value: XLM_CONTRACT },
+        { type: "Sym", value: xdr.ScVal.scvSymbol("swap_exact_tokens_for_tokens") },
+      ],
+    };
+
+    const parsed = parseSorobanInvocationOp(op, { decoder: decode });
+    expect(parsed).toBeDefined();
+    expect(parsed!.recognized).toBe(true);
+    expect(parsed!.contractId).toBe(XLM_CONTRACT);
+    expect(parsed!.functionName).toBe("swap_exact_tokens_for_tokens");
+    expect(parsed!.description).toBe(
+      "Soroban token swap (swap_exact_tokens_for_tokens on CDLZF…CYSC)",
+    );
+  });
+
+  it("falls back gracefully without throwing for unrecognized or opaque contract invocations", () => {
+    const unrecognizedOp = {
+      id: "99887768",
+      type: "invoke_host_function",
+      transaction_successful: false,
+      created_at: "2026-09-28T05:00:00Z",
+      transaction_hash: "ff".repeat(32),
+      function: "HostFunctionTypeOpaqueUnknown",
+      parameters: [{ type: "bin", value: "===corrupted-base64===" }],
+    };
+
+    const throwingDecoder = () => {
+      throw new Error("corrupted ScVal");
+    };
+
+    const parsed = parseSorobanInvocationOp(unrecognizedOp, { decoder: throwingDecoder });
+    expect(parsed).toBeDefined();
+    expect(parsed!.recognized).toBe(false);
+    expect(parsed!.hostFunctionType).toBe("unknown");
+    expect(parsed!.status).toBe("failed");
+    expect(parsed!.description).toBe(UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK);
+    // Still distinct from the generic unknown-operation fallback
+    expect(parsed!.description).not.toBe(UNKNOWN_OPERATION_FALLBACK);
+    expect(describeHistoryOperation(unrecognizedOp, { decoder: throwingDecoder })).toBe(
+      UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK,
+    );
+    // Whereas a completely unknown non-Soroban op uses UNKNOWN_OPERATION_FALLBACK
+    expect(describeHistoryOperation({ type: "clawback_claimable_balance" })).toBe(
+      UNKNOWN_OPERATION_FALLBACK,
+    );
   });
 });

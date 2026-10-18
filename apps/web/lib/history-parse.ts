@@ -467,13 +467,12 @@ export function buildClassicRail(input: {
   const lastOpId = last?.id.slice("classic:".length);
   const resume = input.ops.find((o) => String(o.id) === lastOpId)?.paging_token;
   return { rows: rows.slice(0, input.pageSize), resume };
-}/**
+} /**
  * Merges a page of rows from both rails into one newest-first list for display.
  * Paging itself is per-rail (buildSorobanRail / buildClassicRail); this is only
  * the ordering the UI renders.
  */
-export function mergeHistoryPages(  input: MergeInput,
-): { rows: HistoryTx[]; pageHasMore: boolean } {
+export function mergeHistoryPages(input: MergeInput): { rows: HistoryTx[]; pageHasMore: boolean } {
   const rows: HistoryTx[] = [];
   for (const event of input.events) {
     if (!isSACTransferEvent(event, input.decoder)) continue;
@@ -491,4 +490,320 @@ export function mergeHistoryPages(  input: MergeInput,
   // offset or precision difference would mis-order a string comparison.
   rows.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   return { rows: rows.slice(0, input.pageSize), pageHasMore: rows.length > input.pageSize };
+}
+
+// --- Soroban contract invocation operations (#557) ----------------------------
+
+export const UNKNOWN_OPERATION_FALLBACK = "Unknown operation";
+export const UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK = "Soroban contract invocation";
+
+export type SorobanHostFunctionType =
+  "invoke_contract" | "create_contract" | "upload_wasm" | "unknown";
+
+export interface SorobanBalanceChange {
+  type?: string;
+  from?: string;
+  to?: string;
+  amount: string;
+  asset_type?: string;
+  asset_code?: string;
+  asset_issuer?: string;
+}
+
+export interface SorobanInvocationParameter {
+  type?: string;
+  value?: unknown;
+}
+
+export interface SorobanInvocationOp {
+  id?: string;
+  type?: string;
+  transaction_successful?: boolean;
+  created_at?: string;
+  transaction_hash?: string;
+  function?: string;
+  function_name?: string;
+  contract_id?: string;
+  contractId?: string;
+  parameters?: SorobanInvocationParameter[];
+  args?: unknown[];
+  asset_balance_changes?: SorobanBalanceChange[];
+}
+
+export interface ParsedSorobanInvocation {
+  id: string;
+  txHash: string;
+  timestamp: string;
+  status: "success" | "failed";
+  hostFunctionType: SorobanHostFunctionType;
+  contractId?: string;
+  functionName?: string;
+  recognized: boolean;
+  /** Human-readable description distinct from UNKNOWN_OPERATION_FALLBACK. */
+  description: string;
+  /** Populated when the invocation includes a resolvable balance transfer for `accountId`. */
+  transferRow?: HistoryTx;
+}
+
+const SOROBAN_OP_TYPES = new Set(["invoke_host_function", "invokeHostFunction"]);
+
+const HOST_FUNCTION_KIND_MAP: Record<string, SorobanHostFunctionType> = {
+  HostFunctionTypeHostFunctionTypeInvokeContract: "invoke_contract",
+  host_function_type_invoke_contract: "invoke_contract",
+  invoke_contract: "invoke_contract",
+  HostFunctionTypeHostFunctionTypeCreateContract: "create_contract",
+  HostFunctionTypeHostFunctionTypeCreateContractV2: "create_contract",
+  host_function_type_create_contract: "create_contract",
+  create_contract: "create_contract",
+  HostFunctionTypeHostFunctionTypeUploadContractWasm: "upload_wasm",
+  host_function_type_upload_contract_wasm: "upload_wasm",
+  upload_wasm: "upload_wasm",
+};
+
+const KNOWN_CONTRACT_METHOD_LABELS: Record<string, string> = {
+  transfer: "Token transfer",
+  approve: "Token approval",
+  mint: "Token mint",
+  burn: "Token burn",
+  swap_exact_tokens_for_tokens: "Token swap",
+  swap_tokens_for_exact_tokens: "Token swap",
+  add_policy: "Attach policy signer",
+  remove: "Remove signer",
+};
+
+function shortenContractId(contractId: string): string {
+  const trimmed = contractId.trim();
+  if (trimmed.length <= 12) return trimmed;
+  return `${trimmed.slice(0, 5)}…${trimmed.slice(-4)}`;
+}
+
+function safeDecodeParam(param: unknown, decoder?: ScValDecoder): string | undefined {
+  if (typeof param === "string" && param.trim().length > 0) {
+    return param.trim();
+  }
+  if (typeof param === "object" && param !== null) {
+    const record = param as Record<string, unknown>;
+    if (decoder && "value" in record && record.value !== undefined) {
+      try {
+        const decoded = decoder(record.value);
+        if (typeof decoded === "string" && decoded.trim().length > 0) {
+          return decoded.trim();
+        }
+      } catch {
+        // Ignore decoder failures and fall back to raw string inspection
+      }
+    }
+    if (typeof record.value === "string" && record.value.trim().length > 0) {
+      const raw = record.value.trim();
+      // Filter out raw base64 XDR blobs unless short human symbol
+      if (/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(raw) && !raw.endsWith("=")) {
+        return raw;
+      }
+    }
+  }
+  if (decoder && param !== undefined) {
+    try {
+      const decoded = decoder(param);
+      if (typeof decoded === "string" && decoded.trim().length > 0) {
+        return decoded.trim();
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Returns true when `op` is a Soroban `invoke_host_function` / `invokeHostFunction` operation. */
+export function isSorobanInvocationOp(op: unknown): op is SorobanInvocationOp {
+  if (typeof op !== "object" || op === null) return false;
+  const type = (op as { type?: unknown }).type;
+  return typeof type === "string" && SOROBAN_OP_TYPES.has(type);
+}
+
+/**
+ * Parse a Soroban `invoke_host_function` operation into a structured summary
+ * with a human-readable description distinct from `UNKNOWN_OPERATION_FALLBACK`.
+ * Never throws; unrecognized or malformed invocations fall back gracefully.
+ */
+export function parseSorobanInvocationOp(
+  op: unknown,
+  options?: {
+    accountId?: string;
+    decoder?: ScValDecoder;
+  },
+): ParsedSorobanInvocation | undefined {
+  try {
+    if (!isSorobanInvocationOp(op)) return undefined;
+
+    const id = typeof op.id === "string" && op.id ? op.id : "unknown";
+    const txHash = typeof op.transaction_hash === "string" ? op.transaction_hash : "";
+    const timestamp =
+      typeof op.created_at === "string" && op.created_at
+        ? op.created_at
+        : new Date(0).toISOString();
+    const status = op.transaction_successful === false ? "failed" : "success";
+
+    const rawFnKind = typeof op.function === "string" ? op.function.trim() : "";
+    let hostFunctionType: SorobanHostFunctionType = HOST_FUNCTION_KIND_MAP[rawFnKind] ?? "unknown";
+
+    let contractId =
+      typeof op.contract_id === "string" && op.contract_id.trim()
+        ? op.contract_id.trim()
+        : typeof op.contractId === "string" && op.contractId.trim()
+          ? op.contractId.trim()
+          : undefined;
+
+    let functionName =
+      typeof op.function_name === "string" && op.function_name.trim()
+        ? op.function_name.trim()
+        : undefined;
+
+    // If `op.function` itself is a short method name (not a HostFunctionType enum), use it
+    if (
+      !functionName &&
+      rawFnKind &&
+      !(rawFnKind in HOST_FUNCTION_KIND_MAP) &&
+      /^[a-z_][a-z0-9_]{0,63}$/.test(rawFnKind)
+    ) {
+      functionName = rawFnKind;
+      hostFunctionType = "invoke_contract";
+    }
+
+    // Inspect Horizon `parameters` or `args` if contractId / functionName were not top-level
+    const params = Array.isArray(op.parameters)
+      ? op.parameters
+      : Array.isArray(op.args)
+        ? op.args
+        : [];
+    if (params.length > 0) {
+      const p0 = safeDecodeParam(params[0], options?.decoder);
+      const p1 = safeDecodeParam(params[1], options?.decoder);
+      if (!contractId && p0 && /^C[A-Z2-7]{55}$/.test(p0)) {
+        contractId = p0;
+        if (!functionName && p1 && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(p1)) {
+          functionName = p1;
+        }
+      } else if (!functionName && p0 && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(p0)) {
+        functionName = p0;
+      }
+    }
+
+    if ((contractId || functionName) && hostFunctionType === "unknown") {
+      hostFunctionType = "invoke_contract";
+    }
+
+    let recognized = false;
+    let description = UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK;
+
+    if (hostFunctionType === "create_contract") {
+      recognized = true;
+      description = contractId
+        ? `Soroban contract deployment (${shortenContractId(contractId)})`
+        : "Soroban contract deployment";
+    } else if (hostFunctionType === "upload_wasm") {
+      recognized = true;
+      description = "Soroban contract WASM upload";
+    } else if (hostFunctionType === "invoke_contract" && (functionName || contractId)) {
+      recognized = true;
+      const friendlyLabel = functionName ? KNOWN_CONTRACT_METHOD_LABELS[functionName] : undefined;
+      if (friendlyLabel && contractId) {
+        description = `Soroban ${friendlyLabel.toLowerCase()} (${functionName} on ${shortenContractId(contractId)})`;
+      } else if (functionName && contractId) {
+        description = `Soroban contract call: ${functionName} on ${shortenContractId(contractId)}`;
+      } else if (functionName) {
+        description = `Soroban contract call: ${functionName}`;
+      } else if (contractId) {
+        description = `Soroban contract call on ${shortenContractId(contractId)}`;
+      }
+    }
+
+    let transferRow: HistoryTx | undefined;
+    if (options?.accountId && Array.isArray(op.asset_balance_changes)) {
+      const change = op.asset_balance_changes.find(
+        (c) => c && typeof c.amount === "string" && (c.from || c.to),
+      );
+      if (change) {
+        const asset = classicAssetOf({
+          id,
+          type: "payment",
+          transaction_successful: status === "success",
+          created_at: timestamp,
+          transaction_hash: txHash,
+          asset_type: change.asset_type ?? "native",
+          asset_code: change.asset_code,
+          asset_issuer: change.asset_issuer,
+        });
+        if (asset) {
+          transferRow = {
+            id: `soroban:op:${id}`,
+            kind: "soroban",
+            direction: directionFor(options.accountId, change.from, change.to),
+            counterparty:
+              change.from === options.accountId ? (change.to ?? "") : (change.from ?? ""),
+            amount: decimalToRaw(change.amount),
+            asset: {
+              ...asset,
+              kind: "soroban",
+              contractId: contractId ?? "",
+            },
+            timestamp,
+            status,
+            txHash,
+          };
+        }
+      }
+    }
+
+    return {
+      id: `soroban:op:${id}`,
+      txHash,
+      timestamp,
+      status,
+      hostFunctionType,
+      ...(contractId !== undefined && { contractId }),
+      ...(functionName !== undefined && { functionName }),
+      recognized,
+      description,
+      ...(transferRow !== undefined && { transferRow }),
+    };
+  } catch {
+    return {
+      id: "soroban:op:unknown",
+      txHash: "",
+      timestamp: new Date(0).toISOString(),
+      status: "failed",
+      hostFunctionType: "unknown",
+      recognized: false,
+      description: UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK,
+    };
+  }
+}
+
+/**
+ * Produce a human-readable description for a history operation. Soroban
+ * `invoke_host_function` operations return a Soroban-specific description
+ * distinct from `UNKNOWN_OPERATION_FALLBACK`. Never throws.
+ */
+export function describeHistoryOperation(
+  op: unknown,
+  options?: { decoder?: ScValDecoder },
+): string {
+  try {
+    if (isSorobanInvocationOp(op)) {
+      return (
+        parseSorobanInvocationOp(op, options)?.description ??
+        UNRECOGNIZED_SOROBAN_INVOCATION_FALLBACK
+      );
+    }
+    if (typeof op !== "object" || op === null) return UNKNOWN_OPERATION_FALLBACK;
+    const type = (op as { type?: unknown }).type;
+    if (typeof type !== "string") return UNKNOWN_OPERATION_FALLBACK;
+    if (type === "payment" || type.startsWith("path_payment")) return "Classic payment";
+    if (type === "create_account") return "Account creation";
+    if (type === "account_merge") return "Account merge";
+    return UNKNOWN_OPERATION_FALLBACK;
+  } catch {
+    return UNKNOWN_OPERATION_FALLBACK;
+  }
 }
