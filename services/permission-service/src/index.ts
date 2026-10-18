@@ -3,7 +3,14 @@ import { portFromEnv, startService } from "@vellar/service-kit";
 import { buildPermissionServer } from "./server";
 
 export { configFromEnv, DEFAULTS, type PermissionServiceRuntimeConfig } from "./config";
-export { OriginPermissionCache } from "./origin-permission-cache";
+export {
+  OriginPermissionCache,
+  createRevocationInvalidationHook,
+  type OriginPermissionCacheOptions,
+  type ExtensionPermissionRevocationEvent,
+  type RevocationInvalidationResult,
+  type RevocationInvalidationHook,
+} from "./origin-permission-cache";
 export { buildPermissionServer, type PermissionServiceDeps } from "./server";
 export { normalizeOrigin, hasCapability } from "@vellar/provider-sdk";
 
