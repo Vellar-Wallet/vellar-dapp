@@ -117,34 +117,178 @@ function useTxSummary(approval: PendingApprovalSummary): TransactionSummary | nu
   return summary;
 }
 
+export type VerificationRecordVariant =
+  "verified" | "pending" | "no_record" | "explicit_unverified" | "revoked";
+
+export interface VerificationRecordInput {
+  status: VerificationStatus | "revoked";
+  recordId?: string;
+  updatedAt?: string;
+  revoked?: boolean;
+  explicitlyFlagged?: boolean;
+  statusDetail?: string;
+}
+
+export interface VerificationVisualTreatment {
+  variant: VerificationRecordVariant;
+  badgeStatus: VerificationStatus;
+  badgeLabel: string;
+  signalClassName: "signal" | "signal warn" | "signal bad";
+  calloutTone: "ok" | "neutral" | "warn" | "danger";
+  headline: string;
+  description: string;
+}
+
+/**
+ * Resolves a distinct visual treatment from an actual verification record state (#587):
+ * - `no_record`: contract has no verification record at all (neutral guidance).
+ * - `explicit_unverified`: contract has a verification record that failed or was
+ *   explicitly flagged unverified (warning treatment).
+ * - `revoked`: contract had a verification record that was later revoked (danger treatment).
+ * - `verified` / `pending`: verified source or build in progress.
+ */
+export function resolveVerificationTreatment(
+  record: VerificationRecordInput | null | undefined,
+): VerificationVisualTreatment {
+  if (!record) {
+    return {
+      variant: "no_record",
+      badgeStatus: "unverified",
+      badgeLabel: "No verification record",
+      signalClassName: "signal",
+      calloutTone: "neutral",
+      headline: "No verification record found",
+      description:
+        "This contract has not been submitted for source verification yet. Proceed only if you recognize the dApp and contract.",
+    };
+  }
+
+  if (record.revoked || record.status === "revoked") {
+    return {
+      variant: "revoked",
+      badgeStatus: "failed",
+      badgeLabel: "Verification revoked",
+      signalClassName: "signal bad",
+      calloutTone: "danger",
+      headline: "Contract verification was revoked",
+      description:
+        record.statusDetail ??
+        "A prior verification attestation for this contract was revoked. Do not approve unless you have independently verified the upgrade.",
+    };
+  }
+
+  if (
+    record.status === "failed" ||
+    record.explicitlyFlagged ||
+    (record.status === "unverified" && Boolean(record.recordId))
+  ) {
+    return {
+      variant: "explicit_unverified",
+      badgeStatus: "failed",
+      badgeLabel: "Flagged unverified",
+      signalClassName: "signal warn",
+      calloutTone: "warn",
+      headline: "Contract explicitly flagged as unverified",
+      description:
+        record.statusDetail ??
+        "Source verification failed or did not match the deployed WASM hash for this contract.",
+    };
+  }
+
+  if (record.status === "verified") {
+    return {
+      variant: "verified",
+      badgeStatus: "verified",
+      badgeLabel: "Verified source",
+      signalClassName: "signal",
+      calloutTone: "ok",
+      headline: "Verified reproducible contract source",
+      description: "Deployed WASM matches the reproducible source build.",
+    };
+  }
+
+  if (record.status === "submitted" || record.status === "building") {
+    return {
+      variant: "pending",
+      badgeStatus: record.status,
+      badgeLabel: "Verification in progress",
+      signalClassName: "signal warn",
+      calloutTone: "neutral",
+      headline: "Source verification in progress",
+      description: "A verification build is currently queued or running for this contract.",
+    };
+  }
+
+  return {
+    variant: "no_record",
+    badgeStatus: "unverified",
+    badgeLabel: "No verification record",
+    signalClassName: "signal",
+    calloutTone: "neutral",
+    headline: "No verification record found",
+    description:
+      "This contract has not been submitted for source verification yet. Proceed only if you recognize the dApp and contract.",
+  };
+}
+
+export function VerificationStateBanner({
+  record,
+}: {
+  record: VerificationRecordInput | null | undefined;
+}) {
+  const treatment = resolveVerificationTreatment(record);
+  return (
+    <div
+      className={`verification-treatment verification-${treatment.variant}`}
+      data-testid="verification-state-treatment"
+      data-verification-variant={treatment.variant}
+      data-callout-tone={treatment.calloutTone}
+    >
+      <div className="badge">
+        <TrustBadge status={treatment.badgeStatus} label={treatment.badgeLabel} size="sm" />
+      </div>
+      <p className="verification-headline">{treatment.headline}</p>
+      <p className="verification-description">{treatment.description}</p>
+    </div>
+  );
+}
+
 /** Trust signal for a contract a transaction will call (§5.5). Best-effort: a
- * lookup failure yields "unverified" so the badge degrades to neutral rather
- * than blocking the review. */
-function useContractTrust(contractId: string | undefined): VerificationStatus {
-  const [status, setStatus] = useState<VerificationStatus>("unverified");
+ * lookup failure yields `{ status: "unverified" }` (no recordId) so the badge
+ * degrades to the neutral "No verification record" state rather than blocking. */
+function useContractTrust(contractId: string | undefined): VerificationRecordInput {
+  const [record, setRecord] = useState<VerificationRecordInput>({ status: "unverified" });
   useEffect(() => {
     if (!contractId) return;
     let cancelled = false;
     void (async () => {
       try {
         const result = await verificationClient().getStatus(contractId);
-        if (!cancelled) setStatus(result.status);
+        if (!cancelled) setRecord(result);
       } catch {
-        if (!cancelled) setStatus("unverified");
+        if (!cancelled) setRecord({ status: "unverified" });
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [contractId]);
-  return status;
+  return record;
 }
 
 const short = (id: string) => `${id.slice(0, 6)}…${id.slice(-6)}`;
 
-function OperationLine({ op }: { op: TransactionSummary["operations"][number] }) {
+function OperationLine({
+  op,
+  verificationOverride,
+}: {
+  op: TransactionSummary["operations"][number];
+  verificationOverride?: VerificationRecordInput | null;
+}) {
   const contractId = op.kind === "contract-call" ? op.contract : undefined;
-  const trust = useContractTrust(contractId);
+  const liveTrust = useContractTrust(verificationOverride !== undefined ? undefined : contractId);
+  const trustRecord = verificationOverride !== undefined ? verificationOverride : liveTrust;
+  const treatment = resolveVerificationTreatment(trustRecord);
 
   if (op.kind === "transfer") {
     return (
@@ -158,14 +302,12 @@ function OperationLine({ op }: { op: TransactionSummary["operations"][number] })
   }
   if (op.kind === "contract-call") {
     return (
-      <div className="op">
+      <div className="op" data-verification-variant={treatment.variant}>
         <span className="verb">Call contract</span>
         <p className="what">
           <strong>{op.fn}</strong> on {short(op.contract)}
         </p>
-        <div className="badge">
-          <TrustBadge status={trust} size="sm" />
-        </div>
+        <VerificationStateBanner record={trustRecord} />
       </div>
     );
   }
@@ -201,12 +343,14 @@ export function ApprovalScreen({
   position,
   total,
   wallet,
+  verificationRecord,
   onResolved,
 }: {
   approval: PendingApprovalSummary;
   position: number;
   total: number;
   wallet: PairedWallet | undefined;
+  verificationRecord?: VerificationRecordInput | null;
   onResolved: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -214,6 +358,8 @@ export function ApprovalScreen({
   const isSign = SIGN_METHODS.has(approval.request.method);
   const copy = describeRequest(approval.request);
   const summary = useTxSummary(approval);
+  const heroVerification =
+    verificationRecord !== undefined ? resolveVerificationTreatment(verificationRecord) : undefined;
 
   // A new approval in the queue must not inherit the previous one's busy lock.
   useEffect(() => setBusy(false), [approval.id]);
@@ -252,11 +398,29 @@ export function ApprovalScreen({
             <span className={secure ? "signal" : "signal bad"}>
               {secure ? "🔒 Secure origin" : "⚠ Not HTTPS"}
             </span>
+            {heroVerification && (
+              <span
+                className={heroVerification.signalClassName}
+                data-testid="hero-verification-signal"
+                data-verification-variant={heroVerification.variant}
+              >
+                {heroVerification.badgeLabel}
+              </span>
+            )}
           </div>
           <p className="ask">
             <strong>{host}</strong> {copy.ask}
           </p>
         </section>
+
+        {verificationRecord !== undefined && (
+          <section className="section" aria-label="Verification status">
+            <div className="section-head">
+              <span className="eyebrow">Verification status</span>
+            </div>
+            <VerificationStateBanner record={verificationRecord} />
+          </section>
+        )}
 
         {approval.request.method === "connect" && (
           <section className="section">
