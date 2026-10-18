@@ -1,3 +1,5 @@
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { VerificationRecordInternal } from "@vellar/verification-service/server";
 import type { ClaimedJob } from "./job-store";
@@ -13,6 +15,13 @@ import type { ClaimedJob } from "./job-store";
 // extended with the fields the worker also requires (id, status, timestamps).
 // We reuse the same Zod version (^4.0.0) that verification-service already
 // depends on — no new library introduced.
+
+function hasLexicalTraversalSegment(rawPath: string): boolean {
+  if (rawPath.includes("\0")) return true;
+  const withoutScheme = rawPath.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "");
+  const segments = withoutScheme.replace(/\\/g, "/").split("/");
+  return segments.some((segment) => segment === "..");
+}
 
 // ── Field-level primitives ────────────────────────────────────────────────────
 
@@ -40,6 +49,14 @@ const wasmHashSchema = z
 const isoTimestampSchema = z
   .string()
   .refine((v) => Number.isFinite(Date.parse(v)), "must be a valid ISO 8601 timestamp");
+
+const sourceArchiveRefSchema = z
+  .string()
+  .min(1, "sourceArchiveRef must not be empty")
+  .refine(
+    (v) => !hasLexicalTraversalSegment(v),
+    "sourceArchiveRef must not contain relative path traversal segments (..)",
+  );
 
 // The full set of status values a row may legitimately carry (from @vellar/types
 // VerificationStatus — keep in sync).
@@ -73,7 +90,7 @@ export const importedRecordSchema = z
     sourceType: z.enum(["repo", "upload"]),
     repoUrl: z.string().url("repoUrl must be a valid URL").optional(),
     commitHash: commitHashSchema.optional(),
-    sourceArchiveRef: z.string().min(1, "sourceArchiveRef must not be empty").optional(),
+    sourceArchiveRef: sourceArchiveRefSchema.optional(),
 
     // ── Build inputs ─────────────────────────────────────────────────────────
     toolchainVersion: z.string().min(1, "toolchainVersion must be a non-empty string"),
@@ -87,7 +104,11 @@ export const importedRecordSchema = z
     statusDetail: z.string().optional(),
 
     // ── Trace context (#301) — absent on rows written before it existed ─────
-    traceId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional().catch(undefined),
+    traceId: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .optional()
+      .catch(undefined),
     traceParentSpanId: z
       .string()
       .regex(/^[A-Za-z0-9._:-]{1,128}$/)
@@ -200,4 +221,133 @@ export function toClaimedJob(record: ImportedRecord, submittedAtMs?: number): Cl
     traceId: record.traceId,
     traceParentSpanId: record.traceParentSpanId,
   };
+}
+
+// ── Crate / Archive Import Path Containment (#541) ───────────────────────────
+
+export interface CrateImportPathValidationOk {
+  ok: true;
+  resolvedPath: string;
+}
+
+export interface CrateImportPathValidationFail {
+  ok: false;
+  reason: "empty_path" | "null_byte" | "absolute_path" | "path_traversal" | "symlink_escape";
+  message: string;
+}
+
+export type CrateImportPathValidationResult =
+  CrateImportPathValidationOk | CrateImportPathValidationFail;
+
+function isWithinDirectory(rootDir: string, targetPath: string): boolean {
+  const rel = relative(rootDir, targetPath);
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function resolveCanonicalPath(targetPath: string, realpathFn: (path: string) => string): string {
+  const pendingSegments: string[] = [];
+  let current = targetPath;
+
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    pendingSegments.unshift(relative(parent, current));
+    current = parent;
+  }
+
+  const canonicalBase = existsSync(current) ? realpathFn(current) : current;
+  return pendingSegments.length > 0 ? resolve(canonicalBase, ...pendingSegments) : canonicalBase;
+}
+
+/**
+ * Validates that an imported file or module path stays strictly within the
+ * expected `crateRootDir`.
+ *
+ * Rejects:
+ * 1. Empty paths, null bytes, or absolute paths.
+ * 2. Relative traversal segments (`../` or `..\\`) that attempt to walk above
+ *    `crateRootDir` or appear anywhere in the import path.
+ * 3. Paths that look safe lexically (e.g. `src/linked/lib.rs`) but resolve
+ *    outside `crateRootDir` through a symlink or junction on disk.
+ */
+export function validateCrateImportPath(
+  crateRootDir: string,
+  importPath: string,
+  options?: {
+    realpath?: (path: string) => string;
+  },
+): CrateImportPathValidationResult {
+  if (!importPath || importPath.trim().length === 0) {
+    return {
+      ok: false,
+      reason: "empty_path",
+      message: "Import path must not be empty",
+    };
+  }
+
+  if (importPath.includes("\0")) {
+    return {
+      ok: false,
+      reason: "null_byte",
+      message: "Import path must not contain null bytes",
+    };
+  }
+
+  if (
+    isAbsolute(importPath) ||
+    importPath.startsWith("/") ||
+    importPath.startsWith("\\") ||
+    /^[A-Za-z]:/.test(importPath)
+  ) {
+    return {
+      ok: false,
+      reason: "absolute_path",
+      message: `Import path must be relative to the crate directory: ${importPath}`,
+    };
+  }
+
+  if (hasLexicalTraversalSegment(importPath)) {
+    return {
+      ok: false,
+      reason: "path_traversal",
+      message: `Import path contains relative traversal segment (..): ${importPath}`,
+    };
+  }
+
+  const lexicalRoot = resolve(crateRootDir);
+  const lexicalTarget = resolve(lexicalRoot, importPath);
+  if (!isWithinDirectory(lexicalRoot, lexicalTarget)) {
+    return {
+      ok: false,
+      reason: "path_traversal",
+      message: `Import path escapes crate directory: ${importPath}`,
+    };
+  }
+
+  const realpathFn = options?.realpath ?? ((p: string) => realpathSync.native(p));
+  try {
+    const canonicalRoot = resolveCanonicalPath(lexicalRoot, realpathFn);
+    const canonicalTarget = resolveCanonicalPath(lexicalTarget, realpathFn);
+
+    if (!isWithinDirectory(canonicalRoot, canonicalTarget)) {
+      return {
+        ok: false,
+        reason: "symlink_escape",
+        message: `Import path resolves outside crate directory via symlink: ${importPath}`,
+      };
+    }
+
+    return {
+      ok: true,
+      resolvedPath: canonicalTarget,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "symlink_escape",
+      message: `Failed to resolve canonical import path (${importPath}): ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }

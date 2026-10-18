@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { validateImportedRecord, toClaimedJob } from "./import-validation";
+import { validateCrateImportPath, validateImportedRecord, toClaimedJob } from "./import-validation";
 
 // Canonical valid contract addresses for tests (Soroban C…, 56 chars total).
 const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
@@ -417,5 +420,80 @@ describe("validateImportedRecord — mixed batch simulation", () => {
     expect(find("bad-2").reason).toContain("toolchainVersion");
     expect(find("bad-3").reason).toContain("status");
     expect(find("bad-4").reason).toContain("commitHash");
+  });
+});
+
+// ── Path traversal & symlink-escape validation (#541) ─────────────────────────
+
+describe("validateImportedRecord & validateCrateImportPath — traversal and symlink escapes (#541)", () => {
+  it("rejects sourceArchiveRef containing ../ traversal segments", () => {
+    const result = fail({
+      ...validUpload,
+      sourceArchiveRef: "archive://../../etc/passwd",
+    });
+    expect(result.reason).toContain("sourceArchiveRef");
+    expect(result.reason).toContain("..");
+  });
+
+  it("accepts a safe relative path inside the crate directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "vellar-crate-ok-"));
+    try {
+      const crateDir = join(root, "crate");
+      const srcDir = join(crateDir, "src");
+      mkdirSync(srcDir, { recursive: true });
+      const libFile = join(srcDir, "lib.rs");
+      writeFileSync(libFile, "#![no_std]\n");
+
+      const res = validateCrateImportPath(crateDir, "src/lib.rs");
+      expect(res.ok).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["leading parent traversal", "../outside.rs"],
+    ["nested parent traversal escaping crate root", "src/../../outside.rs"],
+    ["Mid-path traversal segment", "src/../lib.rs"],
+    ["Windows backslash traversal segment", "src\\..\\..\\outside.rs"],
+  ])("rejects import path with ../ traversal segments (%s: %s)", (_label, relPath) => {
+    const root = mkdtempSync(join(tmpdir(), "vellar-crate-trav-"));
+    try {
+      const crateDir = join(root, "crate");
+      mkdirSync(crateDir, { recursive: true });
+
+      const res = validateCrateImportPath(crateDir, relPath);
+      expect(res).toEqual({
+        ok: false,
+        reason: "path_traversal",
+        message: expect.stringContaining(".."),
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a path that looks safe lexically but resolves outside the crate directory via a symlink", () => {
+    const root = mkdtempSync(join(tmpdir(), "vellar-crate-symlink-"));
+    try {
+      const crateDir = join(root, "crate");
+      const outsideDir = join(root, "outside-secret");
+      mkdirSync(join(crateDir, "src"), { recursive: true });
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(join(outsideDir, "secret.rs"), "// outside crate boundary\n");
+
+      // Create a symlink/junction inside crate/src/vendor pointing to outsideDir
+      const symlinkPath = join(crateDir, "src", "vendor");
+      symlinkSync(outsideDir, symlinkPath, process.platform === "win32" ? "junction" : "dir");
+
+      const res = validateCrateImportPath(crateDir, "src/vendor/secret.rs");
+      expect(res).toEqual({
+        ok: false,
+        reason: "symlink_escape",
+        message: expect.stringContaining("outside crate directory via symlink"),
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
