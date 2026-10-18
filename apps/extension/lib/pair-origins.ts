@@ -20,6 +20,9 @@ export const DEV_PAIR_ORIGINS: readonly string[] = [
   "http://localhost:5173",
 ];
 
+/** Default cap on the number of distinct origins that may be paired per wallet. */
+export const MAX_PAIRED_ORIGINS = 10;
+
 /** Sentinel: the explicit escape hatch disabled the origin restriction. */
 export type PairOriginPolicy = readonly string[] | "any";
 
@@ -34,6 +37,27 @@ export class PairOriginsMisconfiguredError extends Error {
         "WXT_PUBLIC_ALLOW_ANY_PAIR_ORIGIN=1 to explicitly disable the restriction.",
     );
     this.name = "PairOriginsMisconfiguredError";
+  }
+}
+
+/**
+ * Thrown when attempting to pair a new origin for a wallet that has already
+ * reached its maximum number of paired origins (`MAX_PAIRED_ORIGINS`).
+ */
+export class PairedOriginsLimitExceededError extends Error {
+  readonly code = "paired_origins_limit_exceeded" as const;
+  readonly maxOrigins: number;
+  readonly currentCount: number;
+  readonly attemptedOrigin: string;
+
+  constructor(attemptedOrigin: string, maxOrigins: number, currentCount: number) {
+    super(
+      `Cannot pair "${attemptedOrigin}": wallet has reached the maximum of ${maxOrigins} paired origins (${currentCount} currently paired). Unpair an unused origin first and try again.`,
+    );
+    this.name = "PairedOriginsLimitExceededError";
+    this.attemptedOrigin = attemptedOrigin;
+    this.maxOrigins = maxOrigins;
+    this.currentCount = currentCount;
   }
 }
 
@@ -64,19 +88,25 @@ export interface ResolvePairOriginsInput {
   raw: string | undefined;
   /** The explicit, warned escape hatch (WXT_PUBLIC_ALLOW_ANY_PAIR_ORIGIN). */
   allowAny?: boolean;
+  /** Optional cap on configured origins (defaults to MAX_PAIRED_ORIGINS). */
+  maxOrigins?: number;
 }
 
 /**
  * Resolve the pair-origin policy fail-closed:
  * - allowAny escape hatch set        -> "any" (no restriction; caller warns).
- * - configured origins present       -> exactly those (normalized, deduped).
+ * - configured origins present       -> exactly those (normalized, deduped, bounded by maxOrigins).
  * - dev build (serve), none set      -> localhost dev fallback.
  * - production build (build), none set -> THROW (refuse to enable pairing).
  */
 export function resolvePairOrigins(input: ResolvePairOriginsInput): PairOriginPolicy {
   if (input.allowAny) return "any";
 
+  const maxOrigins = input.maxOrigins ?? MAX_PAIRED_ORIGINS;
   const configured = input.raw ? parseOrigins(input.raw) : [];
+  if (configured.length > maxOrigins) {
+    throw new PairedOriginsLimitExceededError(configured[maxOrigins]!, maxOrigins, maxOrigins);
+  }
   if (configured.length > 0) return configured;
 
   if (input.command === "serve") return [...DEV_PAIR_ORIGINS];
@@ -101,4 +131,49 @@ export function pairOriginPolicy(): PairOriginPolicy {
 /** True when `origin` may initiate pairing under `policy`. */
 export function isPairOriginAllowed(policy: PairOriginPolicy, origin: string): boolean {
   return policy === "any" || policy.includes(origin);
+}
+
+/**
+ * Validates and records a paired origin against a wallet's existing paired
+ * origin set, enforcing `maxOrigins` (default `MAX_PAIRED_ORIGINS`).
+ *
+ * - Re-pairing an already-paired origin is idempotent and permitted even at capacity.
+ * - Pairing the `N`-th distinct origin (`length === maxOrigins`) succeeds.
+ * - Attempting to pair an `(N + 1)`-th distinct origin throws `PairedOriginsLimitExceededError`.
+ */
+export function addPairedOrigin(
+  existingOrigins: readonly string[],
+  rawCandidate: string,
+  options: { maxOrigins?: number } = {},
+): string[] {
+  const maxOrigins = options.maxOrigins ?? MAX_PAIRED_ORIGINS;
+  if (!Number.isInteger(maxOrigins) || maxOrigins < 1) {
+    throw new Error(`maxOrigins must be a positive integer, got ${maxOrigins}`);
+  }
+
+  const normalizedExisting: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of existingOrigins) {
+    const norm = normalizeOrigin(entry.trim().replace(/\/+$/, ""));
+    if (norm && !seen.has(norm)) {
+      seen.add(norm);
+      normalizedExisting.push(norm);
+    }
+  }
+
+  const candidate = normalizeOrigin(rawCandidate.trim().replace(/\/+$/, ""));
+  if (!candidate) {
+    throw new Error(`Invalid origin for pairing: "${rawCandidate}"`);
+  }
+
+  // Re-pairing an already-paired origin is allowed without consuming a new slot.
+  if (seen.has(candidate)) {
+    return normalizedExisting;
+  }
+
+  if (normalizedExisting.length >= maxOrigins) {
+    throw new PairedOriginsLimitExceededError(candidate, maxOrigins, normalizedExisting.length);
+  }
+
+  return [...normalizedExisting, candidate];
 }
