@@ -2,7 +2,18 @@ import pg from "pg";
 import { portFromEnv, startService } from "@vellar/service-kit";
 import { buildPermissionServer } from "./server";
 
-export { configFromEnv, DEFAULTS, type PermissionServiceRuntimeConfig } from "./config";
+export {
+  configFromEnv,
+  DEFAULTS,
+  OriginPatternConfigError,
+  validateOriginPatterns,
+  matchesAllowedOrigin,
+  type CompiledOriginPattern,
+  type OriginPatternWarning,
+  type PermissionServiceRuntimeConfig,
+  type ValidateOriginPatternsOptions,
+  type ValidatedOriginPatterns,
+} from "./config";
 export { OriginPermissionCache } from "./origin-permission-cache";
 export { buildPermissionServer, type PermissionServiceDeps } from "./server";
 export { normalizeOrigin, hasCapability } from "@vellar/provider-sdk";
