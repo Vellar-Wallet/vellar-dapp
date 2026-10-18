@@ -3,6 +3,7 @@ import {
   InMemoryDeployJobStore,
   MAX_RETRIES,
   computeBackoff,
+  computeBackoffWithJitter,
   processDeploymentJob,
 } from "./policy-deploy-worker";
 import { createMemoryDLQStore } from "./dlq-store";
@@ -49,6 +50,15 @@ describe("Policy Deployment Worker", () => {
       const maxDelayMs = 60 * 60 * 1000;
       expect(computeBackoff(20)).toBeLessThanOrEqual(maxDelayMs);
       expect(computeBackoff(30)).toBeLessThanOrEqual(maxDelayMs);
+    });
+
+    it("computes jittered backoff within [0, cap] and avoids periodic synchronization", () => {
+      const delays = Array.from({ length: 25 }, () => computeBackoffWithJitter(3));
+      for (const d of delays) {
+        expect(d).toBeGreaterThanOrEqual(0);
+        expect(d).toBeLessThanOrEqual(4000);
+      }
+      expect(new Set(delays).size).toBeGreaterThan(1);
     });
   });
 

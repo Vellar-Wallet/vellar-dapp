@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { MaxRetriesExceededError, RetryAbortedError, retryWithBackoff } from "./retry";
+import {
+  computeBackoffDelay,
+  MaxRetriesExceededError,
+  RetryAbortedError,
+  retryWithBackoff,
+  retryWithJitter,
+} from "./retry";
 
 // Zero-delay sleep so tests don't actually wait.
 const fastSleep = async (_ms: number) => {};
@@ -251,5 +257,68 @@ describe("retryWithBackoff — edge cases", () => {
       { sleep: fastSleep },
     );
     expect(result).toBe(3);
+  });
+});
+
+// ─── retryWithJitter & computeBackoffDelay (#549) ─────────────────────────────
+
+describe("retryWithJitter & computeBackoffDelay (#549)", () => {
+  it("supports baseMs, maxMs, maxAttempts, and jitter modes ('full', 'equal', 'none')", async () => {
+    expect(computeBackoffDelay(0, { baseMs: 250, maxMs: 2_000, jitter: "none" })).toBe(250);
+    expect(computeBackoffDelay(3, { baseMs: 250, maxMs: 1_500, jitter: "none" })).toBe(1_500);
+
+    // Equal jitter stays within [cap / 2, cap]
+    for (let i = 0; i < 30; i++) {
+      const d = computeBackoffDelay(2, { baseMs: 200, maxMs: 5_000, jitter: "equal" });
+      expect(d).toBeGreaterThanOrEqual(400);
+      expect(d).toBeLessThanOrEqual(800);
+    }
+
+    // Full jitter stays within [0, cap]
+    for (let i = 0; i < 30; i++) {
+      const d = computeBackoffDelay(2, { baseMs: 200, maxMs: 5_000, jitter: "full" });
+      expect(d).toBeGreaterThanOrEqual(0);
+      expect(d).toBeLessThanOrEqual(800);
+    }
+  });
+
+  it("produces non-periodic, decorrelated retry schedules across concurrent callers", async () => {
+    const schedules: number[][] = [];
+
+    for (let worker = 0; worker < 10; worker++) {
+      const delays: number[] = [];
+      await retryWithJitter(
+        async () => {
+          throw new Error("transient upstream outage");
+        },
+        {
+          maxAttempts: 5,
+          baseMs: 500,
+          maxMs: 8_000,
+          jitter: "full",
+          sleep: async (ms) => {
+            delays.push(ms);
+          },
+        },
+      ).catch(() => {});
+      schedules.push(delays);
+    }
+
+    // Verify bounds for every worker and attempt
+    const expectedCaps = [500, 1_000, 2_000, 4_000];
+    for (const delays of schedules) {
+      expect(delays).toHaveLength(4);
+      delays.forEach((d, idx) => {
+        expect(d).toBeGreaterThanOrEqual(0);
+        expect(d).toBeLessThanOrEqual(expectedCaps[idx]!);
+      });
+    }
+
+    // Verify retries are NOT periodic (constant step) and not synchronized across workers
+    const serializedSchedules = new Set(schedules.map((s) => s.join(",")));
+    expect(serializedSchedules.size).toBeGreaterThan(1);
+
+    const firstAttemptDelays = new Set(schedules.map((s) => s[0]));
+    expect(firstAttemptDelays.size).toBeGreaterThan(1);
   });
 });
