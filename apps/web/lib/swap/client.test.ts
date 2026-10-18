@@ -2,7 +2,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { assetsFor, findAssetByContractId, type RegisteredAsset } from "@/lib/assets";
-import { candidatePaths, createSwapClient } from "./client";
+import {
+  SwapQuoteSchemaError,
+  assertValidSwapQuoteSchema,
+  candidatePaths,
+  createSwapClient,
+  validateQuoteResponse,
+} from "./client";
 import { SwapVenueError, toVenueError, type SwapVenue } from "./soroswap";
 
 const [XLM, USDC] = assetsFor("testnet") as [RegisteredAsset, RegisteredAsset];
@@ -192,5 +198,145 @@ describe("toVenueError", () => {
     const err = toVenueError(new Error("secret internal trace"));
     expect(err.code).toBeNull();
     expect(err.message).not.toMatch(/secret/);
+  });
+});
+
+describe("quote response schema validation (#556)", () => {
+  it("surfaces SwapQuoteSchemaError with MISSING_DESTINATION_AMOUNT when destination amount is missing", async () => {
+    const vMissingOut = venue({
+      // Only 1 hop returned — destination asset amount is missing
+      getAmountsOut: vi.fn(async (amountIn: bigint) => [amountIn]),
+    });
+    const { swaps } = client(vMissingOut);
+
+    await expect(
+      swaps.quote({ sell: XLM, buy: USDC, amountIn: 10_000_000n, resolve }),
+    ).rejects.toThrowError(SwapQuoteSchemaError);
+
+    await expect(
+      swaps.quote({ sell: XLM, buy: USDC, amountIn: 10_000_000n, resolve }),
+    ).rejects.toMatchObject({
+      name: "SwapQuoteSchemaError",
+      code: "MISSING_DESTINATION_AMOUNT",
+      field: "expectedOut",
+    });
+
+    // Also rejects prepare() if a quote object is missing expectedOut
+    const validQuote = await client(venue()).swaps.quote({
+      sell: XLM,
+      buy: USDC,
+      amountIn: 10_000_000n,
+      resolve,
+    });
+    const brokenQuote = { ...validQuote, expectedOut: undefined } as unknown as typeof validQuote;
+    await expect(
+      swaps.prepare({ from: WALLET, quote: brokenQuote, slippageBps: 50, resolve }),
+    ).rejects.toMatchObject({
+      name: "SwapQuoteSchemaError",
+      code: "MISSING_DESTINATION_AMOUNT",
+    });
+  });
+
+  it("surfaces SwapQuoteSchemaError with MISSING_ASSET_PAIR when source/destination asset pair or path is missing", async () => {
+    const { swaps } = client(venue());
+
+    await expect(
+      swaps.quote({
+        sell: undefined as unknown as RegisteredAsset,
+        buy: USDC,
+        amountIn: 10_000_000n,
+        resolve,
+      }),
+    ).rejects.toMatchObject({
+      name: "SwapQuoteSchemaError",
+      code: "MISSING_ASSET_PAIR",
+      field: "sell/buy",
+    });
+
+    await expect(
+      swaps.quote({
+        sell: { ...XLM, contractId: "" },
+        buy: USDC,
+        amountIn: 10_000_000n,
+        resolve,
+      }),
+    ).rejects.toMatchObject({
+      name: "SwapQuoteSchemaError",
+      code: "MISSING_ASSET_PAIR",
+      field: "sell/buy",
+    });
+
+    expect(() =>
+      assertValidSwapQuoteSchema({
+        sell: XLM,
+        buy: USDC,
+        amountIn: 100n,
+        expectedOut: 10n,
+        path: [XLM.contractId],
+        hopAmounts: [100n, 10n],
+        quotedAt: 1000,
+      }),
+    ).toThrowError(SwapQuoteSchemaError);
+  });
+
+  it("allows unexpected extra fields on quote and simulation responses without breaking parsing", async () => {
+    const vWithExtras = venue({
+      // Venue returns an envelope object with unexpected extra fields
+      getAmountsOut: vi.fn(
+        async (amountIn: bigint) =>
+          ({
+            amounts: [amountIn, (amountIn * 105n) / 1000n],
+            aggregatorVersion: "v2.4.1",
+            priceImpactBps: 12,
+            routeMetadata: { poolId: "CPOOL123", feeBps: 30 },
+          }) as unknown as bigint[],
+      ),
+      buildSwap: vi.fn(async ({ amountIn }) => ({
+        tx: { kind: "assembled", extraTxMeta: "ignored" },
+        simulatedAmounts: [amountIn, (amountIn * 105n) / 1000n],
+        extraSimulationTrace: { cpuInsns: 123456 },
+      })),
+    });
+
+    const { swaps } = client(vWithExtras);
+    const quote = await swaps.quote({
+      sell: XLM,
+      buy: USDC,
+      amountIn: 100_000_000n,
+      resolve,
+    });
+    expect(quote.expectedOut).toBe(10_500_000n);
+
+    // Attach extra fields to the SwapQuote object before calling prepare()
+    const quoteWithExtras = {
+      ...quote,
+      quoteId: "q-999",
+      experimentalDiagnostics: { latencyMs: 42 },
+    } as typeof quote;
+
+    const prepared = await swaps.prepare({
+      from: WALLET,
+      quote: quoteWithExtras,
+      slippageBps: 100,
+      resolve,
+    });
+    expect(prepared.review.expectedOut).toBe(10_500_000n);
+    expect(prepared.review.minOut).toBe(10_395_000n);
+
+    // Direct validateQuoteResponse call with extra fields and stringified integer amounts
+    const validated = validateQuoteResponse(
+      {
+        hopAmounts: ["100000000", "10500000"],
+        unexpectedField: true,
+        nestedExtra: { a: 1 },
+      },
+      {
+        sell: XLM,
+        buy: USDC,
+        amountIn: 100_000_000n,
+        path: [XLM.contractId, USDC.contractId],
+      },
+    );
+    expect(validated).toEqual([100_000_000n, 10_500_000n]);
   });
 });
