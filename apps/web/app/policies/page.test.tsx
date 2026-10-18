@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WalletProvider } from "@/lib/wallet-context";
-import Policies from "./page";
+import Policies, { detectPolicyConflicts, rememberAttachedPolicy } from "./page";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -309,5 +309,149 @@ describe("Policy builder — on-chain safety rules (#399) and provenance modes (
     expect((await screen.findByText(/restricted to 1 trusted publisher/i)).textContent).toMatch(
       /not audited, benign or\s+safe/i,
     );
+  });
+});
+
+describe("Policy builder — conflict warning for overlapping attached policies (#570)", () => {
+  const XLM_SAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+  const USDC_SAC = "CBIELTK6YBZJU5UP2QPQEHGTTDAKAEVWTODQO6QD3J6XEUOFQMS5TRHT";
+
+  const attachedSpendingPolicy = {
+    contractId: "CATTACHED111111111111111111111111111111111111111111111111",
+    definition: {
+      version: "1",
+      type: "spending_limit",
+      owners: [SESSION.accountId],
+      spendingLimits: { dailyXlm: "100" },
+    },
+  };
+
+  const secondSpendingPolicy = {
+    id: "p-overlap",
+    createdAt: "2026-10-18T00:00:00Z",
+    status: "generated" as const,
+    definition: {
+      version: "1",
+      type: "spending_limit",
+      owners: [SESSION.accountId],
+      spendingLimits: { dailyXlm: "50" },
+    },
+    policyHash: "a".repeat(64),
+    manifest: {
+      template: "spending_limit",
+      enforcement: {
+        kind: "policy-contract" as const,
+        wasmHash: "ab".repeat(32),
+        constructorArgs: { dailyLimitStroops: "500000000", windowSeconds: 86400 },
+      },
+      network: "testnet" as const,
+    },
+  };
+
+  const nonOverlappingVerifiedPolicy = {
+    id: "p-no-overlap",
+    createdAt: "2026-10-18T00:00:00Z",
+    status: "generated" as const,
+    definition: {
+      version: "1",
+      type: "verified_only",
+      owners: [SESSION.accountId],
+      provenance: { mode: "strict" as const },
+    },
+    policyHash: "b".repeat(64),
+    manifest: {
+      template: "verified_only",
+      enforcement: {
+        kind: "policy-contract" as const,
+        wasmHash: "cd".repeat(32),
+        constructorArgs: {
+          registry: "CREG",
+          mode: "strict" as const,
+          trustedPublisherIds: [],
+        },
+      },
+      network: "testnet" as const,
+    },
+  };
+
+  it("surfaces a clear warning before passkey approval when a new policy overlaps with an attached one, without blocking deploy", async () => {
+    rememberAttachedPolicy(SESSION.accountId, attachedSpendingPolicy);
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(secondSpendingPolicy);
+    simulateMock.mockResolvedValue({ ok: true, minResourceFee: "5000" });
+    const attachPolicy = vi.fn().mockResolvedValue({ hash: "attachhash-second" });
+    runtimeMock.mockResolvedValue({ resume: vi.fn(), attachPolicy });
+    deployMock.mockImplementation(async (_id, _session, rt) => {
+      const { hash } = await rt.attachPolicy("CDEPLOYEDSECOND234567890ABCDEFGHIJKLMNOPQRSTUVW");
+      return {
+        policy: { ...secondSpendingPolicy, status: "deployed" },
+        contractId: "CDEPLOYEDSECOND234567890ABCDEFGHIJKLMNOPQRSTUVW",
+        attachTxHash: hash,
+      };
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "50" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+
+    // Warning appears on the review card BEFORE any passkey approval is triggered.
+    const warning = await screen.findByTestId("policy-conflict-warning");
+    expect(warning.textContent).toMatch(/overlaps in scope/i);
+    expect(warning.textContent).toMatch(/XLM spending limit/i);
+    expect(warning.textContent).toContain(attachedSpendingPolicy.contractId);
+    expect(warning.textContent).toMatch(/can still proceed/i);
+    expect(attachPolicy).not.toHaveBeenCalled();
+
+    // The user is not blocked from proceeding if they understand the overlap.
+    const deployBtn = screen.getByRole("button", { name: /deploy to my account/i });
+    expect((deployBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(deployBtn);
+
+    expect(await screen.findByText(/policy attached to your account/i)).toBeDefined();
+    expect(attachPolicy).toHaveBeenCalledWith("CDEPLOYEDSECOND234567890ABCDEFGHIJKLMNOPQRSTUVW");
+  });
+
+  it("shows no warning when the new policy does not overlap in scope with the attached policy", async () => {
+    rememberAttachedPolicy(SESSION.accountId, attachedSpendingPolicy);
+    listMock.mockResolvedValue([
+      ...templates,
+      {
+        type: "verified_only",
+        title: "Verified provenance only",
+        description: "Restrict a signer to contracts with verified source provenance.",
+        enforcement: { kind: "policy-contract", wasmHash: "cd".repeat(32) },
+      },
+    ]);
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(nonOverlappingVerifiedPolicy);
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Verified provenance only"));
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+
+    expect(await screen.findByText(/policy generated/i)).toBeDefined();
+    expect(screen.queryByTestId("policy-conflict-warning")).toBeNull();
+  });
+
+  it("detectPolicyConflicts distinguishes overlapping vs disjoint token scopes", () => {
+    const tokenAPolicy = {
+      version: "1",
+      type: "token_spending_limit",
+      owners: [SESSION.accountId],
+      tokenBudget: { token: XLM_SAC, amountBaseUnits: "10000000" },
+    };
+    const tokenBPolicy = {
+      version: "1",
+      type: "token_spending_limit",
+      owners: [SESSION.accountId],
+      tokenBudget: { token: USDC_SAC, amountBaseUnits: "50000000" },
+    };
+    expect(detectPolicyConflicts(tokenBPolicy, [tokenAPolicy])).toEqual([]);
+    const conflicts = detectPolicyConflicts(tokenAPolicy, [
+      { contractId: "CEXISTING", definition: tokenAPolicy },
+    ]);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]?.overlappingScopes).toContain(`spending:token:${XLM_SAC}`);
   });
 });

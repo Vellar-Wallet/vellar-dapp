@@ -31,6 +31,211 @@ type Stage =
   | { name: "configure"; template: PolicyTemplateInfo }
   | { name: "review"; template: PolicyTemplateInfo; policy: GeneratedPolicy };
 
+export interface AttachedPolicyRecord {
+  id?: string;
+  contractId?: string;
+  definition: PolicyDefinition;
+}
+
+export interface PolicyConflictWarning {
+  attachedContractId?: string;
+  attachedType: string;
+  candidateType: string;
+  overlappingScopes: string[];
+  message: string;
+}
+
+const attachedPoliciesKey = (accountId: string) => `vellar.attachedPolicies.${accountId}`;
+
+export function readAttachedPolicies(accountId: string | null | undefined): AttachedPolicyRecord[] {
+  if (!accountId || typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(attachedPoliciesKey(accountId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is AttachedPolicyRecord =>
+      Boolean(
+        item &&
+        typeof item === "object" &&
+        item.definition &&
+        typeof item.definition.type === "string",
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function rememberAttachedPolicy(accountId: string, record: AttachedPolicyRecord): void {
+  if (typeof window === "undefined") return;
+  try {
+    const existing = readAttachedPolicies(accountId).filter(
+      (item) => !record.contractId || item.contractId !== record.contractId,
+    );
+    existing.push(record);
+    window.localStorage.setItem(attachedPoliciesKey(accountId), JSON.stringify(existing));
+  } catch {
+    // Display/warning state only; never block deployment if localStorage is unavailable.
+  }
+}
+
+export function forgetAttachedPolicy(accountId: string, contractId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const remaining = readAttachedPolicies(accountId).filter(
+      (item) => item.contractId !== contractId,
+    );
+    window.localStorage.setItem(attachedPoliciesKey(accountId), JSON.stringify(remaining));
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function extractPolicyDefinition(
+  input: PolicyDefinition | GeneratedPolicy | AttachedPolicyRecord,
+): { definition: PolicyDefinition; contractId?: string } {
+  if ("manifest" in input && "definition" in input) {
+    return { definition: input.definition };
+  }
+  if ("definition" in input) {
+    return { definition: input.definition, contractId: input.contractId };
+  }
+  return { definition: input };
+}
+
+function extractPolicyScopes(def: PolicyDefinition): Set<string> {
+  const scopes = new Set<string>();
+  switch (def.type) {
+    case "spending_limit": {
+      const hasXlmLimit = Boolean(def.spendingLimits?.dailyXlm || def.spendingLimits?.perTxXlm);
+      const maxSingle = def.safetyRules?.maxSingleTransfer ?? [];
+      const allowedTokens = def.safetyRules?.allowedTokens ?? [];
+      if (hasXlmLimit) {
+        scopes.add("spending:XLM");
+      }
+      for (const rule of maxSingle) {
+        if (rule.token) scopes.add(`spending:token:${rule.token}`);
+      }
+      for (const token of allowedTokens) {
+        if (token) scopes.add(`spending:token:${token}`);
+      }
+      if (allowedTokens.length > 0) {
+        scopes.add("spending:token-allowlist");
+      }
+      if (!hasXlmLimit && maxSingle.length === 0 && allowedTokens.length === 0) {
+        scopes.add("spending:XLM");
+      }
+      break;
+    }
+    case "token_spending_limit": {
+      const token = def.tokenBudget?.token;
+      scopes.add(token ? `spending:token:${token}` : "spending:token:*");
+      break;
+    }
+    case "verified_only":
+      scopes.add("provenance:contracts");
+      break;
+    case "contract_allowlist":
+      scopes.add("access:contract-allowlist");
+      for (const c of def.allowlistedContracts ?? []) {
+        if (c) scopes.add(`access:contract:${c}`);
+      }
+      break;
+    case "multisig_threshold":
+    case "single_owner":
+      scopes.add("auth:owners");
+      break;
+    default:
+      scopes.add(`type:${def.type}`);
+      break;
+  }
+  return scopes;
+}
+
+function formatScopeLabel(scope: string): string {
+  if (scope === "spending:XLM") return "XLM spending limit";
+  if (scope === "spending:token-allowlist") return "allowed token transfer list";
+  if (scope.startsWith("spending:token:")) {
+    const token = scope.slice("spending:token:".length);
+    return `token ${token.length > 12 ? `${token.slice(0, 6)}…${token.slice(-6)}` : token} spending limit`;
+  }
+  if (scope === "provenance:contracts") return "contract source provenance";
+  if (scope === "access:contract-allowlist" || scope.startsWith("access:contract:")) {
+    return "contract allowlist";
+  }
+  if (scope === "auth:owners") return "account owner threshold";
+  return scope;
+}
+
+/**
+ * Detect when a candidate policy being deployed overlaps in scope with one or
+ * more already-attached policies on the account. Two policies that govern
+ * orthogonal scopes (e.g. an XLM `spending_limit` and a `verified_only`
+ * provenance policy, or token budgets for two distinct tokens) produce no
+ * conflict warnings.
+ */
+export function detectPolicyConflicts(
+  candidate: PolicyDefinition | GeneratedPolicy,
+  attached: ReadonlyArray<PolicyDefinition | GeneratedPolicy | AttachedPolicyRecord>,
+): PolicyConflictWarning[] {
+  const { definition: candidateDef } = extractPolicyDefinition(candidate);
+  const candidateScopes = extractPolicyScopes(candidateDef);
+  const warnings: PolicyConflictWarning[] = [];
+
+  for (const item of attached) {
+    const { definition: attachedDef, contractId } = extractPolicyDefinition(item);
+    const attachedScopes = extractPolicyScopes(attachedDef);
+    const shared = [...candidateScopes].filter((s) => attachedScopes.has(s));
+
+    // Also detect when an attached policy restricts `allowedTokens` and the
+    // candidate budgets a token outside that allowlist (or vice versa).
+    const candidateAllowed = candidateDef.safetyRules?.allowedTokens;
+    const attachedAllowed = attachedDef.safetyRules?.allowedTokens;
+    const candidateTokens = [...candidateScopes]
+      .filter((s) => s.startsWith("spending:token:"))
+      .map((s) => s.slice("spending:token:".length));
+    const attachedTokens = [...attachedScopes]
+      .filter((s) => s.startsWith("spending:token:"))
+      .map((s) => s.slice("spending:token:".length));
+
+    if (
+      attachedAllowed &&
+      attachedAllowed.length > 0 &&
+      candidateTokens.some((t) => !attachedAllowed.includes(t)) &&
+      !shared.includes("spending:token-allowlist")
+    ) {
+      shared.push("spending:token-allowlist");
+    }
+    if (
+      candidateAllowed &&
+      candidateAllowed.length > 0 &&
+      attachedTokens.some((t) => !candidateAllowed.includes(t)) &&
+      !shared.includes("spending:token-allowlist")
+    ) {
+      shared.push("spending:token-allowlist");
+    }
+
+    if (shared.length > 0) {
+      const labels = [...new Set(shared.map(formatScopeLabel))];
+      const where = contractId ? ` (${contractId})` : "";
+      warnings.push({
+        attachedContractId: contractId,
+        attachedType: attachedDef.type,
+        candidateType: candidateDef.type,
+        overlappingScopes: shared,
+        message:
+          `This ${candidateDef.type} policy overlaps in scope (${labels.join(", ")}) with an ` +
+          `already-attached ${attachedDef.type} policy${where}. On-chain, every attached policy ` +
+          `must approve a transaction, so the most restrictive rule wins. You can still proceed ` +
+          `if this overlap is intentional.`,
+      });
+    }
+  }
+
+  return warnings;
+}
+
 /** Decimal token amount (7 decimals, the SAC precision) → integer base units. */
 export function xlmToBaseUnits(value: string): string {
   const [whole = "0", frac = ""] = value.split(".");
@@ -53,7 +258,8 @@ export function xlmToBaseUnits(value: string): string {
 const POLICY_BUILDER_FLAG = readFlagConfig("policyBuilderV2", {
   NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT:
     process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT,
-  NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST: process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST,
+  NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST:
+    process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST,
 });
 
 /** Exported for tests — the gating decision as a pure function of session. */
@@ -61,14 +267,18 @@ export function policyBuilderVisibleFor(accountId: string | null): boolean {
   return isFlagEnabled(POLICY_BUILDER_FLAG, accountId);
 }
 
-export default function Policies() {
+export default function Policies({
+  attachedPolicies: initialAttachedPolicies,
+}: {
+  attachedPolicies?: AttachedPolicyRecord[];
+} = {}) {
   const session = useWalletSession();
 
   if (!policyBuilderVisibleFor(session?.accountId ?? null)) {
     return <PolicyBuilderNotYetAvailable />;
   }
 
-  return <PolicyBuilder session={session} />;
+  return <PolicyBuilder session={session} initialAttachedPolicies={initialAttachedPolicies} />;
 }
 
 /**
@@ -94,10 +304,27 @@ function PolicyBuilderNotYetAvailable() {
   );
 }
 
-function PolicyBuilder({ session }: { session: WalletSession | null }) {
+function PolicyBuilder({
+  session,
+  initialAttachedPolicies,
+}: {
+  session: WalletSession | null;
+  initialAttachedPolicies?: AttachedPolicyRecord[];
+}) {
   const [templates, setTemplates] = useState<PolicyTemplateInfo[] | null>(null);
   const [stage, setStage] = useState<Stage>({ name: "pick" });
   const [error, setError] = useState<string | null>(null);
+  const [attachedPolicies, setAttachedPolicies] = useState<AttachedPolicyRecord[]>(
+    () => initialAttachedPolicies ?? readAttachedPolicies(session?.accountId),
+  );
+
+  useEffect(() => {
+    if (initialAttachedPolicies !== undefined) {
+      setAttachedPolicies(initialAttachedPolicies);
+      return;
+    }
+    setAttachedPolicies(readAttachedPolicies(session?.accountId));
+  }, [session?.accountId, initialAttachedPolicies]);
 
   useEffect(() => {
     listTemplates()
@@ -143,6 +370,18 @@ function PolicyBuilder({ session }: { session: WalletSession | null }) {
           <ReviewCard
             policy={stage.policy}
             session={session}
+            attachedPolicies={attachedPolicies}
+            onPolicyAttached={(record) => {
+              rememberAttachedPolicy(session.accountId, record);
+              setAttachedPolicies((prev) => [
+                ...prev.filter((p) => !record.contractId || p.contractId !== record.contractId),
+                record,
+              ]);
+            }}
+            onPolicyDetached={(contractId) => {
+              forgetAttachedPolicy(session.accountId, contractId);
+              setAttachedPolicies((prev) => prev.filter((p) => p.contractId !== contractId));
+            }}
             onDone={() => setStage({ name: "pick" })}
           />
         )}
@@ -476,10 +715,16 @@ type DeployState =
 function ReviewCard({
   policy,
   session,
+  attachedPolicies = [],
+  onPolicyAttached,
+  onPolicyDetached,
   onDone,
 }: {
   policy: GeneratedPolicy;
   session: WalletSession;
+  attachedPolicies?: AttachedPolicyRecord[];
+  onPolicyAttached?: (record: AttachedPolicyRecord) => void;
+  onPolicyDetached?: (contractId: string) => void;
   onDone: () => void;
 }) {
   const [state, setState] = useState<DeployState>({ name: "idle" });
@@ -506,6 +751,7 @@ function ReviewCard({
         })
       : undefined;
   const busy = state.name === "simulating" || state.name === "deploying";
+  const conflictWarnings = detectPolicyConflicts(policy, attachedPolicies);
 
   async function runDeploy() {
     setState({ name: "simulating" });
@@ -526,6 +772,11 @@ function ReviewCard({
           return runtime.attachPolicy(contractId);
         },
       });
+      onPolicyAttached?.({
+        id: policy.id,
+        contractId: result.contractId,
+        definition: policy.definition,
+      });
       setState({
         name: "done",
         contractId: result.contractId,
@@ -544,6 +795,7 @@ function ReviewCard({
         resume: runtime.resume,
         detachPolicy: runtime.detachPolicy,
       });
+      onPolicyDetached?.(contractId);
       setState({ name: "detached", removalTxHash: hash });
     } catch (err) {
       setState({ name: "error", message: err instanceof Error ? err.message : "Detach failed" });
@@ -623,6 +875,25 @@ function ReviewCard({
           </ul>
           Denominated in token units, never USD. Scoped to the transfer pattern the policy
           understands — not a universal firewall.
+        </div>
+      )}
+
+      {conflictWarnings.length > 0 && state.name !== "done" && state.name !== "detached" && (
+        <div
+          role="status"
+          data-testid="policy-conflict-warning"
+          className="lpa-well border-l-[3px]! border-l-[var(--lp-sun)]! text-[13px] leading-relaxed text-[var(--lp-ink-soft)]"
+        >
+          <strong className="block text-[var(--lp-ink)]">
+            Potential policy conflict with an already-attached policy
+          </strong>
+          <ul className="m-0 mt-1.5 pl-4.5">
+            {conflictWarnings.map((warning, i) => (
+              <li key={`${warning.attachedType}-${warning.attachedContractId ?? i}`}>
+                {warning.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
