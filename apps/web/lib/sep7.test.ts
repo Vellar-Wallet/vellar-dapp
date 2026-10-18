@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import { assetsFor, nativeAsset } from "./assets";
 import {
   buildPayUri,
+  parseAndVerifyPayUri,
   parsePayUri,
   sep7SignaturePayload,
+  signPayUri,
   verifySep7Origin,
   type Sep7PayRequest,
 } from "./sep7";
@@ -301,5 +303,105 @@ describe("verifySep7Origin", () => {
     };
     await verifySep7Origin(parseOk(signedUri()), { fetch: okFetch, keyCache });
     expect(store.get("shop.example.com")).toBe(signer.publicKey());
+  });
+
+  it("rejects an orphan signature when origin_domain is absent", () => {
+    const uri = `web+stellar:pay?destination=${C_ADDR}&network_passphrase=${TP}&signature=AAAA`;
+    expect(parseCode(uri)).toBe("invalid_origin");
+  });
+
+  it("explicitly marks unsigned URIs (no origin_domain or signature) as unverified", async () => {
+    const rawUri = `web+stellar:pay?destination=${C_ADDR}&amount=10&network_passphrase=${TP}`;
+    const parsed = parseOk(rawUri);
+    expect(parsed.originStatus).toBe("unverified");
+
+    const verified = await parseAndVerifyPayUri(rawUri, TESTNET, { fetch: okFetch });
+    expect(verified).toMatchObject({
+      ok: true,
+      verificationStatus: "unverified",
+      request: {
+        destination: C_ADDR,
+        amount: "10",
+        originStatus: "unverified",
+      },
+    });
+  });
+
+  it("verifies a signed URI end-to-end via parseAndVerifyPayUri and signPayUri", async () => {
+    const unsigned = buildPayUri({
+      destination: C_ADDR,
+      amount: "15.25",
+      network: "testnet",
+      networkPassphrase: Networks.TESTNET,
+    });
+    const signed = signPayUri(unsigned, "merchant.example.com", signer);
+
+    const parsed = parseOk(signed);
+    expect(parsed.originStatus).toBe("pending_verification");
+
+    const result = await parseAndVerifyPayUri(signed, TESTNET, {
+      resolveSigningKey: async (domain) =>
+        domain === "merchant.example.com" ? signer.publicKey() : null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      verificationStatus: "verified",
+      originDomain: "merchant.example.com",
+      request: {
+        destination: C_ADDR,
+        amount: "15.25",
+        originDomain: "merchant.example.com",
+        originStatus: "verified",
+      },
+    });
+  });
+
+  it("rejects tampered, malformed, or unresolvable-origin URIs in parseAndVerifyPayUri", async () => {
+    const validSigned = signedUri();
+
+    // Tampered amount after signing
+    const tampered = validSigned.replace("amount=5", "amount=999");
+    await expect(
+      parseAndVerifyPayUri(tampered, TESTNET, { fetch: okFetch }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_origin",
+      originDomain: "shop.example.com",
+    });
+
+    // Malformed / non-64-byte signature
+    const shortSigUri = `web+stellar:pay?destination=${C_ADDR}&amount=5&network_passphrase=${TP}&origin_domain=shop.example.com&signature=AAAA`;
+    await expect(
+      parseAndVerifyPayUri(shortSigUri, TESTNET, { fetch: okFetch }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_origin",
+      error: expect.stringMatching(/malformed/),
+    });
+
+    // Unresolvable signing key via custom resolver
+    await expect(
+      parseAndVerifyPayUri(validSigned, TESTNET, {
+        resolveSigningKey: async () => null,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_origin",
+      originDomain: "shop.example.com",
+    });
+
+    // Throwing signing key resolver
+    await expect(
+      parseAndVerifyPayUri(validSigned, TESTNET, {
+        resolveSigningKey: async () => {
+          throw new Error("DNS lookup failed");
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_origin",
+      originDomain: "shop.example.com",
+    });
   });
 });
