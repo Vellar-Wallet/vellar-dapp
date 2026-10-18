@@ -9,37 +9,86 @@ import { trustSignal, type VerificationStatus } from "@vellar/verification-sdk";
 // looks the same in the web app and the sandboxed extension popup without
 // depending on either's stylesheet.
 
-const TONE_COLORS: Record<
-  ReturnType<typeof trustSignal>["tone"],
-  { fg: string; bg: string; dot: string }
-> = {
+export type TrustBadgeStatus = VerificationStatus | "loading" | "error";
+
+export type TrustBadgeTone = ReturnType<typeof trustSignal>["tone"] | "loading" | "error";
+
+const TONE_COLORS: Record<TrustBadgeTone, { fg: string; bg: string; dot: string }> = {
   verified: { fg: "#0b7a3b", bg: "rgba(16,185,129,0.14)", dot: "#10b981" },
   warning: { fg: "#b42318", bg: "rgba(239,68,68,0.14)", dot: "#ef4444" },
   pending: { fg: "#8a6d1a", bg: "rgba(234,179,8,0.16)", dot: "#eab308" },
   neutral: { fg: "#5b6472", bg: "rgba(100,116,139,0.14)", dot: "#94a3b8" },
+  loading: { fg: "#1d4ed8", bg: "rgba(59,130,246,0.14)", dot: "#3b82f6" },
+  error: { fg: "#9a3412", bg: "rgba(249,115,22,0.16)", dot: "#f97316" },
 };
 
 export interface TrustBadgeProps {
-  status: VerificationStatus;
+  status?: TrustBadgeStatus;
+  /** Explicit loading flag while a verification status lookup is in flight. */
+  loading?: boolean;
+  /** Explicit error flag or message when the verification lookup itself fails. */
+  error?: boolean | string;
   /** Compact rendering for tight spots (extension approval header). */
   size?: "sm" | "md";
-  /** Optional override label (defaults to the trustSignal label). */
+  /** Optional override label (defaults to the resolved signal label). */
   label?: string;
   style?: CSSProperties;
 }
 
-export function TrustBadge({ status, size = "md", label, style }: TrustBadgeProps) {
-  const signal = trustSignal(status);
+export function resolveTrustBadgeSignal(
+  status: TrustBadgeStatus | undefined,
+  options?: { loading?: boolean; error?: boolean | string },
+): {
+  status: TrustBadgeStatus;
+  label: string;
+  tone: TrustBadgeTone;
+  isBusy: boolean;
+} {
+  if (options?.loading || status === "loading") {
+    return {
+      status: "loading",
+      label: "Checking verification…",
+      tone: "loading",
+      isBusy: true,
+    };
+  }
+  if (options?.error || status === "error") {
+    const customError =
+      typeof options?.error === "string" && options.error.trim().length > 0
+        ? options.error.trim()
+        : undefined;
+    return {
+      status: "error",
+      label: customError ?? "Verification status unavailable",
+      tone: "error",
+      isBusy: false,
+    };
+  }
+  const effectiveStatus: VerificationStatus = status ?? "unverified";
+  const signal = trustSignal(effectiveStatus);
+  return {
+    status: effectiveStatus,
+    label: signal.label,
+    tone: signal.tone,
+    isBusy: signal.tone === "pending",
+  };
+}
+
+export function TrustBadge({ status, loading, error, size = "md", label, style }: TrustBadgeProps) {
+  const signal = resolveTrustBadgeSignal(status, { loading, error });
   const colors = TONE_COLORS[signal.tone];
   const pad = size === "sm" ? "2px 8px" : "4px 10px";
   const font = size === "sm" ? 12 : 13;
   const dot = size === "sm" ? 6 : 8;
+  const displayLabel = label ?? signal.label;
 
   return (
     <span
       role="status"
-      aria-label={`Contract trust status: ${signal.label}`}
-      data-status={status}
+      aria-live="polite"
+      aria-busy={signal.isBusy ? "true" : "false"}
+      aria-label={`Contract trust status: ${displayLabel}`}
+      data-status={signal.status}
       data-tone={signal.tone}
       style={{
         display: "inline-flex",
@@ -63,12 +112,14 @@ export function TrustBadge({ status, size = "md", label, style }: TrustBadgeProp
           height: dot,
           borderRadius: "50%",
           background: colors.dot,
-          // A pending badge pulses so "in progress" reads as live, not stalled.
+          // A pending or loading badge pulses so in-flight lookups read as live, not stalled.
           animation:
-            signal.tone === "pending" ? "vela-trust-pulse 1.4s ease-in-out infinite" : undefined,
+            signal.tone === "pending" || signal.tone === "loading"
+              ? "vela-trust-pulse 1.4s ease-in-out infinite"
+              : undefined,
         }}
       />
-      {label ?? signal.label}
+      {displayLabel}
     </span>
   );
 }
