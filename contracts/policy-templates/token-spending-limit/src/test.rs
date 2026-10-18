@@ -503,3 +503,64 @@ fn uninstall_clears_state_once_removed() {
         .try_policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, 1));
     assert!(res.is_err());
 }
+
+// ----- Non-standard token decimal scales (#590) -----
+
+#[test]
+fn enforces_exact_base_unit_allowance_for_18_decimal_token() {
+    // 18-decimal ERC-20-style bridged token (11 more decimal places than XLM's
+    // native 7): 1,000 tokens = 1_000 * 10^18 base units, which exceeds u64::MAX
+    // and exercises full i128 base-unit precision without truncation.
+    const ONE_TOKEN_18DP: i128 = 1_000_000_000_000_000_000; // 10^18
+    const LIMIT_18DP: i128 = 1_000 * ONE_TOKEN_18DP; // 1,000 tokens (10^21 > u64::MAX)
+
+    let fx = setup(LIMIT_18DP, DAY, false);
+    install(&fx);
+
+    // 600.5 tokens + 399.5 tokens = 1,000.0 tokens (exact cap in 18dp base units)
+    let first_leg = 600 * ONE_TOKEN_18DP + (ONE_TOKEN_18DP / 2);
+    let second_leg = 399 * ONE_TOKEN_18DP + (ONE_TOKEN_18DP / 2);
+    assert_eq!(first_leg + second_leg, LIMIT_18DP);
+
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, first_leg));
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, second_leg));
+
+    // Even 1 wei-equivalent (10^-18 token) above the cumulative cap is rejected.
+    let over_by_one_base_unit = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, 1));
+    assert!(over_by_one_base_unit.is_err());
+}
+
+#[test]
+fn enforces_exact_base_unit_allowance_for_fewer_than_7_decimals_token() {
+    // Contrasting case with fewer than 7 decimals (e.g. 6-decimal USDC where
+    // 1 token = 1_000_000 base units, 10x smaller than 7-decimal stroops).
+    // Verify the contract does not implicitly assume 10^7 scaling.
+    const ONE_TOKEN_6DP: i128 = 1_000_000; // 10^6
+    const TEN_UNITS_6DP: i128 = 10 * ONE_TOKEN_6DP; // 10_000_000 base units
+
+    let fx = setup(TEN_UNITS_6DP, DAY, false);
+    install(&fx);
+
+    // If the contract mistakenly scaled by 10^7 (TEN_XLM = 100_000_000), a
+    // 10_000_001 transfer would wrongly pass. Here 10_000_000 is the exact cap.
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, 6 * ONE_TOKEN_6DP),
+    );
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, 4 * ONE_TOKEN_6DP),
+    );
+
+    let over_by_one_micro_unit = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, 1));
+    assert!(over_by_one_micro_unit.is_err());
+}
+
