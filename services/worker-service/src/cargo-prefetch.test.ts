@@ -7,9 +7,11 @@ import {
   CRATES_IO_DOWNLOAD,
   CRATES_IO_INDEX,
   DependencyPrefetchError,
+  estimatePrefetchRequiredBytes,
   hermeticCargoConfig,
   hermeticGitConfig,
   indexPath,
+  InsufficientDiskSpaceError,
   parseCargoLock,
   planDependencies,
   prefetchCargoDependencies,
@@ -479,5 +481,79 @@ describe("prefetchCargoDependencies", () => {
         assertUrl: publicPin,
       }),
     ).rejects.toMatchObject({ code: "dependencies_unresolved" });
+  });
+
+  it("succeeds when available disk space exceeds the required estimate", async () => {
+    const lockText = lockfile(localPkg, itoaPkg);
+    await writeFile(join(repoDir, "Cargo.lock"), lockText);
+    const plan = planDependencies(parseCargoLock(lockText));
+    const requiredBytes = estimatePrefetchRequiredBytes(plan);
+    const { fetchHttps, requests } = fakeCratesIo();
+    const { run } = fakeGit();
+
+    const result = await prefetchCargoDependencies(repoDir, depsDir, {
+      run,
+      fetchHttps,
+      assertUrl: publicPin,
+      getAvailableDiskBytes: async () => requiredBytes + 10 * 1024 * 1024,
+    });
+
+    expect(result.plan.registry).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+  });
+
+  it("throws InsufficientDiskSpaceError before any network fetch or directory write when space is insufficient", async () => {
+    const lockText = lockfile(localPkg, itoaPkg, gitPkg());
+    await writeFile(join(repoDir, "Cargo.lock"), lockText);
+    const plan = planDependencies(parseCargoLock(lockText));
+    const requiredBytes = estimatePrefetchRequiredBytes(plan);
+    const { fetchHttps, requests } = fakeCratesIo();
+    const { run, calls } = fakeGit();
+
+    await expect(
+      prefetchCargoDependencies(repoDir, depsDir, {
+        run,
+        fetchHttps,
+        assertUrl: publicPin,
+        getAvailableDiskBytes: async () => Math.floor(requiredBytes / 2),
+      }),
+    ).rejects.toThrow(InsufficientDiskSpaceError);
+
+    expect(requests).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("handles exact boundary exhaustion (succeeds at exact requiredBytes, fails at requiredBytes - 1)", async () => {
+    const lockText = lockfile(localPkg, itoaPkg);
+    await writeFile(join(repoDir, "Cargo.lock"), lockText);
+    const plan = planDependencies(parseCargoLock(lockText));
+    const requiredBytes = estimatePrefetchRequiredBytes(plan);
+    const { fetchHttps: fetchFail, requests: failRequests } = fakeCratesIo();
+
+    // 1 byte below the required threshold: fails before any writes or fetches
+    await expect(
+      prefetchCargoDependencies(repoDir, depsDir, {
+        run: fakeGit().run,
+        fetchHttps: fetchFail,
+        assertUrl: publicPin,
+        getAvailableDiskBytes: async () => requiredBytes - 1,
+      }),
+    ).rejects.toMatchObject({
+      code: "insufficient_disk_space",
+      availableBytes: requiredBytes - 1,
+      requiredBytes,
+    });
+    expect(failRequests).toHaveLength(0);
+
+    // Exact threshold: succeeds
+    const { fetchHttps: fetchOk, requests: okRequests } = fakeCratesIo();
+    const result = await prefetchCargoDependencies(repoDir, depsDir, {
+      run: fakeGit().run,
+      fetchHttps: fetchOk,
+      assertUrl: publicPin,
+      getAvailableDiskBytes: async () => requiredBytes,
+    });
+    expect(result.plan.registry).toHaveLength(1);
+    expect(okRequests).toHaveLength(2);
   });
 });

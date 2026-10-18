@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, statfs, writeFile } from "node:fs/promises";
 import { request } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import { join } from "node:path";
@@ -53,6 +53,10 @@ const MAX_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_CRATE_BYTES = 64 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
 
+export const DEFAULT_MIN_FREE_DISK_SAFETY_MARGIN_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_ESTIMATED_BYTES_PER_CRATE = 2 * 1024 * 1024;
+export const DEFAULT_ESTIMATED_BYTES_PER_GIT_DEP = 16 * 1024 * 1024;
+
 export type DependencyPrefetchErrorCode =
   /** The submission cannot be built offline as-is (missing/invalid lockfile,
    * unsupported source, unknown crate, checksum mismatch). Permanent. */
@@ -61,7 +65,9 @@ export type DependencyPrefetchErrorCode =
    * same guarded pre-fetch followed by the same offline build. */
   | "dependency_fetch_failed"
   /** A git dependency URL failed the SSRF guard. Permanent. */
-  | "repo_url_rejected";
+  | "repo_url_rejected"
+  /** Target filesystem does not have enough free disk space for pre-fetch. */
+  | "insufficient_disk_space";
 
 export class DependencyPrefetchError extends Error {
   constructor(
@@ -70,6 +76,17 @@ export class DependencyPrefetchError extends Error {
   ) {
     super(message);
     this.name = "DependencyPrefetchError";
+  }
+}
+
+export class InsufficientDiskSpaceError extends DependencyPrefetchError {
+  constructor(
+    readonly availableBytes: number,
+    readonly requiredBytes: number,
+    message = `Insufficient disk space for dependency pre-fetch: ${availableBytes} bytes available, at least ${requiredBytes} bytes required.`,
+  ) {
+    super(message, "insufficient_disk_space");
+    this.name = "InsufficientDiskSpaceError";
   }
 }
 
@@ -271,6 +288,42 @@ export type RunCommand = (
   env?: Record<string, string>,
 ) => Promise<{ code: number; out: string; timedOut?: boolean }>;
 
+export interface DiskSpaceEstimateOptions {
+  /** Minimum free disk safety margin in bytes (default: 64 MiB). */
+  safetyMarginBytes?: number;
+  /** Estimated bytes required per crates.io archive + index entry (default: 2 MiB). */
+  estimatedBytesPerCrate?: number;
+  /** Estimated bytes required per git mirror repository (default: 16 MiB). */
+  estimatedBytesPerGitDep?: number;
+}
+
+/**
+ * Estimates the minimum required free disk space in bytes for a dependency plan,
+ * combining a base safety margin with per-crate and per-git-mirror budgets.
+ */
+export function estimatePrefetchRequiredBytes(
+  plan: DependencyPlan,
+  options: DiskSpaceEstimateOptions = {},
+): number {
+  const safetyMarginBytes = options.safetyMarginBytes ?? DEFAULT_MIN_FREE_DISK_SAFETY_MARGIN_BYTES;
+  const estimatedBytesPerCrate =
+    options.estimatedBytesPerCrate ?? DEFAULT_ESTIMATED_BYTES_PER_CRATE;
+  const estimatedBytesPerGitDep =
+    options.estimatedBytesPerGitDep ?? DEFAULT_ESTIMATED_BYTES_PER_GIT_DEP;
+
+  return (
+    safetyMarginBytes +
+    plan.registry.length * estimatedBytesPerCrate +
+    plan.git.length * estimatedBytesPerGitDep
+  );
+}
+
+/** Queries available free bytes on the filesystem containing `targetDir`. */
+export async function defaultGetAvailableDiskBytes(targetDir: string): Promise<number> {
+  const stats = await statfs(targetDir);
+  return Number(stats.bavail) * Number(stats.bsize);
+}
+
 export interface PrefetchDeps {
   /** SSRF guard; defaults to the same check the repo clone uses. */
   assertUrl?: (url: string) => Promise<ResolvedPin | undefined>;
@@ -280,6 +333,10 @@ export interface PrefetchDeps {
   run: RunCommand;
   /** Parallel downloads. */
   concurrency?: number;
+  /** Queries available free bytes on the target directory's filesystem. Injectable for tests. */
+  getAvailableDiskBytes?: (targetDir: string) => Promise<number>;
+  /** Optional overrides for disk-space estimation thresholds. */
+  diskSpaceOptions?: DiskSpaceEstimateOptions;
 }
 
 function pinnedLookup(ip: string): LookupFunction {
@@ -381,6 +438,16 @@ export async function prefetchCargoDependencies(
   }
 
   const plan = planDependencies(parseCargoLock(lockText));
+
+  // Pre-check available disk space on the target filesystem before any writes
+  // or network fetches begin (#540).
+  const requiredBytes = estimatePrefetchRequiredBytes(plan, deps.diskSpaceOptions);
+  const getAvailableDiskBytes = deps.getAvailableDiskBytes ?? defaultGetAvailableDiskBytes;
+  const availableBytes = await getAvailableDiskBytes(depsDir);
+  if (availableBytes < requiredBytes) {
+    throw new InsufficientDiskSpaceError(availableBytes, requiredBytes);
+  }
+
   const assertUrl = deps.assertUrl ?? assertPublicHttpsRepoUrl;
   const fetchHttps = deps.fetchHttps ?? defaultFetchHttps;
   const registryDir = join(depsDir, "registry");
