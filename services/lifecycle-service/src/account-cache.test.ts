@@ -163,4 +163,112 @@ describe("createCachedAccountReader", () => {
       expect(underlying.getAccount).toHaveBeenCalledTimes(4);
     });
   });
+
+  describe("account closed mid-TTL (#532)", () => {
+    it("evicts and re-fetches when isAccountClosed detects the account was closed on-chain mid-TTL", async () => {
+      const clock = fakeClock(1_000);
+      let closedOnChain = false;
+
+      const underlying: AccountReader = {
+        getAccount: vi.fn(async (id: string) =>
+          closedOnChain ? undefined : account({ accountId: id }),
+        ),
+      };
+      const cached = createCachedAccountReader(underlying, {
+        ttlMs: 30_000,
+        now: clock.now,
+        isAccountClosed: () => closedOnChain,
+      });
+
+      // Initial read caches the open account.
+      expect(await cached.getAccount("GMIDTTL")).toBeDefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(1);
+
+      // Still open mid-TTL: served from cache.
+      clock.advance(5_000);
+      expect(await cached.getAccount("GMIDTTL")).toBeDefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(1);
+
+      // Account is closed (merged away) on-chain mid-TTL.
+      closedOnChain = true;
+      clock.advance(5_000); // 10s elapsed < 30s TTL
+
+      // Cache must evict the stale open entry and return undefined.
+      expect(await cached.getAccount("GMIDTTL")).toBeUndefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(2);
+
+      // Subsequent mid-TTL read serves the cached closed (undefined) state.
+      clock.advance(1_000);
+      expect(await cached.getAccount("GMIDTTL")).toBeUndefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(2);
+    });
+
+    it("markClosed immediately replaces a mid-TTL open-account entry with undefined", async () => {
+      const clock = fakeClock(1_000);
+      const underlying: AccountReader = {
+        getAccount: vi.fn().mockResolvedValue(account({ accountId: "GCLOSED" })),
+      };
+      const cached = createCachedAccountReader(underlying, {
+        ttlMs: 30_000,
+        now: clock.now,
+      });
+
+      expect(await cached.getAccount("GCLOSED")).toBeDefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(1);
+
+      clock.advance(10_000); // still within 30s TTL
+      cached.markClosed("GCLOSED");
+
+      expect(await cached.getAccount("GCLOSED")).toBeUndefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it("getFreshAccount bypasses mid-TTL cache and replaces a closed account entry with undefined", async () => {
+      const clock = fakeClock(1_000);
+      let open = true;
+      const underlying: AccountReader = {
+        getAccount: vi.fn(async (id: string) => (open ? account({ accountId: id }) : undefined)),
+      };
+      const cached = createCachedAccountReader(underlying, {
+        ttlMs: 30_000,
+        now: clock.now,
+      });
+
+      expect(await cached.getAccount("GFRESH")).toBeDefined();
+
+      // Account closes on-chain mid-TTL.
+      open = false;
+      clock.advance(5_000);
+
+      expect(await cached.getFreshAccount("GFRESH")).toBeUndefined();
+      // Subsequent getAccount also sees undefined (stale open entry was replaced).
+      expect(await cached.getAccount("GFRESH")).toBeUndefined();
+    });
+
+    it("refuses to serve a cached account entry with zero native XLM reserve mid-TTL", async () => {
+      const clock = fakeClock(1_000);
+      let callCount = 0;
+      const underlying: AccountReader = {
+        getAccount: vi.fn(async (id: string) => {
+          callCount++;
+          if (callCount === 1) {
+            return account({
+              accountId: id,
+              balances: [{ assetType: "native", balance: "0" }],
+            });
+          }
+          return undefined;
+        }),
+      };
+      const cached = createCachedAccountReader(underlying, {
+        ttlMs: 30_000,
+        now: clock.now,
+      });
+
+      await cached.getAccount("GZERO");
+      clock.advance(5_000);
+      expect(await cached.getAccount("GZERO")).toBeUndefined();
+      expect(underlying.getAccount).toHaveBeenCalledTimes(2);
+    });
+  });
 });
