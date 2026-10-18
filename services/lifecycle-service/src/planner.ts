@@ -1,6 +1,6 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import type { CleanupPlan } from "@vellar/types";
-import type { HorizonAccount } from "./horizon";
+import { assertCompleteAccountPagination, type HorizonAccount } from "./horizon";
 
 // CleanupPlanner (idea.md §6.4): turns inspected account state into the
 // doc's CleanupPlan — every blocker explicit, merge only when none remain.
@@ -17,6 +17,7 @@ export function isClassicAccountId(value: string): boolean {
 const OPS_PER_TX = 100;
 
 export function buildCleanupPlan(account: HorizonAccount, destination: string): CleanupPlan {
+  assertCompleteAccountPagination(account);
   const blockers: CleanupPlan["blockers"] = [];
 
   for (const balance of account.balances) {

@@ -32,6 +32,49 @@ export interface HorizonAccount {
   dataKeys: string[];
   offers: HorizonOffer[];
   openOffers: number;
+  /** False when trustline or offer pagination was cut short (#531). */
+  paginationComplete?: boolean;
+  /** Reason pagination was cut short, if any (#531). */
+  paginationError?: string;
+}
+
+export class HorizonPaginationError extends Error {
+  readonly code:
+    "trustline_pagination_failed" | "trustline_pagination_truncated" | "offer_pagination_failed";
+  readonly partialCount: number;
+
+  constructor(
+    message: string,
+    opts: {
+      code:
+        | "trustline_pagination_failed"
+        | "trustline_pagination_truncated"
+        | "offer_pagination_failed";
+      partialCount: number;
+      cause?: unknown;
+    },
+  ) {
+    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
+    this.name = "HorizonPaginationError";
+    this.code = opts.code;
+    this.partialCount = opts.partialCount;
+  }
+}
+
+/**
+ * Safety check that refuses to proceed with cleanup plan construction if
+ * Horizon trustline/offer pagination did not complete cleanly (#531).
+ */
+export function assertCompleteAccountPagination(account: HorizonAccount): void {
+  if (account.paginationComplete === false || account.paginationError) {
+    throw new HorizonPaginationError(
+      `Refusing to build cleanup plan for ${account.accountId}: Horizon pagination was cut short (${account.paginationError ?? "incomplete trustline pages"}).`,
+      {
+        code: "trustline_pagination_failed",
+        partialCount: account.balances.length,
+      },
+    );
+  }
 }
 
 export interface AccountReader {
@@ -51,6 +94,10 @@ export interface HorizonReaderOptions {
   /** Safety cap on offer pages followed, so a misbehaving `next` can't loop
    * forever (200 offers/page ⇒ 50 pages = 10k offers, far past any real account). */
   maxOfferPages?: number;
+  /** Page size threshold for trustline pagination (#531). Defaults to 200. */
+  trustlinePageSize?: number;
+  /** Safety cap on trustline pages followed (#531). Defaults to 50. */
+  maxTrustlinePages?: number;
   /** Retry options for transient Horizon failures (5xx, network errors).
    * 404s and validation errors are never retried. Defaults: 3 attempts,
    * 200 ms base delay, 5 s ceiling. Pass `{ maxAttempts: 1 }` to disable. */
@@ -63,7 +110,9 @@ export interface HorizonReaderOptions {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_OFFER_PAGES = 50;
+const DEFAULT_MAX_TRUSTLINE_PAGES = 50;
 const OFFERS_PAGE_LIMIT = 200;
+export const TRUSTLINES_PAGE_LIMIT = 200;
 
 // Runtime shapes: Horizon is an external service, so its responses are
 // VALIDATED, never `as`-cast. A malformed body fails with a clear error here
@@ -74,18 +123,38 @@ const assetRefSchema = z.object({
   asset_issuer: z.string().optional(),
 });
 
+const balanceRecordSchema = z.object({
+  asset_type: z.string(),
+  asset_code: z.string().optional(),
+  asset_issuer: z.string().optional(),
+  balance: z.string(),
+});
+
+const nextLinkSchema = z.object({ href: z.string() }).optional();
+
 const accountSchema = z.object({
   sequence: z.string(),
-  balances: z.array(
-    z.object({
-      asset_type: z.string(),
-      asset_code: z.string().optional(),
-      asset_issuer: z.string().optional(),
-      balance: z.string(),
-    }),
-  ),
+  balances: z.array(balanceRecordSchema),
   data: z.record(z.string(), z.string()).default({}),
+  _links: z
+    .object({
+      next: nextLinkSchema,
+      trustlines: nextLinkSchema,
+      balances: nextLinkSchema,
+    })
+    .optional(),
 });
+
+const trustlinesPageSchema = z.union([
+  z.object({
+    _links: z.object({ next: nextLinkSchema }).optional(),
+    _embedded: z.object({ records: z.array(balanceRecordSchema) }),
+  }),
+  z.object({
+    _links: z.object({ next: nextLinkSchema }).optional(),
+    balances: z.array(balanceRecordSchema),
+  }),
+]);
 
 const offerRecordSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
@@ -99,6 +168,21 @@ const offersPageSchema = z.object({
   _embedded: z.object({ records: z.array(offerRecordSchema) }),
 });
 
+function balanceKey(b: HorizonBalance): string {
+  return b.assetType === "native"
+    ? "native"
+    : `${b.assetType}:${b.assetCode ?? ""}:${b.assetIssuer ?? ""}`;
+}
+
+function toHorizonBalance(b: z.infer<typeof balanceRecordSchema>): HorizonBalance {
+  return {
+    assetType: b.asset_type,
+    assetCode: b.asset_code,
+    assetIssuer: b.asset_issuer,
+    balance: b.balance,
+  };
+}
+
 export function createHorizonAccountReader(
   horizonUrl: string,
   options: HorizonReaderOptions = {},
@@ -107,6 +191,8 @@ export function createHorizonAccountReader(
   const doFetch = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxOfferPages = options.maxOfferPages ?? DEFAULT_MAX_OFFER_PAGES;
+  const trustlinePageSize = options.trustlinePageSize ?? TRUSTLINES_PAGE_LIMIT;
+  const maxTrustlinePages = options.maxTrustlinePages ?? DEFAULT_MAX_TRUSTLINE_PAGES;
   const retryOpts = {
     maxAttempts: options.retryOptions?.maxAttempts ?? 3,
     baseDelayMs: options.retryOptions?.baseDelayMs ?? 200,
@@ -143,6 +229,107 @@ export function createHorizonAccountReader(
         },
       },
     );
+  }
+
+  async function fetchAdditionalTrustlines(
+    accountId: string,
+    initialBalances: HorizonBalance[],
+    initialNextHref?: string,
+  ): Promise<HorizonBalance[]> {
+    const balances = [...initialBalances];
+    const seen = new Set<string>(balances.map(balanceKey));
+    const nonNativeCount = balances.filter((b) => b.assetType !== "native").length;
+
+    let nextUrl =
+      initialNextHref && initialNextHref.length > 0
+        ? initialNextHref
+        : nonNativeCount >= trustlinePageSize
+          ? `${base}/accounts/${encodeURIComponent(accountId)}/trustlines?limit=${trustlinePageSize}`
+          : undefined;
+
+    if (!nextUrl) {
+      return balances;
+    }
+
+    const visitedUrls = new Set<string>();
+    for (let page = 0; page < maxTrustlinePages; page++) {
+      if (visitedUrls.has(nextUrl)) {
+        break;
+      }
+      visitedUrls.add(nextUrl);
+
+      let status: number;
+      let body: unknown;
+      try {
+        ({ status, body } = await fetchJson(nextUrl, "trustlines fetch"));
+      } catch (err) {
+        throw new HorizonPaginationError(
+          `Horizon trustline pagination failed partway through for ${accountId} (after ${balances.length} balance entries): ${(err as Error).message}`,
+          {
+            code: "trustline_pagination_failed",
+            partialCount: balances.length,
+            cause: err,
+          },
+        );
+      }
+
+      if (status === 404) {
+        throw new HorizonPaginationError(
+          `Horizon trustline pagination failed partway through for ${accountId}: page returned 404`,
+          {
+            code: "trustline_pagination_failed",
+            partialCount: balances.length,
+          },
+        );
+      }
+
+      const parsed = trustlinesPageSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new HorizonPaginationError(
+          `Horizon trustlines response was malformed: ${parsed.error.message}`,
+          {
+            code: "trustline_pagination_failed",
+            partialCount: balances.length,
+          },
+        );
+      }
+
+      const rawRecords =
+        "_embedded" in parsed.data ? parsed.data._embedded.records : parsed.data.balances;
+      if (rawRecords.length === 0) {
+        break;
+      }
+
+      let addedOnPage = 0;
+      for (const raw of rawRecords) {
+        const mapped = toHorizonBalance(raw);
+        const key = balanceKey(mapped);
+        if (!seen.has(key)) {
+          seen.add(key);
+          balances.push(mapped);
+          addedOnPage++;
+        }
+      }
+
+      const next = parsed.data._links?.next?.href;
+      if (!next || addedOnPage === 0) {
+        break;
+      }
+
+      if (page === maxTrustlinePages - 1) {
+        throw new HorizonPaginationError(
+          `Horizon trustline pagination exceeded maxTrustlinePages (${maxTrustlinePages}) for ${accountId}; refusing to return truncated trustline set`,
+          {
+            code: "trustline_pagination_truncated",
+            partialCount: balances.length,
+          },
+        );
+      }
+
+      nextUrl = next;
+    }
+
+    return balances;
   }
 
   async function fetchAllOffers(accountId: string): Promise<HorizonOffer[]> {
@@ -189,17 +376,18 @@ export function createHorizonAccountReader(
         throw new Error(`Horizon account response was malformed: ${parsed.error.message}`);
       }
       const account = parsed.data;
+      const initialBalances = account.balances.map(toHorizonBalance);
+      const initialNextHref =
+        account._links?.trustlines?.href ||
+        account._links?.balances?.href ||
+        account._links?.next?.href;
+      const balances = await fetchAdditionalTrustlines(accountId, initialBalances, initialNextHref);
       const offers = await fetchAllOffers(accountId);
 
       return {
         accountId,
         sequence: account.sequence,
-        balances: account.balances.map((b) => ({
-          assetType: b.asset_type,
-          assetCode: b.asset_code,
-          assetIssuer: b.asset_issuer,
-          balance: b.balance,
-        })),
+        balances,
         dataKeys: Object.keys(account.data ?? {}),
         offers,
         openOffers: offers.length,
