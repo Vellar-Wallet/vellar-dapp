@@ -150,6 +150,99 @@ describe("SendPayment", () => {
     expect(alert.textContent).toMatch(/insufficient balance/i);
   });
 
+  it("displays an inline balance error and blocks entering the passkey review step when amount exceeds balance", async () => {
+    const preparePayment = vi.fn();
+    render(
+      <WalletProvider payments={{ preparePayment }}>
+        <SendPayment
+          from={FROM}
+          token={{ ...xlm, amount: 10_000_000n }}
+          network="testnet"
+          onSuccess={vi.fn()}
+        />
+      </WalletProvider>,
+    );
+
+    expect(screen.getByTestId("available-balance").textContent).toContain("Available: 1 XLM");
+    fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+    fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+
+    const inlineErr = await screen.findByTestId("balance-error");
+    expect(inlineErr.textContent).toMatch(/Insufficient XLM balance \(available: 1 XLM\)/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+    await waitFor(() => {
+      expect(preparePayment).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: /review payment/i })).toBeNull();
+    });
+  });
+
+  it("blocks submission and shows inline error when the balance decreases between form load and submit", async () => {
+    const preparePayment = vi.fn().mockResolvedValue(prepared());
+    const { rerender } = render(
+      <WalletProvider payments={{ preparePayment }}>
+        <SendPayment
+          from={FROM}
+          token={{ ...xlm, amount: 50_000_000n }}
+          network="testnet"
+          onSuccess={vi.fn()}
+        />
+      </WalletProvider>,
+    );
+
+    // At form load, balance is 5 XLM; entering 2.5 XLM is valid.
+    fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+    fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+    expect(screen.queryByTestId("balance-error")).toBeNull();
+
+    // Balance decreases to 1 XLM before the user submits.
+    rerender(
+      <WalletProvider payments={{ preparePayment }}>
+        <SendPayment
+          from={FROM}
+          token={{ ...xlm, amount: 10_000_000n }}
+          network="testnet"
+          onSuccess={vi.fn()}
+        />
+      </WalletProvider>,
+    );
+
+    const inlineErr = await screen.findByTestId("balance-error");
+    expect(inlineErr.textContent).toMatch(/Insufficient XLM balance \(available: 1 XLM\)/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+    await waitFor(() => {
+      expect(preparePayment).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: /review payment/i })).toBeNull();
+    });
+  });
+
+  it("re-checks getBalance on submit and blocks passkey review if balance dropped on-chain", async () => {
+    const preparePayment = vi.fn().mockResolvedValue(prepared());
+    const getBalance = vi.fn().mockResolvedValue(15_000_000n); // dropped from 5 XLM to 1.5 XLM
+    render(
+      <WalletProvider payments={{ preparePayment }}>
+        <SendPayment
+          from={FROM}
+          token={{ ...xlm, amount: 50_000_000n }}
+          getBalance={getBalance}
+          network="testnet"
+          onSuccess={vi.fn()}
+        />
+      </WalletProvider>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+    fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+    fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+    const inlineErr = await screen.findByTestId("balance-error");
+    expect(inlineErr.textContent).toMatch(/Insufficient XLM balance \(available: 1\.5 XLM\)/i);
+    expect(getBalance).toHaveBeenCalledTimes(1);
+    expect(preparePayment).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: /review payment/i })).toBeNull();
+  });
+
   describe("prefilled from a payment request", () => {
     function renderRequest(
       payments: PaymentClient,

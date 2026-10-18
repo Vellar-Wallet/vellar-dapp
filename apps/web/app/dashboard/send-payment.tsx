@@ -43,18 +43,55 @@ type FlowState =
   | { step: "tracking"; hash: string }
   | { step: "done"; hash: string; result: "success" | "failed" };
 
+export type TokenWithBalance = TokenInfo & {
+  /** Locally known available balance in base units, when loaded. */
+  amount?: bigint;
+};
+
+/**
+ * Validate a raw decimal amount string against a locally known token balance.
+ * Returns a user-facing inline error string when the amount exceeds the balance,
+ * or `null` when valid, unparseable, or when no local balance is known.
+ */
+export function validateAmountAgainstBalance(
+  rawAmount: string,
+  token: TokenInfo,
+  availableBalance: bigint | undefined,
+): string | null {
+  if (availableBalance === undefined) return null;
+  const trimmed = rawAmount.trim();
+  if (!trimmed) return null;
+  let parsed: bigint;
+  try {
+    parsed = parseAmountWithDecimals(trimmed, token.decimals);
+  } catch {
+    return null;
+  }
+  if (parsed > availableBalance) {
+    const formattedAvailable = formatTokenAmount(availableBalance, token.decimals);
+    return `Insufficient ${token.symbol} balance (available: ${formattedAvailable} ${token.symbol}).`;
+  }
+  return null;
+}
+
 export function SendPayment({
   from,
   token: initialToken,
   availableTokens,
+  balance,
+  getBalance,
   network,
   onSuccess,
   prefill,
   request,
 }: {
   from: string;
-  token?: TokenInfo;
-  availableTokens?: TokenInfo[];
+  token?: TokenWithBalance;
+  availableTokens?: TokenWithBalance[];
+  /** Optional explicit available balance override in base units for the active token. */
+  balance?: bigint;
+  /** Optional callback to read the latest balance at submit/confirm time. */
+  getBalance?: (token: TokenInfo) => bigint | undefined | Promise<bigint | undefined>;
   network: Network;
   onSuccess: () => void;
   prefill?: { to: string; amount?: string };
@@ -64,27 +101,76 @@ export function SendPayment({
   const [flow, setFlow] = useState<FlowState>({ step: "form" });
   const [error, setError] = useState<string | null>(null);
 
-  const supported =
+  const supported: TokenWithBalance[] =
     availableTokens && availableTokens.length > 0 ? availableTokens : getSupportedTokens(network);
 
-  const [selectedToken, setSelectedToken] = useState<TokenInfo>(
+  const defaultToken: TokenWithBalance = initialToken ??
+    supported[0] ?? {
+      symbol: "XLM",
+      decimals: 7,
+      contractId: TESTNET_NATIVE_SAC,
+    };
+
+  const [selectedContractId, setSelectedContractId] = useState<string>(defaultToken.contractId);
+  const [fetchedBalance, setFetchedBalance] = useState<{
+    contractId: string;
+    amount: bigint;
+  } | null>(null);
+
+  const fromAvailable = availableTokens?.find((t) => t.contractId === selectedContractId);
+  const fromInitial =
+    initialToken && initialToken.contractId === selectedContractId ? initialToken : undefined;
+  const selectedToken: TokenWithBalance =
+    fromAvailable ??
+    fromInitial ??
+    supported.find((t) => t.contractId === selectedContractId) ??
     initialToken ??
-      supported[0] ?? {
-        symbol: "XLM",
-        decimals: 7,
-        contractId: TESTNET_NATIVE_SAC,
-      },
-  );
+    supported[0] ??
+    defaultToken;
+
+  const propBalance: bigint | undefined =
+    balance !== undefined
+      ? balance
+      : typeof selectedToken.amount === "bigint"
+        ? selectedToken.amount
+        : undefined;
+
+  const knownBalance: bigint | undefined =
+    fetchedBalance && fetchedBalance.contractId === selectedToken.contractId
+      ? fetchedBalance.amount
+      : propBalance;
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: { to: prefill?.to ?? "", amount: prefill?.amount ?? "" },
   });
 
+  const watchedAmount = form.watch("amount");
+  const inlineBalanceError = validateAmountAgainstBalance(
+    watchedAmount ?? "",
+    selectedToken,
+    knownBalance,
+  );
+
   async function prepare(values: FormValues) {
     setError(null);
     try {
       const amount = parseAmountWithDecimals(values.amount, selectedToken.decimals);
+      let currentBalance = knownBalance;
+      if (getBalance) {
+        const latest = await getBalance(selectedToken);
+        if (latest !== undefined) {
+          setFetchedBalance({ contractId: selectedToken.contractId, amount: latest });
+          currentBalance = latest;
+        }
+      }
+      if (currentBalance !== undefined && amount > currentBalance) {
+        const formattedAvailable = formatTokenAmount(currentBalance, selectedToken.decimals);
+        setError(
+          `Insufficient ${selectedToken.symbol} balance (available: ${formattedAvailable} ${selectedToken.symbol}).`,
+        );
+        return;
+      }
       const payments = await getPayments();
       const prepared = await payments.preparePayment({
         from,
@@ -99,6 +185,27 @@ export function SendPayment({
   }
 
   async function confirm(prepared: PreparedPayment) {
+    let currentBalance = knownBalance;
+    if (getBalance) {
+      try {
+        const latest = await getBalance(selectedToken);
+        if (latest !== undefined) {
+          setFetchedBalance({ contractId: selectedToken.contractId, amount: latest });
+          currentBalance = latest;
+        }
+      } catch {
+        // Fall through to current knownBalance / network check
+      }
+    }
+    if (currentBalance !== undefined && prepared.review.amount > currentBalance) {
+      const formattedAvailable = formatTokenAmount(currentBalance, prepared.review.token.decimals);
+      setError(
+        `Insufficient ${prepared.review.token.symbol} balance (available: ${formattedAvailable} ${prepared.review.token.symbol}).`,
+      );
+      setFlow({ step: "form" });
+      return;
+    }
+
     setFlow({ step: "submitting", prepared });
     setError(null);
     let hash: string;
@@ -150,7 +257,11 @@ export function SendPayment({
                 value={selectedToken.contractId}
                 onChange={(e) => {
                   const match = supported.find((t) => t.contractId === e.target.value);
-                  if (match) setSelectedToken(match);
+                  if (match) {
+                    setSelectedContractId(match.contractId);
+                    setFetchedBalance(null);
+                    setError(null);
+                  }
                 }}
                 className="w-full rounded border border-[var(--lp-border)] bg-[var(--lp-paper)] px-3 py-2 text-sm text-[var(--lp-ink)]"
               >
@@ -175,20 +286,38 @@ export function SendPayment({
             )}
           </label>
           <label className="lpa-field">
-            <span className="flabel">Amount ({selectedToken.symbol})</span>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="flabel">Amount ({selectedToken.symbol})</span>
+              {knownBalance !== undefined && (
+                <span
+                  data-testid="available-balance"
+                  className="font-[family-name:var(--lp-mono)] text-xs text-[var(--lp-ink-faint)]"
+                >
+                  Available: {formatTokenAmount(knownBalance, selectedToken.decimals)}{" "}
+                  {selectedToken.symbol}
+                </span>
+              )}
+            </div>
             <input
               {...form.register("amount")}
               placeholder="0.0"
               inputMode="decimal"
               readOnly={prefill?.amount !== undefined}
+              aria-invalid={Boolean(form.formState.errors.amount || inlineBalanceError)}
             />
             {form.formState.errors.amount && (
               <span className="ferror">{form.formState.errors.amount.message}</span>
+            )}
+            {inlineBalanceError && (
+              <span role="alert" data-testid="balance-error" className="ferror">
+                {inlineBalanceError}
+              </span>
             )}
           </label>
           <LpActionButton
             type="submit"
             disabled={form.formState.isSubmitting}
+            aria-disabled={Boolean(inlineBalanceError) || undefined}
             className="self-start"
           >
             {form.formState.isSubmitting ? "Preparing…" : "Review payment"}
@@ -285,7 +414,7 @@ export function SendPayment({
         </div>
       )}
 
-      {error && (
+      {error && !(flow.step === "form" && inlineBalanceError) && (
         <p role="alert" className="lpa-bad mt-3.5! text-sm">
           {error}
         </p>
