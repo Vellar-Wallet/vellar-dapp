@@ -39,6 +39,8 @@ export interface TransactionSummary {
   operations: OperationSummary[];
   /** True when any operation moves value (transfer) — a spending policy applies. */
   movesValue: boolean;
+  /** True when the transaction executes multiple operations in a batch. */
+  isBatch?: boolean;
   /** Set when the XDR could not be decoded; the UI shows a generic warning. */
   undecoded?: boolean;
 }
@@ -53,6 +55,8 @@ interface StellarSdkLike {
   scValToNative(val: unknown): unknown;
 }
 
+const BATCH_FN_NAMES = new Set(["batch", "execute_batch", "exec_batch", "multicall"]);
+
 /** Decode a transaction XDR into a review summary. `sdk` is injected so this is
  * unit-testable and so the popup keeps lazy-loading stellar-sdk. */
 export function summarizeTransaction(
@@ -65,43 +69,171 @@ export function summarizeTransaction(
       operations?: unknown[];
     };
     if (!tx.operations || tx.operations.length === 0) {
-      return { operations: [{ kind: "other", label: "a transaction" }], movesValue: false };
+      return {
+        operations: [{ kind: "other", label: "a transaction" }],
+        movesValue: false,
+        isBatch: false,
+      };
     }
 
-    const operations = tx.operations.map((op) => summarizeOperation(op, sdk));
-    return { operations, movesValue: operations.some((o) => o.kind === "transfer") };
+    const operations: OperationSummary[] = [];
+    for (const op of tx.operations) {
+      try {
+        operations.push(...summarizeOperationOrBatch(op, sdk));
+      } catch {
+        // If an individual operation in a multi-op batch fails to decode,
+        // degrade only that operation rather than failing the entire summary.
+        operations.push({ kind: "other", label: "an operation" });
+      }
+    }
+
+    return {
+      operations,
+      movesValue: operations.some((o) => o.kind === "transfer"),
+      isBatch: operations.length > 1,
+    };
   } catch {
     return {
       operations: [{ kind: "other", label: "a transaction" }],
       movesValue: false,
+      isBatch: false,
       undecoded: true,
     };
   }
 }
 
-function summarizeOperation(op: unknown, sdk: StellarSdkLike): OperationSummary {
+function summarizeOperationOrBatch(op: unknown, sdk: StellarSdkLike): OperationSummary[] {
   const operation = op as {
     type?: string;
     func?: unknown;
   };
   if (operation.type !== "invokeHostFunction") {
-    return { kind: "other", label: operation.type ?? "an operation" };
+    return [{ kind: "other", label: operation.type ?? "an operation" }];
+  }
+
+  const hostKind = readHostFunctionKind(operation.func);
+  if (hostKind === "hostFunctionTypeUploadContractWasm") {
+    return [{ kind: "other", label: "Upload contract WASM" }];
+  }
+  if (
+    hostKind === "hostFunctionTypeCreateContract" ||
+    hostKind === "hostFunctionTypeCreateContractV2"
+  ) {
+    return [{ kind: "other", label: "Deploy contract" }];
   }
 
   // Reach into the host function for the invoked contract + function + args.
   const invoke = readInvokeContract(operation.func, sdk);
-  if (!invoke) return { kind: "contract-call", contract: "a contract", fn: "a function" };
+  if (!invoke) {
+    return [{ kind: "contract-call", contract: "a contract", fn: "a function" }];
+  }
 
-  // SEP-41 transfer(from, to, amount): surface the value movement explicitly.
-  if (invoke.fn === "transfer" && invoke.args.length >= 3) {
-    const to = scvalToStringSafe(invoke.args[1], sdk);
-    const amount = scvalToStringSafe(invoke.args[2], sdk);
-    if (to !== undefined && amount !== undefined) {
-      return { kind: "transfer", token: invoke.contract, to, amount };
+  // Expand Soroban batch / multicall invocations when the first argument is a
+  // vector of sub-invocation descriptors.
+  if (BATCH_FN_NAMES.has(invoke.fn) && invoke.args.length > 0) {
+    const expanded = tryExpandBatchSubcalls(invoke.args[0], sdk);
+    if (expanded && expanded.length > 0) {
+      return expanded;
     }
   }
 
-  return { kind: "contract-call", contract: invoke.contract, fn: invoke.fn };
+  return [classifyContractInvocation(invoke.contract, invoke.fn, invoke.args, sdk)];
+}
+
+function classifyContractInvocation(
+  contract: string,
+  fn: string,
+  args: unknown[],
+  sdk: StellarSdkLike,
+): OperationSummary {
+  // SEP-41 transfer(from, to, amount): surface the value movement explicitly.
+  if (fn === "transfer" && args.length >= 3) {
+    const to = scvalToStringSafe(args[1], sdk);
+    const amount = scvalToStringSafe(args[2], sdk);
+    if (to !== undefined && amount !== undefined) {
+      return { kind: "transfer", token: contract, to, amount };
+    }
+  }
+  return { kind: "contract-call", contract, fn };
+}
+
+function tryExpandBatchSubcalls(
+  rawVecArg: unknown,
+  sdk: StellarSdkLike,
+): OperationSummary[] | undefined {
+  try {
+    const native = sdk.scValToNative(rawVecArg);
+    if (!Array.isArray(native) || native.length === 0) return undefined;
+
+    return native.map((entry): OperationSummary => {
+      try {
+        if (Array.isArray(entry) && entry.length >= 2) {
+          const contract = typeof entry[0] === "string" ? entry[0] : String(entry[0] ?? "");
+          const fn = typeof entry[1] === "string" ? entry[1] : String(entry[1] ?? "");
+          const subArgs = Array.isArray(entry[2]) ? entry[2] : [];
+          if (!contract || !fn) {
+            return { kind: "other", label: "Unrecognized batch operation" };
+          }
+          if (
+            fn === "transfer" &&
+            subArgs.length >= 3 &&
+            subArgs[1] != null &&
+            subArgs[2] != null
+          ) {
+            return {
+              kind: "transfer",
+              token: contract,
+              to: String(subArgs[1]),
+              amount: String(subArgs[2]),
+            };
+          }
+          return { kind: "contract-call", contract, fn };
+        }
+        if (typeof entry === "object" && entry !== null) {
+          const rec = entry as Record<string, unknown>;
+          const contract = typeof rec.contract === "string" ? rec.contract : "";
+          const fn =
+            typeof rec.fn === "string"
+              ? rec.fn
+              : typeof rec.function === "string"
+                ? rec.function
+                : "";
+          const subArgs = Array.isArray(rec.args) ? rec.args : [];
+          if (!contract || !fn) {
+            return { kind: "other", label: "Unrecognized batch operation" };
+          }
+          if (
+            fn === "transfer" &&
+            subArgs.length >= 3 &&
+            subArgs[1] != null &&
+            subArgs[2] != null
+          ) {
+            return {
+              kind: "transfer",
+              token: contract,
+              to: String(subArgs[1]),
+              amount: String(subArgs[2]),
+            };
+          }
+          return { kind: "contract-call", contract, fn };
+        }
+        return { kind: "other", label: "Unrecognized batch operation" };
+      } catch {
+        return { kind: "other", label: "Unrecognized batch operation" };
+      }
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function readHostFunctionKind(func: unknown): string | undefined {
+  try {
+    const hf = func as { switch?(): { name?: string } };
+    return hf?.switch?.()?.name;
+  } catch {
+    return undefined;
+  }
 }
 
 interface InvokeContract {
@@ -143,6 +275,42 @@ function scvalToStringSafe(val: unknown, sdk: StellarSdkLike): string | undefine
   } catch {
     return undefined;
   }
+}
+
+function shortAddress(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id;
+}
+
+/**
+ * Formats a single `OperationSummary` into a concise human-readable line.
+ * When `index` and `total` (`total > 1`) are provided, prefixes with
+ * `"Step X of Y: "` so multi-operation batches read clearly in order.
+ */
+export function formatOperationSummary(
+  op: OperationSummary,
+  index?: number,
+  total?: number,
+): string {
+  const prefix =
+    index !== undefined && total !== undefined && total > 1
+      ? `Step ${index + 1} of ${total}: `
+      : "";
+  if (op.kind === "transfer") {
+    return `${prefix}Send ${formatStroops(op.amount)} XLM → ${shortAddress(op.to)}`;
+  }
+  if (op.kind === "contract-call") {
+    return `${prefix}Call ${op.fn} on ${shortAddress(op.contract)}`;
+  }
+  return `${prefix}Operation: ${op.label}`;
+}
+
+/**
+ * Formats all operations in a `TransactionSummary` into an ordered list of
+ * human-readable step descriptions.
+ */
+export function formatTransactionBatchSummary(summary: TransactionSummary): string[] {
+  const total = summary.operations.length;
+  return summary.operations.map((op, i) => formatOperationSummary(op, i, total));
 }
 
 /** Format a stroop amount string as XLM for display. */
