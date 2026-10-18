@@ -27,13 +27,63 @@ type Wizard =
   // every step in order before it advances to the merge.
   | {
       stage: "cleanup";
+      plan: CleanupPlan;
       steps: CleanupStep[];
       index: number;
       watching: boolean;
       timedOut: boolean;
     }
-  | { stage: "merge"; step: CleanupStep; watching: boolean; timedOut: boolean }
+  | {
+      stage: "merge";
+      plan?: CleanupPlan;
+      step: CleanupStep;
+      watching: boolean;
+      timedOut: boolean;
+    }
   | { stage: "done" };
+
+export interface ItemizedCleanupEntry {
+  kind: "trustline" | "balance" | "offer" | "data" | "native-merge";
+  assetOrTarget: string;
+  description: string;
+  actionRequired: string;
+}
+
+/** Maximum visible rows before the itemized confirmation list scrolls. */
+export const ITEMIZED_SCROLL_THRESHOLD = 5;
+
+/**
+ * Build the itemized list of every asset, trustline, and account entry affected
+ * by a `CleanupPlan`. Generated directly from the `CleanupPlan` that executes
+ * so the confirmation list cannot drift from the actual cleanup/merge steps.
+ */
+export function itemizeCleanupPlan(plan: CleanupPlan): ItemizedCleanupEntry[] {
+  const entries: ItemizedCleanupEntry[] = plan.blockers.map((blocker) => {
+    let assetOrTarget = blocker.description;
+    if (blocker.type === "trustline") {
+      const match = /^Trustline to\s+(.+)$/i.exec(blocker.description);
+      if (match?.[1]) assetOrTarget = match[1].trim();
+    } else if (blocker.type === "balance") {
+      const match = /^Holds\s+\S+\s+(.+)$/i.exec(blocker.description);
+      if (match?.[1]) assetOrTarget = match[1].trim();
+    }
+    return {
+      kind: blocker.type,
+      assetOrTarget,
+      description: blocker.description,
+      actionRequired: blocker.actionRequired,
+    };
+  });
+
+  entries.push({
+    kind: "native-merge",
+    assetOrTarget: "XLM (native)",
+    description: `Merge remaining XLM from ${plan.accountId} to ${plan.destination}`,
+    actionRequired: `Transfer all remaining native XLM reserve into ${plan.destination}`,
+  });
+
+  return entries;
+}
 
 export default function Cleanup() {
   const [accountId, setAccountId] = useState("");
@@ -72,47 +122,72 @@ export default function Cleanup() {
       setWizard({ stage: "plan", plan });
     });
 
-  const startCleanup = () =>
+  const startCleanup = (inspectedPlan: CleanupPlan) =>
     run(async () => {
-      const { steps } = await executeCleanup(accountId.trim(), destination.trim());
-      if (steps.length === 0) return startMerge();
-      setWizard({ stage: "cleanup", steps, index: 0, watching: true, timedOut: false });
-      void watchCleanup(steps, 0);
+      const { steps, plan: executedPlan } = await executeCleanup(
+        accountId.trim(),
+        destination.trim(),
+      );
+      const activePlan = executedPlan ?? inspectedPlan;
+      if (steps.length === 0) return startMerge(activePlan);
+      setWizard({
+        stage: "cleanup",
+        plan: activePlan,
+        steps,
+        index: 0,
+        watching: true,
+        timedOut: false,
+      });
+      void watchCleanup(steps, 0, activePlan);
     });
 
-  const startMerge = () =>
+  const startMerge = (activePlan?: CleanupPlan) =>
     run(async () => {
       const { step } = await buildMerge(accountId.trim(), destination.trim());
-      setWizard({ stage: "merge", step, watching: true, timedOut: false });
-      void watch(step, "merge");
+      setWizard({ stage: "merge", plan: activePlan, step, watching: true, timedOut: false });
+      void watch(step, "merge", activePlan);
     });
 
   // Walk each cleanup chunk in order: watch chunk `index`, and on confirmation
   // advance to the next chunk (not straight to merge) until all are signed —
   // only then build the merge. Dropping chunks 2..N left large accounts
   // partially cleaned and dead-ended at a 409-on-merge.
-  async function watchCleanup(steps: CleanupStep[], index: number) {
+  async function watchCleanup(steps: CleanupStep[], index: number, activePlan: CleanupPlan) {
     const step = steps[index]!;
     const seen = await watchTransaction(step.hash, { cancelled: () => cancelledRef.current });
     if (cancelledRef.current) return;
     if (!seen) {
-      setWizard({ stage: "cleanup", steps, index, watching: false, timedOut: true });
+      setWizard({
+        stage: "cleanup",
+        plan: activePlan,
+        steps,
+        index,
+        watching: false,
+        timedOut: true,
+      });
       return;
     }
     const next = index + 1;
     if (next < steps.length) {
-      setWizard({ stage: "cleanup", steps, index: next, watching: true, timedOut: false });
-      void watchCleanup(steps, next);
+      setWizard({
+        stage: "cleanup",
+        plan: activePlan,
+        steps,
+        index: next,
+        watching: true,
+        timedOut: false,
+      });
+      void watchCleanup(steps, next, activePlan);
     } else {
-      await startMerge();
+      await startMerge(activePlan);
     }
   }
 
-  async function watch(step: CleanupStep, stage: "merge") {
+  async function watch(step: CleanupStep, stage: "merge", activePlan?: CleanupPlan) {
     const seen = await watchTransaction(step.hash, { cancelled: () => cancelledRef.current });
     if (cancelledRef.current) return;
     if (!seen) {
-      setWizard({ stage, step, watching: false, timedOut: true });
+      setWizard({ stage, plan: activePlan, step, watching: false, timedOut: true });
       return;
     }
     setWizard({ stage: "done" });
@@ -166,7 +241,14 @@ export default function Cleanup() {
                 ✓ Nothing blocks this account — it can be merged in a single transaction
               </span>
             ) : (
-              <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
+              <ul
+                data-testid="plan-blockers-list"
+                data-scrollable={
+                  wizard.plan.blockers.length > ITEMIZED_SCROLL_THRESHOLD ? "true" : "false"
+                }
+                tabIndex={wizard.plan.blockers.length > ITEMIZED_SCROLL_THRESHOLD ? 0 : undefined}
+                className="m-0 flex max-h-60 list-none flex-col gap-2.5 overflow-y-auto p-0"
+              >
                 {wizard.plan.blockers.map((blocker, i) => (
                   <li key={i} className="lpa-well text-sm">
                     <span className="mr-2 bg-[var(--lp-sun-soft)] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide">
@@ -185,7 +267,11 @@ export default function Cleanup() {
             </p>
             <div className="flex gap-3">
               <LpActionButton
-                onClick={() => void (wizard.plan.mergeReady ? startMerge() : startCleanup())}
+                onClick={() =>
+                  void (wizard.plan.mergeReady
+                    ? startMerge(wizard.plan)
+                    : startCleanup(wizard.plan))
+                }
                 disabled={busy}
               >
                 {wizard.plan.mergeReady ? "Proceed to merge" : "Start cleanup"}
@@ -204,6 +290,7 @@ export default function Cleanup() {
         {wizard.stage === "cleanup" && (
           <SigningStepCard
             step={wizard.steps[wizard.index]!}
+            plan={wizard.plan}
             isMerge={false}
             progress={
               wizard.steps.length > 1
@@ -214,7 +301,7 @@ export default function Cleanup() {
             timedOut={wizard.timedOut}
             onKeepWaiting={() => {
               setWizard({ ...wizard, watching: true, timedOut: false });
-              void watchCleanup(wizard.steps, wizard.index);
+              void watchCleanup(wizard.steps, wizard.index, wizard.plan);
             }}
           />
         )}
@@ -222,12 +309,13 @@ export default function Cleanup() {
         {wizard.stage === "merge" && (
           <SigningStepCard
             step={wizard.step}
+            plan={wizard.plan}
             isMerge
             watching={wizard.watching}
             timedOut={wizard.timedOut}
             onKeepWaiting={() => {
               setWizard({ ...wizard, watching: true, timedOut: false });
-              void watch(wizard.step, "merge");
+              void watch(wizard.step, "merge", wizard.plan);
             }}
           />
         )}
@@ -262,6 +350,7 @@ export default function Cleanup() {
 
 function SigningStepCard({
   step,
+  plan,
   isMerge,
   progress,
   watching,
@@ -269,6 +358,7 @@ function SigningStepCard({
   onKeepWaiting,
 }: {
   step: CleanupStep;
+  plan?: CleanupPlan;
   isMerge: boolean;
   /** For a split cleanup: which transaction of how many. */
   progress?: { current: number; total: number };
@@ -277,6 +367,8 @@ function SigningStepCard({
   onKeepWaiting: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const itemized = plan ? itemizeCleanupPlan(plan) : [];
+  const scrollable = itemized.length > ITEMIZED_SCROLL_THRESHOLD;
 
   return (
     <section className="lpa-panel flex flex-col gap-3">
@@ -291,6 +383,42 @@ function SigningStepCard({
         <p className="lpa-well border-l-[3px]! border-l-[var(--lp-sun)]! text-sm">
           Final step: merging closes the account permanently. Review carefully before signing.
         </p>
+      )}
+      {plan && (
+        <div
+          role="region"
+          aria-label="Affected assets and trustlines"
+          data-testid="cleanup-itemized-confirmation"
+          className="lpa-well flex flex-col gap-2"
+        >
+          <span className="flabel block font-[family-name:var(--lp-mono)] text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--lp-ink-faint)]">
+            Affected assets &amp; trustlines ({itemized.length})
+          </span>
+          <ul
+            data-testid="cleanup-itemized-list"
+            data-scrollable={scrollable ? "true" : "false"}
+            tabIndex={scrollable ? 0 : undefined}
+            className="m-0 flex max-h-60 list-none flex-col gap-2 overflow-y-auto p-0"
+          >
+            {itemized.map((entry, idx) => (
+              <li
+                key={`${entry.kind}-${entry.assetOrTarget}-${idx}`}
+                data-testid="cleanup-itemized-row"
+                data-item-kind={entry.kind}
+                className="flex flex-col gap-0.5 border-b border-[var(--lp-border)] pb-1.5 text-xs last:border-b-0 last:pb-0"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-[var(--lp-ink)]">{entry.assetOrTarget}</span>
+                  <span className="bg-[var(--lp-sun-soft)] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+                    {entry.kind}
+                  </span>
+                </div>
+                <span className="text-[var(--lp-ink-soft)]">{entry.description}</span>
+                <span className="text-[var(--lp-ink-faint)]">{entry.actionRequired}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <textarea
         readOnly

@@ -1,7 +1,8 @@
 import { StrictMode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import Cleanup from "./page";
+import type { CleanupPlan } from "@vellar/types";
+import Cleanup, { ITEMIZED_SCROLL_THRESHOLD, itemizeCleanupPlan } from "./page";
 import { WalletProvider } from "@/lib/wallet-context";
 
 vi.mock("next/navigation", () => ({
@@ -35,7 +36,7 @@ const SESSION = {
 const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
 const G2 = "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3";
 
-const blockedPlan = {
+const blockedPlan: CleanupPlan = {
   accountId: G1,
   destination: G2,
   blockers: [
@@ -59,7 +60,7 @@ const mergeStep = {
   hash: "b".repeat(64),
 };
 
-async function inspectWith(plan: typeof blockedPlan, { strict = false } = {}) {
+async function inspectWith(plan: CleanupPlan, { strict = false } = {}) {
   planMock.mockResolvedValue({ plan });
   window.localStorage.setItem("vellar.session", JSON.stringify(SESSION));
   const tree = (
@@ -164,5 +165,100 @@ describe("Cleanup wizard", () => {
     fireEvent.change(screen.getByLabelText(/destination/i), { target: { value: G2 } });
     fireEvent.click(screen.getByRole("button", { name: /inspect account/i }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/account_not_found/);
+  });
+
+  it("renders an itemized list of every asset and trustline from the executing plan on the confirmation screen (#568)", async () => {
+    const initialPlan: CleanupPlan = {
+      accountId: G1,
+      destination: G2,
+      blockers: [
+        {
+          type: "trustline",
+          description: "Trustline to USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+          actionRequired: "Remove the USDC trustline (requires zero balance)",
+        },
+      ],
+      estimatedTransactions: 2,
+      mergeReady: false,
+    };
+    const executingPlan: CleanupPlan = {
+      accountId: G1,
+      destination: G2,
+      blockers: [
+        {
+          type: "balance",
+          description: "Holds 42.5000000 USDC",
+          actionRequired: "Transfer or burn the USDC balance before removing its trustline",
+        },
+        {
+          type: "trustline",
+          description: "Trustline to USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+          actionRequired: "Remove the USDC trustline (requires zero balance)",
+        },
+        {
+          type: "trustline",
+          description: "Trustline to EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+          actionRequired: "Remove the EURC trustline (requires zero balance)",
+        },
+      ],
+      estimatedTransactions: 2,
+      mergeReady: false,
+    };
+
+    executeMock.mockResolvedValue({ steps: [cleanupStep], plan: executingPlan });
+    await inspectWith(initialPlan);
+    fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+
+    await screen.findByDisplayValue("CLEANUP_XDR");
+    const confirmation = screen.getByTestId("cleanup-itemized-confirmation");
+    const rows = within(confirmation).getAllByTestId("cleanup-itemized-row");
+    // 3 blockers from `executingPlan` (not the 1 blocker from `initialPlan`) + 1 native XLM merge row = 4 rows
+    expect(rows).toHaveLength(4);
+    expect(confirmation.textContent).toContain("Holds 42.5000000 USDC");
+    expect(confirmation.textContent).toContain(
+      "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    );
+    expect(confirmation.textContent).toContain(
+      "EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+    );
+    expect(confirmation.textContent).toContain("XLM (native)");
+  });
+
+  it("renders a scrollable itemized list when a plan affects many trustlines (#568)", async () => {
+    const manyTrustlines = Array.from({ length: 12 }, (_, idx) => {
+      const code = `TOK${idx + 1}`;
+      return {
+        type: "trustline" as const,
+        description: `Trustline to ${code}:GISSUER${String(idx + 1).padStart(48, "A")}`,
+        actionRequired: `Remove the ${code} trustline (requires zero balance)`,
+      };
+    });
+    const largePlan: CleanupPlan = {
+      accountId: G1,
+      destination: G2,
+      blockers: manyTrustlines,
+      estimatedTransactions: 2,
+      mergeReady: false,
+    };
+
+    expect(itemizeCleanupPlan(largePlan).length).toBeGreaterThan(ITEMIZED_SCROLL_THRESHOLD);
+    executeMock.mockResolvedValue({ steps: [cleanupStep], plan: largePlan });
+    await inspectWith(largePlan);
+
+    const planList = screen.getByTestId("plan-blockers-list");
+    expect(planList.getAttribute("data-scrollable")).toBe("true");
+    expect(planList.className).toContain("overflow-y-auto");
+
+    fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+    await screen.findByDisplayValue("CLEANUP_XDR");
+
+    const itemizedList = screen.getByTestId("cleanup-itemized-list");
+    expect(itemizedList.getAttribute("data-scrollable")).toBe("true");
+    expect(itemizedList.className).toContain("overflow-y-auto");
+    expect(itemizedList.className).toContain("max-h-60");
+    const rows = within(itemizedList).getAllByTestId("cleanup-itemized-row");
+    expect(rows).toHaveLength(13); // 12 trustlines + 1 native XLM merge
+    expect(itemizedList.textContent).toContain("TOK1:");
+    expect(itemizedList.textContent).toContain("TOK12:");
   });
 });
