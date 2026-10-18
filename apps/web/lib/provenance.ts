@@ -79,8 +79,10 @@ export function provenancePolicyDefinition(
 // --- Warn mode: the pre-signing provenance look-up ---------------------------
 
 export type ProvenanceLevel =
-  /** A live "verified" record exists for the contract. */
+  /** A live "verified" record exists matching the contract's current wasm hash. */
   | "verified"
+  /** The contract was verified under an older wasm hash, then upgraded to unverified code. */
+  | "superseded"
   /** The contract has no verified record (unverified, failed, or unknown). */
   | "unverified"
   /** Native asset contract: built into the network, no source to reproduce. */
@@ -94,26 +96,147 @@ export interface ProvenanceAssessment {
   level: ProvenanceLevel;
   contractId?: string;
   status?: VerificationStatus;
+  /** Currently deployed on-chain wasm hash, when known. */
+  currentWasmHash?: string;
+  /** Wasm hash of the matched or superseded verification record, when known. */
+  verifiedWasmHash?: string;
+}
+
+export interface ProvenanceStatusResponse {
+  status: VerificationStatus;
+  /** Wasm hash recorded on the verification record, when returned by the API. */
+  deployedHash?: string;
+  verifiedWasmHash?: string;
+  outputHash?: string;
+  /** Current on-chain wasm hash, when reported alongside status. */
+  currentWasmHash?: string;
+}
+
+export interface ProvenanceHistoryRecord {
+  status: VerificationStatus;
+  deployedHash?: string;
+  outputHash?: string;
+  wasmHash?: string;
 }
 
 export interface ProvenanceLookup {
-  getStatus(contractId: string): Promise<{ status: VerificationStatus }>;
+  getStatus(contractId: string): Promise<ProvenanceStatusResponse>;
+  /** Optional verification history lookup used to inspect prior/subsequent verified wasm hashes. */
+  getHistory?(contractId: string): Promise<ProvenanceHistoryRecord[]>;
+  /** Optional on-chain wasm hash lookup for the target contract. */
+  getCurrentWasmHash?(contractId: string): Promise<string | undefined>;
+}
+
+export type ProvenanceTarget =
+  | {
+      contractId: string;
+      isNativeAsset?: boolean;
+      /** Current on-chain wasm hash for the contract, when known. */
+      currentWasmHash?: string;
+      /** Alias for `currentWasmHash`. */
+      deployedWasmHash?: string;
+    }
+  | { classicAccount: string };
+
+function normalizeWasmHash(hash: string | undefined): string | undefined {
+  if (!hash) return undefined;
+  const trimmed = hash.trim();
+  if (!trimmed) return undefined;
+  return trimmed.toLowerCase().replace(/^0x/, "");
 }
 
 /** Assess the target of a payment. `contractId` is the contract whose code the
  * authorization will run through (the token contract, or a C-address payee). */
 export async function assessProvenance(
-  target: { contractId: string; isNativeAsset?: boolean } | { classicAccount: string },
+  target: ProvenanceTarget,
   lookup: ProvenanceLookup,
 ): Promise<ProvenanceAssessment> {
   if ("classicAccount" in target) return { level: "no-code" };
   if (target.isNativeAsset) return { level: "builtin", contractId: target.contractId };
   try {
-    const { status } = await lookup.getStatus(target.contractId);
+    const statusRes = await lookup.getStatus(target.contractId);
+    const { status } = statusRes;
+
+    const rawCurrentHash =
+      target.currentWasmHash?.trim() ||
+      target.deployedWasmHash?.trim() ||
+      statusRes.currentWasmHash?.trim() ||
+      (lookup.getCurrentWasmHash
+        ? (await lookup.getCurrentWasmHash(target.contractId))?.trim()
+        : undefined);
+    const normalizedCurrent = normalizeWasmHash(rawCurrentHash);
+
+    // Collect verified wasm hashes from the status response and optional history.
+    const verifiedHashes: Array<{ raw: string; normalized: string }> = [];
+    const addVerifiedHash = (candidate: string | undefined) => {
+      const norm = normalizeWasmHash(candidate);
+      if (!norm || !candidate) return;
+      if (!verifiedHashes.some((h) => h.normalized === norm)) {
+        verifiedHashes.push({ raw: candidate.trim(), normalized: norm });
+      }
+    };
+
+    const statusRecordHash =
+      statusRes.verifiedWasmHash ?? statusRes.deployedHash ?? statusRes.outputHash;
+    if (status === "verified" && statusRecordHash) {
+      addVerifiedHash(statusRecordHash);
+    } else if (statusRes.verifiedWasmHash) {
+      addVerifiedHash(statusRes.verifiedWasmHash);
+    }
+
+    if (lookup.getHistory) {
+      const history = await lookup.getHistory(target.contractId);
+      for (const rec of history) {
+        if (rec.status === "verified") {
+          addVerifiedHash(rec.deployedHash ?? rec.outputHash ?? rec.wasmHash);
+        }
+      }
+    }
+
+    if (normalizedCurrent && rawCurrentHash) {
+      const matchingVerified = verifiedHashes.find((h) => h.normalized === normalizedCurrent);
+      if (matchingVerified) {
+        return {
+          level: "verified",
+          contractId: target.contractId,
+          status: "verified",
+          currentWasmHash: rawCurrentHash,
+          verifiedWasmHash: matchingVerified.raw,
+        };
+      }
+
+      if (verifiedHashes.length > 0) {
+        return {
+          level: "superseded",
+          contractId: target.contractId,
+          status,
+          currentWasmHash: rawCurrentHash,
+          verifiedWasmHash: verifiedHashes[0]!.raw,
+        };
+      }
+
+      if (status === "verified") {
+        return {
+          level: "verified",
+          contractId: target.contractId,
+          status,
+          currentWasmHash: rawCurrentHash,
+        };
+      }
+
+      return {
+        level: "unverified",
+        contractId: target.contractId,
+        status,
+        currentWasmHash: rawCurrentHash,
+      };
+    }
+
     return {
       level: status === "verified" ? "verified" : "unverified",
       contractId: target.contractId,
       status,
+      ...(verifiedHashes[0] ? { verifiedWasmHash: verifiedHashes[0].raw } : {}),
     };
   } catch {
     return { level: "unavailable", contractId: target.contractId };
@@ -123,12 +246,14 @@ export async function assessProvenance(
 /** Whether warn mode should surface a warning for this assessment. */
 export function shouldWarn(pref: ProvenancePreference, a: ProvenanceAssessment): boolean {
   if (pref.mode !== "warn") return false;
-  return a.level === "unverified" || a.level === "unavailable";
+  return a.level === "unverified" || a.level === "superseded" || a.level === "unavailable";
 }
 
 /** Copy for the warn-mode signal. Says provenance, never safety. */
 export function provenanceWarningCopy(a: ProvenanceAssessment): string {
   switch (a.level) {
+    case "superseded":
+      return "This contract was previously verified under an older WASM hash, but its deployed code has since been upgraded and the current on-chain bytecode has no verified source provenance. Prior provenance does not carry over across upgrades — proceed only if you trust the upgraded code.";
     case "unverified":
       return "This contract has no verified source provenance: its deployed code has not been reproduced from inspectable source. That is a provenance signal, not a safety verdict — verified code can still be malicious, and unverified code can be fine. Proceed only if you trust the target for other reasons.";
     case "unavailable":
