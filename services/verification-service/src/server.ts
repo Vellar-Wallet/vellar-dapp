@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth, registerMetrics, publicBaseUrlFromEnv, registerTracing } from "@vellar/service-kit";
+import {
+  registerHealth,
+  registerMetrics,
+  publicBaseUrlFromEnv,
+  registerTracing,
+} from "@vellar/service-kit";
 import type { VerificationRecord } from "@vellar/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/fastify";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -86,7 +91,10 @@ export function encodeVerificationCursor(createdAt: string, id: string): Verific
   return Buffer.from(`${createdAt}:${id}`, "utf8").toString("base64url");
 }
 
-export function decodeVerificationCursor(cursor: VerificationCursor): { createdAt: string; id: string } {
+export function decodeVerificationCursor(cursor: VerificationCursor): {
+  createdAt: string;
+  id: string;
+} {
   const decoded = Buffer.from(cursor, "base64url").toString("utf8");
   const sep = decoded.lastIndexOf(":");
   if (sep <= 0 || sep === decoded.length - 1) {
@@ -314,11 +322,28 @@ export function fakeFacilitatorClient(): FacilitatorClient {
   };
 }
 
+/** Hard limit on concurrent in-flight build jobs per contractId (issue #534). */
+export const MAX_INFLIGHT_JOBS_PER_CONTRACT = 1;
+
+async function findActiveRecordForContract(
+  records: VerificationRepository,
+  contractId: string,
+): Promise<VerificationRecordInternal | undefined> {
+  const history = await records.findByContract(contractId);
+  return history.find((r) => r.status === "submitted" || r.status === "building");
+}
+
 export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance {
   const records = deps.records ?? createMemoryVerificationRepository();
   const queue = deps.queue ?? createNoopBuildJobQueue();
   const now = deps.now ?? (() => new Date());
   const maxActiveQueue = deps.maxActiveQueue ?? 1000;
+
+  // Per-contractId in-flight submission tracker (issue #534): closes the async
+  // check-then-insert race when multiple submissions for the same contractId
+  // arrive in the same event-loop tick (e.g. Promise.all) before records.insert
+  // completes.
+  const inFlightByContract = new Map<string, Promise<VerificationRecordInternal | null>>();
 
   const app = Fastify({ logger: true });
   registerTracing(app, "verification-service");
@@ -333,63 +358,107 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
     }
     const input = parsed.data;
 
-    // Queue-depth cap (M7): this is the last unmetered unauthenticated write path
-    // after the funding-path budgets, so the cap is a real control. Reject before
-    // inserting anything so a flood cannot grow the table unbounded.
-    if ((await records.countActive()) >= maxActiveQueue) {
-      return reply.code(429).send({
-        error: "queue_full",
-        message: "Verification queue is at capacity; try again later.",
-      });
-    }
-    // Per-contractId dedup (M7): one active verification per contract, so a
-    // single contractId can't be used to flood the shared queue with duplicates.
-    if (await records.hasActiveForContract(input.contractId)) {
-      return reply.code(409).send({
-        error: "verification_in_progress",
-        message: "A verification for this contract is already in progress.",
-      });
+    const existingInFlight = inFlightByContract.get(input.contractId);
+    if (existingInFlight) {
+      const inFlightRecord = await existingInFlight;
+      if (inFlightRecord) {
+        return reply.code(409).send({
+          error: "verification_in_progress",
+          message: "A verification for this contract is already in progress.",
+          status: inFlightRecord.status,
+          recordId: inFlightRecord.id,
+          record: toPublic(inFlightRecord),
+        });
+      }
     }
 
-    const timestamp = now().toISOString();
-    const record: VerificationRecordInternal = {
-      id: randomUUID(),
-      contractId: input.contractId,
-      sourceType: input.sourceType,
-      repoUrl: input.repoUrl,
-      commitHash: input.commitHash,
-      sourceArchiveRef: input.sourceArchiveRef,
-      toolchainVersion: input.toolchainVersion,
-      buildFlags: input.buildFlags,
-      lockfileHash: input.lockfileHash,
-      traceId: request.traceContext?.traceId,
-      traceParentSpanId: request.traceContext?.spanId,
-      status: "submitted",
-      createdAt: timestamp,
-      updatedAt: timestamp,
+    let resolveInFlight!: (record: VerificationRecordInternal | null) => void;
+    const inFlightPromise = new Promise<VerificationRecordInternal | null>((resolve) => {
+      resolveInFlight = resolve;
+    });
+    inFlightByContract.set(input.contractId, inFlightPromise);
+
+    let settled = false;
+    const settleInFlight = (record: VerificationRecordInternal | null) => {
+      if (!settled) {
+        settled = true;
+        resolveInFlight(record);
+      }
     };
-    await records.insert(record);
 
-    // Enqueue the build. If the queue rejects (worker/queue down) the submission
-    // still stands as "submitted" and can be retried — we don't lose the record.
     try {
-      await queue.enqueue({
-        recordId: record.id,
-        contractId: record.contractId,
-        sourceType: record.sourceType,
-        repoUrl: record.repoUrl,
-        commitHash: record.commitHash,
-        sourceArchiveRef: record.sourceArchiveRef,
-        toolchainVersion: record.toolchainVersion,
-        buildFlags: record.buildFlags,
-        traceId: record.traceId,
-        traceParentSpanId: record.traceParentSpanId,
-      });
-    } catch (err) {
-      request.log.error({ err, recordId: record.id }, "failed to enqueue build job");
-    }
+      // Queue-depth cap (M7): this is the last unmetered unauthenticated write path
+      // after the funding-path budgets, so the cap is a real control. Reject before
+      // inserting anything so a flood cannot grow the table unbounded.
+      if ((await records.countActive()) >= maxActiveQueue) {
+        settleInFlight(null);
+        return reply.code(429).send({
+          error: "queue_full",
+          message: "Verification queue is at capacity; try again later.",
+        });
+      }
+      // Per-contractId dedup (M7 / #534): one active verification per contract, so a
+      // single contractId can't be used to flood the shared queue with duplicates.
+      if (await records.hasActiveForContract(input.contractId)) {
+        const activeRecord = await findActiveRecordForContract(records, input.contractId);
+        settleInFlight(activeRecord ?? null);
+        return reply.code(409).send({
+          error: "verification_in_progress",
+          message: "A verification for this contract is already in progress.",
+          status: activeRecord?.status ?? "submitted",
+          ...(activeRecord
+            ? {
+                recordId: activeRecord.id,
+                record: toPublic(activeRecord),
+              }
+            : {}),
+        });
+      }
 
-    return reply.code(201).send({ record: toPublic(record) });
+      const timestamp = now().toISOString();
+      const record: VerificationRecordInternal = {
+        id: randomUUID(),
+        contractId: input.contractId,
+        sourceType: input.sourceType,
+        repoUrl: input.repoUrl,
+        commitHash: input.commitHash,
+        sourceArchiveRef: input.sourceArchiveRef,
+        toolchainVersion: input.toolchainVersion,
+        buildFlags: input.buildFlags,
+        lockfileHash: input.lockfileHash,
+        traceId: request.traceContext?.traceId,
+        traceParentSpanId: request.traceContext?.spanId,
+        status: "submitted",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      await records.insert(record);
+
+      // Enqueue the build. If the queue rejects (worker/queue down) the submission
+      // still stands as "submitted" and can be retried — we don't lose the record.
+      try {
+        await queue.enqueue({
+          recordId: record.id,
+          contractId: record.contractId,
+          sourceType: record.sourceType,
+          repoUrl: record.repoUrl,
+          commitHash: record.commitHash,
+          sourceArchiveRef: record.sourceArchiveRef,
+          toolchainVersion: record.toolchainVersion,
+          buildFlags: record.buildFlags,
+          traceId: record.traceId,
+          traceParentSpanId: record.traceParentSpanId,
+        });
+      } catch (err) {
+        request.log.error({ err, recordId: record.id }, "failed to enqueue build job");
+      }
+
+      settleInFlight(record);
+      return reply.code(201).send({ record: toPublic(record) });
+    } finally {
+      settleInFlight(null);
+      inFlightByContract.delete(input.contractId);
+    }
   });
 
   // GET /verification/:contractId — full verification history for a contract.

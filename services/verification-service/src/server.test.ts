@@ -226,12 +226,84 @@ describe("POST /verification/submit — queue controls (M7)", () => {
     });
   }
 
-  it("dedups: a second active submission for the same contract is rejected (409)", async () => {
-    const { app } = build();
-    expect((await submit(app)).statusCode).toBe(201);
+  it("dedups: a second active submission for the same contract is rejected (409) with existing status", async () => {
+    const { app, jobs } = build();
+    const first = await submit(app);
+    expect(first.statusCode).toBe(201);
+    const firstRecord = first.json().record;
+
     const dup = await submit(app);
     expect(dup.statusCode).toBe(409);
-    expect(dup.json().error).toBe("verification_in_progress");
+    const dupBody = dup.json();
+    expect(dupBody.error).toBe("verification_in_progress");
+    expect(dupBody.status).toBe("submitted");
+    expect(dupBody.recordId).toBe(firstRecord.id);
+    expect(dupBody.record.id).toBe(firstRecord.id);
+    expect(jobs).toHaveLength(1);
+  });
+
+  it("coalesces/rejects two submissions for the same contractId arriving in the same event-loop tick (Promise.all) without queuing redundant work (#534)", async () => {
+    const { app, jobs } = build();
+    const [resA, resB] = await Promise.all([submit(app, C1), submit(app, C1)]);
+
+    const responses = [resA, resB];
+    const created = responses.filter((r) => r.statusCode === 201);
+    const duplicates = responses.filter((r) => r.statusCode === 409);
+
+    expect(created).toHaveLength(1);
+    expect(duplicates).toHaveLength(1);
+    expect(jobs).toHaveLength(1);
+
+    const createdRecord = created[0]!.json().record;
+    const dupBody = duplicates[0]!.json();
+    expect(dupBody.error).toBe("verification_in_progress");
+    expect(dupBody.status).toBe("submitted");
+    expect(dupBody.recordId).toBe(createdRecord.id);
+    expect(dupBody.record).toMatchObject({
+      id: createdRecord.id,
+      contractId: C1,
+      status: "submitted",
+    });
+  });
+
+  it("allows concurrent submissions for different contractIds in the same event-loop tick", async () => {
+    const { app, jobs } = build();
+    const [res1, res2] = await Promise.all([submit(app, C1), submit(app, C2)]);
+
+    expect(res1.statusCode).toBe(201);
+    expect(res2.statusCode).toBe(201);
+    expect(jobs).toHaveLength(2);
+    expect(jobs.map((j) => j.contractId).sort()).toEqual([C1, C2].sort());
+  });
+
+  it("returns the active building status when a duplicate arrives while the job is building (#534)", async () => {
+    const records = createMemoryVerificationRepository();
+    const jobs: BuildJob[] = [];
+    app = buildServer({
+      records,
+      queue: {
+        async enqueue(j) {
+          jobs.push(j);
+        },
+      },
+      x402FacilitatorClient: fakeFacilitatorClient(),
+    });
+
+    const first = await submit(app, C1);
+    expect(first.statusCode).toBe(201);
+    const id = first.json().record.id;
+
+    const stored = await records.find(id);
+    await records.update({ ...stored!, status: "building" });
+
+    const dup = await submit(app, C1);
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json()).toMatchObject({
+      error: "verification_in_progress",
+      status: "building",
+      recordId: id,
+    });
+    expect(jobs).toHaveLength(1);
   });
 
   it("allows resubmission of a contract whose prior run is terminal", async () => {
@@ -492,8 +564,12 @@ describe("VerificationRepository.listPage (issue #263)", () => {
 
   it("filters by status", async () => {
     const records = createMemoryVerificationRepository();
-    await records.insert(record({ id: "r1", status: "verified", createdAt: "2024-01-01T00:00:00.000Z" }));
-    await records.insert(record({ id: "r2", status: "failed", createdAt: "2024-01-02T00:00:00.000Z" }));
+    await records.insert(
+      record({ id: "r1", status: "verified", createdAt: "2024-01-01T00:00:00.000Z" }),
+    );
+    await records.insert(
+      record({ id: "r2", status: "failed", createdAt: "2024-01-02T00:00:00.000Z" }),
+    );
 
     const page = await records.listPage({ status: "verified", limit: 10 });
     expect(page.records.map((r) => r.id)).toEqual(["r1"]);
@@ -502,9 +578,7 @@ describe("VerificationRepository.listPage (issue #263)", () => {
   it("paginates newest-first with no skip or duplicate across pages", async () => {
     const records = createMemoryVerificationRepository();
     for (let i = 0; i < 5; i++) {
-      await records.insert(
-        record({ id: `r${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` }),
-      );
+      await records.insert(record({ id: `r${i}`, createdAt: `2024-01-0${i + 1}T00:00:00.000Z` }));
     }
 
     const seen: string[] = [];
