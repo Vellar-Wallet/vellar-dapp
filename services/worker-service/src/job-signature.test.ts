@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_KEY_ROTATION_GRACE_PERIOD_MS,
   canonicalizeJobPayload,
   signJobPayload,
   verifyJobSignature,
   type VerificationJobPayload,
+  type VerificationKeyRing,
 } from "./job-signature";
 
 describe("Job Payload Signature Hardening (Phase 7 / #421)", () => {
@@ -82,5 +84,53 @@ describe("Job Payload Signature Hardening (Phase 7 / #421)", () => {
     });
     expect(result.valid).toBe(false);
     expect(result.reason).toBe("expired");
+  });
+
+  it("accepts an in-flight job signed by the previous key during the rotation grace period", () => {
+    const previousSecret = "previous-worker-signing-key-9876543210";
+    const currentSecret = "current-worker-signing-key-111122223333";
+    const rotatedAtMs = 1720000000000;
+    const inFlightJob: VerificationJobPayload = {
+      ...validJob,
+      timestamp: rotatedAtMs - 5_000,
+      signature: signJobPayload({ ...validJob, timestamp: rotatedAtMs - 5_000 }, previousSecret),
+    };
+
+    const keyRing: VerificationKeyRing = {
+      currentSecret,
+      previousKeys: [{ secret: previousSecret, rotatedAtMs }],
+    };
+
+    const result = verifyJobSignature(inFlightJob, keyRing, {
+      nowMs: rotatedAtMs + DEFAULT_KEY_ROTATION_GRACE_PERIOD_MS - 1_000,
+    });
+    expect(result).toEqual({
+      valid: true,
+      matchedKey: "rotated",
+    });
+  });
+
+  it("rejects a job signed under a rotated-out key after the rotation grace period expires", () => {
+    const previousSecret = "previous-worker-signing-key-9876543210";
+    const currentSecret = "current-worker-signing-key-111122223333";
+    const rotatedAtMs = 1720000000000;
+    const rotatedOutJob: VerificationJobPayload = {
+      ...validJob,
+      timestamp: rotatedAtMs,
+      signature: signJobPayload({ ...validJob, timestamp: rotatedAtMs }, previousSecret),
+    };
+
+    const keyRing: VerificationKeyRing = {
+      currentSecret,
+      previousKeys: [{ secret: previousSecret, rotatedAtMs, gracePeriodMs: 60_000 }],
+    };
+
+    const result = verifyJobSignature(rotatedOutJob, keyRing, {
+      nowMs: rotatedAtMs + 60_001,
+    });
+    expect(result).toEqual({
+      valid: false,
+      reason: "key_rotation_expired",
+    });
   });
 });
