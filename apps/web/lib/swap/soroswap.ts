@@ -38,7 +38,15 @@ export interface BuiltSwap {
 }
 
 export type SwapOutcome =
-  { status: "success"; amounts: bigint[] } | { status: "failed" } | { status: "unknown" };
+  | { status: "success"; amounts: bigint[] }
+  | {
+      status: "partial";
+      amounts: bigint[];
+      filledAmountIn?: bigint;
+      remainingAmountIn?: bigint;
+    }
+  | { status: "failed" }
+  | { status: "unknown" };
 
 export interface SwapVenue {
   name: string;

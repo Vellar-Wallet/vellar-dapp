@@ -15,7 +15,7 @@ import {
   SwapQuoteError,
   type SwapQuote,
 } from "@/lib/swap/quote";
-import { SwapVenueError, toVenueError } from "@/lib/swap/soroswap";
+import { SwapVenueError, toVenueError, type SwapOutcome } from "@/lib/swap/soroswap";
 import { trackTransaction } from "@/lib/track";
 import { useSwapClient } from "@/lib/wallet-context";
 
@@ -30,8 +30,71 @@ type Flow =
   | { step: "tracking"; hash: string; prepared: PreparedSwap }
   | { step: "done"; hash: string; prepared: PreparedSwap; outcome: DoneOutcome };
 
-type DoneOutcome =
-  { kind: "success"; received: bigint | null } | { kind: "failed" } | { kind: "unconfirmed" };
+export type DoneOutcome =
+  | { kind: "success"; received: bigint | null }
+  | {
+      kind: "partial";
+      filledIn: bigint;
+      remainingIn: bigint;
+      received: bigint;
+      fillPercent: string;
+    }
+  | { kind: "failed" }
+  | { kind: "unconfirmed" };
+
+/**
+ * Classify a swap's on-chain execution outcome against the requested input
+ * amount (`requestedIn`):
+ * - 0% filled (`status === "failed"`, `filledIn <= 0n`, or `received === 0n`)
+ *   is classified as `{ kind: "failed" }` (fully rejected, nothing exchanged).
+ * - `0n < filledIn < requestedIn` (or `status === "partial"` with residual
+ *   unswapped balance) is classified as `{ kind: "partial" }` with exact
+ *   `filledIn`, `remainingIn`, `received`, and `fillPercent`.
+ * - Full fill (`filledIn >= requestedIn`) is classified as `{ kind: "success" }`.
+ */
+export function classifySwapExecution(
+  requestedIn: bigint,
+  outcome: SwapOutcome | null,
+): DoneOutcome {
+  if (!outcome || outcome.status === "unknown") {
+    return { kind: "success", received: null };
+  }
+  if (outcome.status === "failed") {
+    return { kind: "failed" };
+  }
+
+  const filledIn =
+    "filledAmountIn" in outcome && outcome.filledAmountIn !== undefined
+      ? outcome.filledAmountIn
+      : (outcome.amounts[0] ?? requestedIn);
+  const received =
+    outcome.amounts.length > 0 ? (outcome.amounts[outcome.amounts.length - 1] ?? null) : null;
+
+  if (filledIn <= 0n || received === 0n) {
+    return { kind: "failed" };
+  }
+
+  const remainingIn =
+    "remainingAmountIn" in outcome && outcome.remainingAmountIn !== undefined
+      ? outcome.remainingAmountIn
+      : requestedIn > filledIn
+        ? requestedIn - filledIn
+        : 0n;
+
+  if (remainingIn > 0n) {
+    const bps = requestedIn > 0n ? Number((filledIn * 10_000n) / requestedIn) : 0;
+    const fillPercent = (bps / 100).toString();
+    return {
+      kind: "partial",
+      filledIn,
+      remainingIn,
+      received: received ?? 0n,
+      fillPercent,
+    };
+  }
+
+  return { kind: "success", received };
+}
 
 function errorMessage(err: unknown): string {
   if (err instanceof SwapQuoteError || err instanceof SwapVenueError) return err.message;
@@ -118,18 +181,23 @@ export function SwapPanel({
       setFlow({ step: "done", hash, prepared, outcome: { kind: "failed" } });
       return;
     }
-    let received: bigint | null = null;
+    let rawOutcome: SwapOutcome | null = null;
     try {
       const swaps = await getSwaps();
-      const outcome = await swaps.readOutcome(hash);
-      if (outcome.status === "success")
-        received = outcome.amounts[outcome.amounts.length - 1] ?? null;
+      rawOutcome = await swaps.readOutcome(hash);
     } catch {
-      received = null;
+      rawOutcome = null;
     }
-    setFlow({ step: "done", hash, prepared, outcome: { kind: "success", received } });
-    setAmount("");
-    onSuccess();
+    const outcome = classifySwapExecution(prepared.review.amountIn, rawOutcome);
+    setFlow({ step: "done", hash, prepared, outcome });
+    if (outcome.kind === "success" || outcome.kind === "partial") {
+      setAmount(
+        outcome.kind === "partial"
+          ? formatTokenAmount(outcome.remainingIn, prepared.review.sell.decimals)
+          : "",
+      );
+      onSuccess();
+    }
   }
 
   return (
@@ -210,15 +278,85 @@ export function SwapPanel({
       {flow.step === "done" && (
         <div className="mt-3.5 flex flex-col gap-2 text-sm">
           {flow.outcome.kind === "success" && (
-            <p className="lpa-ok">
+            <p className="lpa-ok" data-testid="swap-full-fill">
               Swap confirmed.
               {flow.outcome.received !== null
                 ? ` Received ${fmt(flow.outcome.received, flow.prepared.review.buy.decimals, flow.prepared.review.buy.symbol)}.`
                 : " Check your balance for the exact amount received."}
             </p>
           )}
+          {flow.outcome.kind === "partial" && (
+            <div
+              role="status"
+              data-testid="swap-partial-fill"
+              className="lpa-well border-l-[3px]! border-l-[var(--lp-sun)]! flex flex-col gap-2"
+            >
+              <p className="m-0! font-bold text-[var(--lp-ink)]">
+                Swap partially filled ({flow.outcome.fillPercent}%).
+              </p>
+              <p className="m-0! text-[13px] text-[var(--lp-ink-soft)]">
+                Swapped{" "}
+                <strong>
+                  {fmt(
+                    flow.outcome.filledIn,
+                    flow.prepared.review.sell.decimals,
+                    flow.prepared.review.sell.symbol,
+                  )}
+                </strong>{" "}
+                for{" "}
+                <strong>
+                  {fmt(
+                    flow.outcome.received,
+                    flow.prepared.review.buy.decimals,
+                    flow.prepared.review.buy.symbol,
+                  )}
+                </strong>
+                . Your remaining unswapped balance of{" "}
+                <strong data-testid="swap-remaining-balance">
+                  {fmt(
+                    flow.outcome.remainingIn,
+                    flow.prepared.review.sell.decimals,
+                    flow.prepared.review.sell.symbol,
+                  )}
+                </strong>{" "}
+                is still in your wallet.
+              </p>
+              <dl className="m-0 flex flex-col gap-1 text-xs">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-[var(--lp-ink-faint)]">Filled amount</dt>
+                  <dd className="m-0 font-[family-name:var(--lp-mono)]">
+                    {fmt(
+                      flow.outcome.filledIn,
+                      flow.prepared.review.sell.decimals,
+                      flow.prepared.review.sell.symbol,
+                    )}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-[var(--lp-ink-faint)]">Received amount</dt>
+                  <dd className="m-0 font-[family-name:var(--lp-mono)]">
+                    {fmt(
+                      flow.outcome.received,
+                      flow.prepared.review.buy.decimals,
+                      flow.prepared.review.buy.symbol,
+                    )}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-[var(--lp-ink-faint)]">Residual unswapped balance</dt>
+                  <dd className="m-0 font-[family-name:var(--lp-mono)]">
+                    {fmt(
+                      flow.outcome.remainingIn,
+                      flow.prepared.review.sell.decimals,
+                      flow.prepared.review.sell.symbol,
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          )}
           {flow.outcome.kind === "failed" && (
-            <p className="lpa-bad">
+            <p className="lpa-bad" data-testid="swap-failed">
               Swap failed on the network. A Soroban swap is all-or-nothing, so no tokens were
               exchanged.
             </p>
@@ -238,7 +376,7 @@ export function SwapPanel({
             className="self-start"
             onClick={() => setFlow({ step: "form" })}
           >
-            New swap
+            {flow.outcome.kind === "partial" ? "Swap remaining balance" : "New swap"}
           </LpActionButton>
         </div>
       )}
