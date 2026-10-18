@@ -47,7 +47,11 @@ export default function Verify() {
           </TabButton>
         </div>
 
-        {tab === "explore" ? <Explorer /> : <SubmitForm />}
+        {tab === "explore" ? (
+          <Explorer onSubmitContract={() => setTab("submit")} />
+        ) : (
+          <SubmitForm />
+        )}
       </div>
     </AppShell>
   );
@@ -76,9 +80,10 @@ function TabButton({
 
 // --- Explorer ----------------------------------------------------------------
 
-function Explorer() {
+function Explorer({ onSubmitContract }: { onSubmitContract?: () => void }) {
   const [contractId, setContractId] = useState("");
   const [records, setRecords] = useState<PublicVerificationRecord[] | null>(null);
+  const [checkedContractId, setCheckedContractId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -87,13 +92,16 @@ function Explorer() {
   async function lookup() {
     setError(null);
     setRecords(null);
+    setCheckedContractId(null);
     if (!valid) {
       setError("Enter a valid contract address (starts with C).");
       return;
     }
+    const target = contractId.trim();
     setLoading(true);
     try {
-      const history = await getVerificationHistory(contractId.trim());
+      const history = await getVerificationHistory(target);
+      setCheckedContractId(target);
       setRecords(history);
     } catch (err) {
       setError(err instanceof VerificationApiError ? err.message : "Lookup failed. Try again.");
@@ -120,7 +128,11 @@ function Explorer() {
         </LpActionButton>
       </div>
 
-      {error && <p className="lpa-bad">{error}</p>}
+      {error && (
+        <p role="alert" className="lpa-bad">
+          {error}
+        </p>
+      )}
 
       {records && (
         <div className="flex flex-col gap-3">
@@ -133,18 +145,107 @@ function Explorer() {
             </span>
           </div>
 
-          {records.map((r) => (
-            <RecordCard key={r.id} record={r} />
-          ))}
+          {records.length === 0 ? (
+            <ZeroHistoryEmptyState
+              contractId={checkedContractId ?? contractId.trim()}
+              onSubmitContract={onSubmitContract}
+            />
+          ) : (
+            records.map((r) => <RecordCard key={r.id} record={r} />)
+          )}
         </div>
       )}
     </section>
   );
 }
 
+export function ZeroHistoryEmptyState({
+  contractId,
+  onSubmitContract,
+}: {
+  contractId: string;
+  onSubmitContract?: () => void;
+}) {
+  return (
+    <div
+      data-testid="zero-history-empty-state"
+      data-state="zero-history"
+      className="lpa-panel flex flex-col items-start gap-3 border border-dashed border-[var(--lp-border)]"
+    >
+      <div className="flex items-center gap-3">
+        <svg
+          data-testid="zero-history-illustration"
+          aria-hidden="true"
+          width="44"
+          height="44"
+          viewBox="0 0 44 44"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          className="shrink-0 text-[var(--lp-ink-faint)]"
+        >
+          <rect
+            x="6"
+            y="5"
+            width="24"
+            height="30"
+            rx="3"
+            stroke="currentColor"
+            strokeWidth="1.75"
+          />
+          <line x1="11" y1="13" x2="25" y2="13" stroke="currentColor" strokeWidth="1.75" />
+          <line x1="11" y1="19" x2="21" y2="19" stroke="currentColor" strokeWidth="1.75" />
+          <line x1="11" y1="25" x2="17" y2="25" stroke="currentColor" strokeWidth="1.75" />
+          <circle
+            cx="29"
+            cy="29"
+            r="7"
+            fill="var(--lp-paper, #fff)"
+            stroke="currentColor"
+            strokeWidth="1.75"
+          />
+          <line
+            x1="34"
+            y1="34"
+            x2="39"
+            y2="39"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
+        <div>
+          <strong className="block text-sm text-[var(--lp-ink)]">
+            Zero verification history for this contract
+          </strong>
+          <span className="break-all font-[family-name:var(--lp-mono)] text-xs text-[var(--lp-ink-faint)]">
+            {contractId}
+          </span>
+        </div>
+      </div>
+      <p className="m-0! text-[13px] leading-relaxed text-[var(--lp-ink-soft)]">
+        No source code has ever been submitted to the verification registry for this contract ID.
+        Unlike a failed verification attempt — where a submitted build did not match the deployed
+        on-chain Wasm — this contract simply has no verification records on file yet.
+      </p>
+      {onSubmitContract && (
+        <LpActionButton variant="outline" size="sm" onClick={onSubmitContract}>
+          Submit source for verification →
+        </LpActionButton>
+      )}
+    </div>
+  );
+}
+
 function RecordCard({ record }: { record: PublicVerificationRecord }) {
   return (
-    <article className="lpa-panel flex flex-col gap-2">
+    <article
+      data-testid="verification-record-card"
+      data-status={record.status}
+      className={cx(
+        "lpa-panel flex flex-col gap-2",
+        record.status === "failed" && "border-l-[3px]! border-l-[var(--lpa-bad)]!",
+      )}
+    >
       <div className="flex items-center justify-between gap-2.5">
         <TrustBadge status={record.status} size="sm" />
         <time className="text-xs text-[var(--lp-ink-faint)]">
