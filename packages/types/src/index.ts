@@ -1,6 +1,13 @@
 // @vellar/types — shared domain types.
 // Sourced from idea.md §6 (core interfaces). technical-doc.md governs scope.
 // Keep these in sync with the docs; flag any divergence in docs/decisions.md.
+//
+// Breaking-change convention (#552): any commit that removes or narrows an
+// exported type/interface or makes an optional field required MUST include an
+// explicit `// BREAKING: <reason>` comment in the diff, enforced by
+// `checkBreakingTypeChanges` / `assertBreakingChangeComment`.
+
+export * from "./breaking-change-check";
 
 export type Network = "testnet" | "mainnet";
 
