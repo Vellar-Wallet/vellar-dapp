@@ -32,7 +32,44 @@ export class MaxRetriesExceededError extends Error {
   }
 }
 
-export interface RetryOptions {
+export type JitterMode = "full" | "equal" | "none";
+
+export interface BackoffDelayOptions {
+  /**
+   * Base delay in milliseconds for the first retry (attempt 0).
+   * Alias for `baseDelayMs`. Default: 200 ms.
+   */
+  baseMs?: number;
+  baseDelayMs?: number;
+
+  /**
+   * Maximum ceiling on computed delay in milliseconds.
+   * Alias for `maxDelayMs`. Default: 10 000 ms (10 s).
+   */
+  maxMs?: number;
+  maxDelayMs?: number;
+
+  /**
+   * Jitter strategy used to decorrelate concurrent retries:
+   * - `"full"` (or `true`, default): uniform random integer in `[0, cap]`
+   * - `"equal"`: half deterministic + half random in `[floor(cap / 2), cap]`
+   * - `"none"` (or `false`): deterministic `cap` (no jitter)
+   */
+  jitter?: JitterMode | boolean;
+
+  /**
+   * Legacy flag that disables jitter when true (`jitter: "none"`).
+   */
+  noJitter?: boolean;
+
+  /**
+   * Injectable random number generator returning `[0, 1)`.
+   * Defaults to `Math.random`.
+   */
+  random?: () => number;
+}
+
+export interface RetryOptions extends BackoffDelayOptions {
   /**
    * Maximum number of attempts (including the first). Must be ≥ 1.
    * Default: 4 (3 retries after the initial call).
@@ -40,33 +77,16 @@ export interface RetryOptions {
   maxAttempts?: number;
 
   /**
-   * Base delay in milliseconds for the first retry. The ceiling for attempt N
-   * (0-indexed) is `baseDelayMs * 2^N`, capped at `maxDelayMs`.
-   * Default: 200 ms.
-   */
-  baseDelayMs?: number;
-
-  /**
-   * Absolute ceiling on the computed delay, in milliseconds. Prevents
-   * exponential growth from producing multi-minute waits at high attempt counts.
-   * Default: 10 000 ms (10 s).
-   */
-  maxDelayMs?: number;
-
-  /**
-   * When true the delay is the full computed ceiling (no jitter). Disable only
-   * when deterministic timing is needed (e.g. in integration tests against a
-   * real upstream). Production code should leave this false.
-   * Default: false (full jitter enabled).
-   */
-  noJitter?: boolean;
-
-  /**
    * Predicate called with the thrown error before sleeping. Return false to
    * surface the error immediately without further retries (e.g. 400 Bad Request
    * is never retryable, but 503 is). Default: always retry.
    */
-  isRetryable?: (err: unknown) => boolean;
+  isRetryable?: (err: unknown, attempt: number) => boolean;
+
+  /**
+   * Optional hook invoked before sleeping between retry attempts.
+   */
+  onRetry?: (info: { attempt: number; delayMs: number; error: unknown }) => void | Promise<void>;
 
   /**
    * An AbortSignal that cancels pending retries. When the signal fires between
@@ -88,31 +108,65 @@ const DEFAULT_MAX_DELAY_MS = 10_000;
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+function resolveJitterMode(options: BackoffDelayOptions): JitterMode {
+  if (options.noJitter === true || options.jitter === false || options.jitter === "none") {
+    return "none";
+  }
+  if (options.jitter === "equal") {
+    return "equal";
+  }
+  return "full";
+}
+
 /**
- * Run `fn` up to `maxAttempts` times with exponential back-off and full jitter
- * between each attempt.
+ * Compute the backoff delay (in integer milliseconds) for a 0-indexed retry
+ * `attempt` using exponential growth capped at `maxMs` (`maxDelayMs`) and
+ * the configured `jitter` mode (`"full"` by default).
+ */
+export function computeBackoffDelay(attempt: number, options: BackoffDelayOptions = {}): number {
+  const baseMs = options.baseMs ?? options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const maxMs = options.maxMs ?? options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
+  if (maxMs <= 0 || baseMs <= 0) return 0;
+
+  const exponential = baseMs * Math.pow(2, attempt);
+  const cap = Math.max(0, Math.min(maxMs, exponential));
+  const mode = resolveJitterMode(options);
+  const rand = options.random ?? (() => Math.random());
+
+  if (mode === "none") {
+    return Math.floor(cap);
+  }
+  if (mode === "equal") {
+    const half = cap / 2;
+    return Math.min(Math.floor(cap), Math.floor(half + rand() * half));
+  }
+  return Math.min(Math.floor(cap), Math.floor(rand() * cap));
+}
+
+/**
+ * Run `fn` up to `maxAttempts` times with exponential back-off and configurable
+ * jitter (`"full"` by default) between each attempt.
  *
  * @example
  * ```ts
- * import { retryWithBackoff } from "@vellar/service-kit";
+ * import { retryWithJitter } from "@vellar/service-kit";
  *
- * const result = await retryWithBackoff(() => fetch(url), {
+ * const result = await retryWithJitter(() => fetch(url), {
  *   maxAttempts: 5,
- *   baseDelayMs: 300,
+ *   baseMs: 300,
+ *   maxMs: 5_000,
+ *   jitter: "full",
  *   isRetryable: (err) => !(err instanceof BadRequestError),
  * });
  * ```
  */
-export async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
+export async function retryWithJitter<T>(
+  fn: (attempt: number) => Promise<T>,
   options: RetryOptions = {},
 ): Promise<T> {
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   if (maxAttempts < 1) throw new RangeError("maxAttempts must be ≥ 1");
 
-  const baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
-  const maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
-  const noJitter = options.noJitter ?? false;
   const isRetryable = options.isRetryable ?? (() => true);
   const sleep = options.sleep ?? defaultSleep;
   const signal = options.signal;
@@ -126,19 +180,19 @@ export async function retryWithBackoff<T>(
     }
 
     try {
-      return await fn();
+      return await fn(attempt);
     } catch (err) {
       lastErr = err;
 
       // Non-retryable: surface immediately.
-      if (!isRetryable(err)) throw err;
+      if (!isRetryable(err, attempt)) throw err;
 
       // No more retries left.
       if (attempt === maxAttempts - 1) break;
 
-      // Compute delay: full jitter over [0, min(maxDelay, base * 2^attempt)].
-      const cap = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
-      const delay = noJitter ? cap : Math.random() * cap;
+      const delay = computeBackoffDelay(attempt, options);
+
+      await options.onRetry?.({ attempt: attempt + 1, delayMs: delay, error: err });
 
       // Honour abort signal during the sleep window.
       if (signal?.aborted) {
@@ -154,4 +208,14 @@ export async function retryWithBackoff<T>(
   }
 
   throw new MaxRetriesExceededError(maxAttempts, lastErr);
+}
+
+/**
+ * Backwards-compatible alias for `retryWithJitter`.
+ */
+export async function retryWithBackoff<T>(
+  fn: (attempt: number) => Promise<T>,
+  options: RetryOptions = {},
+): Promise<T> {
+  return retryWithJitter(fn, options);
 }

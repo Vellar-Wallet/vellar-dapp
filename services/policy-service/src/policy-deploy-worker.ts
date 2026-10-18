@@ -9,6 +9,12 @@
  * - Handle concurrent failures safely (DB transaction + row-level locks)
  */
 
+import {
+  computeBackoffDelay,
+  retryWithJitter,
+  type JitterMode,
+  type RetryOptions,
+} from "@vellar/service-kit";
 import { summarizeError, type DLQStore, type DLQRecord } from "./dlq-store";
 import type { PolicyDeployer } from "./deploy";
 import type { PolicyRepository, PolicyRecord } from "./server";
@@ -22,6 +28,7 @@ export interface DeployJob {
   network: "testnet" | "mainnet";
   status: "pending" | "in_progress" | "completed" | "failed" | "dead";
   retry_count: number;
+  next_retry_delay_ms?: number;
   last_error?: string;
   last_failed_at?: string;
   first_failed_at?: string;
@@ -137,10 +144,9 @@ export class InMemoryDeployJobStore implements DeployJobStore {
         },
       });
     } else {
-      // Reset to pending for retry with backoff
+      // Reset to pending and schedule next retry with full jitter via @vellar/service-kit
       job.status = "pending";
-      // In production, schedule retry with exponential backoff
-      // For now, leave it in pending state for the next poll
+      job.next_retry_delay_ms = computeBackoffWithJitter(job.retry_count);
     }
   }
 
@@ -160,14 +166,33 @@ export class InMemoryDeployJobStore implements DeployJobStore {
 }
 
 /**
- * Compute exponential backoff delay in milliseconds.
+ * Compute exponential backoff delay in milliseconds via `@vellar/service-kit`.
  * Capped at 1 hour to avoid runaway delays.
  */
-export function computeBackoff(retryCount: number): number {
-  const baseDelayMs = 1000;
-  const maxDelayMs = 60 * 60 * 1000; // 1 hour
-  const delayMs = baseDelayMs * Math.pow(2, Math.max(0, retryCount - 1));
-  return Math.min(delayMs, maxDelayMs);
+export function computeBackoff(
+  retryCount: number,
+  options: { jitter?: JitterMode | boolean; random?: () => number } = {},
+): number {
+  return computeBackoffDelay(Math.max(0, retryCount - 1), {
+    baseMs: 1_000,
+    maxMs: 60 * 60 * 1_000, // 1 hour
+    jitter: options.jitter ?? "none",
+    random: options.random,
+  });
+}
+
+/**
+ * Compute jittered exponential backoff delay in milliseconds via `@vellar/service-kit`
+ * so concurrent deployment workers do not retry in lockstep after an RPC outage.
+ */
+export function computeBackoffWithJitter(
+  retryCount: number,
+  options: { jitter?: JitterMode | boolean; random?: () => number } = {},
+): number {
+  return computeBackoff(retryCount, {
+    ...options,
+    jitter: options.jitter ?? "full",
+  });
 }
 
 /**
@@ -180,6 +205,7 @@ export async function processDeploymentJob(
   deployer: PolicyDeployer,
   dlqStore: DLQStore,
   dlqMetrics?: DLQMetrics,
+  retryOptions?: RetryOptions,
 ): Promise<boolean> {
   const job = await jobStore.claim();
   if (!job) return false;
@@ -194,10 +220,23 @@ export async function processDeploymentJob(
     if (enforcement.kind !== "policy-contract" || !enforcement.constructorArgs) {
       throw new Error(`Policy is not contract-enforced: ${job.policy_id}`);
     }
-    const result = await deployer.deployInstance({
-      wallet: job.wallet,
-      constructorArgs: enforcement.constructorArgs,
-    });
+    const constructorArgs = enforcement.constructorArgs;
+    const result = await retryWithJitter(
+      () =>
+        deployer.deployInstance({
+          wallet: job.wallet,
+          constructorArgs,
+        }),
+      {
+        maxAttempts: retryOptions?.maxAttempts ?? 1,
+        baseMs: retryOptions?.baseMs ?? retryOptions?.baseDelayMs ?? 1_000,
+        maxMs: retryOptions?.maxMs ?? retryOptions?.maxDelayMs ?? 30_000,
+        jitter: retryOptions?.jitter ?? "full",
+        isRetryable: retryOptions?.isRetryable,
+        sleep: retryOptions?.sleep,
+        signal: retryOptions?.signal,
+      },
+    );
 
     await jobStore.markCompleted(job.id, result.contractId, result.txHash);
     return true;

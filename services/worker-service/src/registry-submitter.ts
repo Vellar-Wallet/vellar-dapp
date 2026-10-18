@@ -7,7 +7,7 @@ import {
   scValToNative,
   rpc,
 } from "@stellar/stellar-sdk";
-import type { RpcPool } from "@vellar/service-kit";
+import { retryWithJitter, type RpcPool } from "@vellar/service-kit";
 import type { AttestationSubmitter } from "./attestor";
 
 // The real AttestationSubmitter: invokes the AttestationRegistry contract over
@@ -39,6 +39,8 @@ export interface RegistrySubmitterOptions {
    * endpoint — a failed call surfaces as before and the attestor retries it. */
   rpcPool?: RpcPool;
 }
+
+class RegistryOnChainFailureError extends Error {}
 
 export function createRegistrySubmitter(options: RegistrySubmitterOptions): AttestationSubmitter {
   const servers = new Map<string, rpc.Server>();
@@ -75,15 +77,30 @@ export function createRegistrySubmitter(options: RegistrySubmitterOptions): Atte
       );
     }
 
-    for (let i = 0; i < 30; i++) {
-      const result = await server.getTransaction(sent.hash);
-      if (result.status === "SUCCESS") return;
-      if (result.status === "FAILED") {
-        throw new Error(`registry ${method} failed on-chain (tx ${sent.hash})`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      await retryWithJitter(
+        async () => {
+          const result = await server.getTransaction(sent.hash);
+          if (result.status === "SUCCESS") return;
+          if (result.status === "FAILED") {
+            throw new RegistryOnChainFailureError(
+              `registry ${method} failed on-chain (tx ${sent.hash})`,
+            );
+          }
+          throw new Error("tx_pending");
+        },
+        {
+          maxAttempts: 30,
+          baseMs: 250,
+          maxMs: 2_000,
+          jitter: "full",
+          isRetryable: (err) => !(err instanceof RegistryOnChainFailureError),
+        },
+      );
+    } catch (err) {
+      if (err instanceof RegistryOnChainFailureError) throw err;
+      throw new Error(`registry ${method} not final after 30s (tx ${sent.hash})`);
     }
-    throw new Error(`registry ${method} not final after 30s (tx ${sent.hash})`);
   }
 
   async function simulateRead(method: string, args: import("@stellar/stellar-sdk").xdr.ScVal[]) {
