@@ -502,6 +502,90 @@ describe("audit-redaction", () => {
         expect(redactedStr).toContain("trustline");
         expect(redactedStr).toContain("data");
       });
+
+      it("never lets a sponsor secret key (S...) survive redaction when nested several levels deep in an Error.cause chain (#533)", () => {
+        const sponsorSecret = "SBU2RRGLXH3E5CQHTD3ODLDF2BWDCYUSSBLLZ5GNW7JXHVV32WHX7P2G";
+        const secondSecret = "SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4";
+
+        const rootCause = new Error(`Keypair.fromSecret failed for sponsor ${sponsorSecret}`);
+        Object.defineProperty(rootCause, "sponsorSecretKey", {
+          value: sponsorSecret,
+          enumerable: false,
+        });
+
+        const midCause = new Error("Fee-bump signature builder failed", { cause: rootCause });
+        (midCause as Error & { details?: unknown }).details = [
+          { attempt: 1, signerSeed: secondSecret },
+          { attempt: 2, note: `fallback seed ${sponsorSecret} rejected` },
+        ];
+
+        const outerError = new Error("Lifecycle sponsor wrapping failed", { cause: midCause });
+
+        const event: AuditEvent = {
+          type: "lifecycle.cleanup_executed",
+          at: "2026-08-29T14:30:00Z",
+          data: {
+            plan: {
+              accountId: "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              destination: "GYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+              blockers: [],
+              estimatedTransactions: 1,
+              mergeReady: true,
+            },
+            error: outerError,
+          },
+        };
+
+        const redacted = redactAuditEvent(event, salt);
+        const serialized = JSON.stringify(redacted);
+
+        expect(serialized).not.toContain(sponsorSecret);
+        expect(serialized).not.toContain(sponsorSecret.slice(0, 12));
+        expect(serialized).not.toContain(secondSecret);
+        expect(serialized).not.toContain(secondSecret.slice(0, 12));
+
+        const redactedErr = redacted.data.error as Record<string, unknown>;
+        expect(redactedErr.message).toBe("Lifecycle sponsor wrapping failed");
+        const redactedMid = redactedErr.cause as Record<string, unknown>;
+        expect(redactedMid.message).toBe("Fee-bump signature builder failed");
+        const redactedRoot = redactedMid.cause as Record<string, unknown>;
+        expect(redactedRoot.message).toContain("[REDACTED]");
+        expect(redactedRoot.sponsorSecretKey).toBe("[REDACTED]");
+      });
+
+      it("safely handles circular references in error objects and nested structures while redacting sponsor secret keys (#533)", () => {
+        const sponsorSecret = "SBU2RRGLXH3E5CQHTD3ODLDF2BWDCYUSSBLLZ5GNW7JXHVV32WHX7P2G";
+
+        const errA = new Error(`Sponsor signing error with ${sponsorSecret}`);
+        const errB = new Error("Nested cause wrapping", { cause: errA });
+        // Introduce a circular cause chain: errA -> errB -> errA
+        (errA as Error & { cause?: unknown }).cause = errB;
+
+        const circularContext: Record<string, unknown> = {
+          stage: "fee_bump",
+          rawNote: `Using sponsor ${sponsorSecret}`,
+          sponsorSecret,
+        };
+        circularContext.self = circularContext;
+        (errB as Error & { context?: unknown }).context = circularContext;
+
+        const event: AuditEvent = {
+          type: "lifecycle.sponsor_failed",
+          at: "2026-08-29T14:35:00Z",
+          data: {
+            error: errB,
+            context: circularContext,
+          },
+        };
+
+        const redacted = redactAuditEvent(event, salt);
+        const serialized = JSON.stringify(redacted);
+
+        expect(serialized).not.toContain(sponsorSecret);
+        expect(serialized).not.toContain(sponsorSecret.slice(0, 12));
+        expect(serialized).toContain("[Circular]");
+        expect(serialized).toContain("[REDACTED]");
+      });
     });
   });
 });

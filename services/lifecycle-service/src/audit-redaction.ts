@@ -41,6 +41,110 @@ export function hashForRedaction(value: string, salt: string): string {
   return hash.substring(0, 12);
 }
 
+const STELLAR_SECRET_KEY_PATTERN = /(?<![A-Za-z0-9])S[A-Z0-9]{40,60}(?![A-Za-z0-9])/g;
+const SENSITIVE_FIELD_NAME_PATTERN =
+  /^(?:sponsor_?secret(?:_?key)?|secret(?:_?key)?|private_?key|seed|sponsor_?seed|password|authorization|api_?key|token)$/i;
+const DROPPED_PII_FIELDS = new Set([
+  "accountId",
+  "destination",
+  "account",
+  "dataKeys",
+  "offers",
+  "description",
+  "xdr",
+]);
+
+export const REDACTED_SECRET = "[REDACTED]";
+export const CIRCULAR_REF_PLACEHOLDER = "[Circular]";
+
+/**
+ * Redacts any Stellar secret seed (`S...`) embedded inside a string.
+ */
+export function redactSecretKeysInString(input: string): string {
+  return input.replace(STELLAR_SECRET_KEY_PATTERN, REDACTED_SECRET);
+}
+
+/**
+ * Recursively walks arbitrary values (including `Error` instances with
+ * non-enumerable `message`, `stack`, and `cause` chains, arrays, plain
+ * objects, and circular references) and strips PII fields and secret keys.
+ */
+export function redactNestedValue(
+  value: unknown,
+  ancestors: WeakSet<object> = new WeakSet<object>(),
+): unknown {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return redactSecretKeysInString(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  if (ancestors.has(value)) {
+    return CIRCULAR_REF_PLACEHOLDER;
+  }
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => redactNestedValue(item, ancestors));
+    }
+
+    if (value instanceof Error) {
+      const redactedErr: Record<string, unknown> = {
+        name: redactSecretKeysInString(value.name),
+        message: redactSecretKeysInString(value.message),
+      };
+      if (typeof value.stack === "string") {
+        redactedErr.stack = redactSecretKeysInString(value.stack);
+      }
+      if (value.cause !== undefined) {
+        redactedErr.cause = redactNestedValue(value.cause, ancestors);
+      }
+      for (const key of Object.getOwnPropertyNames(value)) {
+        if (key === "name" || key === "message" || key === "stack" || key === "cause") {
+          continue;
+        }
+        if (DROPPED_PII_FIELDS.has(key)) {
+          continue;
+        }
+        if (SENSITIVE_FIELD_NAME_PATTERN.test(key)) {
+          redactedErr[key] = REDACTED_SECRET;
+          continue;
+        }
+        const propVal = (value as unknown as Record<string, unknown>)[key];
+        redactedErr[key] = redactNestedValue(propVal, ancestors);
+      }
+      return redactedErr;
+    }
+
+    const out: Record<string, unknown> = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      if (DROPPED_PII_FIELDS.has(key)) {
+        continue;
+      }
+      if (SENSITIVE_FIELD_NAME_PATTERN.test(key)) {
+        out[key] = REDACTED_SECRET;
+        continue;
+      }
+      const propVal = (value as Record<string, unknown>)[key];
+      out[key] = redactNestedValue(propVal, ancestors);
+    }
+    return out;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
 /**
  * Extracts blocker types from a CleanupPlan's blockers array.
  * Used to preserve operational utility (what kinds of blockers exist)
@@ -128,12 +232,12 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     const s = step as Record<string, unknown>;
     const redactedStep: Record<string, unknown> = {};
 
-    // Preserve non-PII fields
+    // Preserve non-PII fields (while scrubbing any accidental secret key)
     if (typeof s.title === "string") {
-      redactedStep.title = s.title;
+      redactedStep.title = redactSecretKeysInString(s.title);
     }
     if (typeof s.hash === "string") {
-      redactedStep.hash = s.hash;
+      redactedStep.hash = redactSecretKeysInString(s.hash);
     }
 
     // DROP: xdr (full transaction envelope with account IDs)
@@ -142,13 +246,22 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     return redactedStep;
   }
 
+  function redactAttachedErrors(source: Record<string, unknown>, target: Record<string, unknown>) {
+    if (source.error !== undefined) {
+      target.error = redactNestedValue(source.error);
+    }
+    if (source.err !== undefined) {
+      target.err = redactNestedValue(source.err);
+    }
+  }
+
   // Redact based on endpoint type
   const eventType = event.type;
 
   if (eventType === "lifecycle.inspect_requested" || eventType === "lifecycle.account_inspected") {
     // POST /lifecycle/inspect returns { account: HorizonAccount }
     // DROP the entire account object
-    // No fields to preserve
+    redactAttachedErrors(event.data, redacted.data);
   } else if (
     eventType === "lifecycle.plan_requested" ||
     eventType === "lifecycle.cleanup_planned"
@@ -157,6 +270,7 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     if (event.data.plan) {
       redacted.data.plan = redactPlan(event.data.plan);
     }
+    redactAttachedErrors(event.data, redacted.data);
   } else if (
     eventType === "lifecycle.execute_requested" ||
     eventType === "lifecycle.cleanup_executed"
@@ -168,6 +282,7 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     if (Array.isArray(event.data.steps)) {
       redacted.data.steps = (event.data.steps as unknown[]).map((step) => redactStep(step));
     }
+    redactAttachedErrors(event.data, redacted.data);
   } else if (
     eventType === "lifecycle.merge_requested" ||
     eventType === "lifecycle.account_merged"
@@ -176,26 +291,12 @@ export function redactAuditEvent(event: AuditEvent, salt: string): AuditEvent {
     if (event.data.step) {
       redacted.data.step = redactStep(event.data.step);
     }
+    redactAttachedErrors(event.data, redacted.data);
   } else {
-    // Unknown event type: apply conservative redaction
-    // Only preserve top-level primitive fields that are unlikely to contain PII
-    for (const [key, value] of Object.entries(event.data)) {
-      if (
-        typeof value === "string" ||
-        typeof value === "number" ||
-        typeof value === "boolean" ||
-        value === null
-      ) {
-        // Avoid common PII field names
-        if (
-          !["accountId", "destination", "account", "dataKeys", "offers", "description"].includes(
-            key,
-          )
-        ) {
-          redacted.data[key] = value;
-        }
-      }
-    }
+    // Unknown or error event type: recursively redact nested objects, arrays,
+    // and Error cause chains while dropping known PII fields and scrubbing
+    // Stellar secret keys.
+    redacted.data = redactNestedValue(event.data) as Record<string, unknown>;
   }
 
   return redacted;
