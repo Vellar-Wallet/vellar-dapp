@@ -1181,3 +1181,102 @@ fn verdict_is_deterministic_for_identical_state_and_contexts() {
     }
     assert!(verdicts.iter().all(|v| *v == (true, false)));
 }
+
+// ----- Exact tumbling-window boundary: t - 1, exact t, and t + 1 (#589) -----
+
+#[test]
+fn tumbling_window_boundary_before_exact_and_after_reset_instant() {
+    // Exercises the exact ledger-close instant the tumbling window resets
+    // (`now.saturating_sub(window_start) >= window_seconds`), contrasted with
+    // one second/ledger before (`t0 + DAY - 1`) and one second/ledger after
+    // (`t0 + DAY + 1`), verifying the deliberate inclusive `>=` reset and the
+    // documented 2 * daily_limit cross-boundary bound.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+
+    let t0 = 1_700_000_000_u64;
+    fx.env.ledger().with_mut(|l| {
+        l.sequence_number = 100;
+        l.timestamp = t0;
+    });
+
+    // Anchor window 0 at `t0` with a 6 XLM spend.
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 60_000_000),
+    );
+
+    // 1. One second/ledger BEFORE the reset instant (`t0 + DAY - 1`):
+    //    elapsed == DAY - 1 < DAY, so the window has NOT reset.
+    fx.env.ledger().with_mut(|l| {
+        l.sequence_number = 101;
+        l.timestamp = t0 + DAY - 1;
+    });
+    assert_eq!(
+        fx.policy.try_policy__(
+            &fx.wallet,
+            &signer_key(&fx),
+            &transfer_ctx(&fx.env, &fx.wallet, 40_000_001),
+        ),
+        contract_err(PolicyError::NotAllowed)
+    );
+    // Exhaust the remaining 4 XLM of window 0 at `t0 + DAY - 1`.
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 40_000_000),
+    );
+    assert_eq!(
+        fx.policy.try_policy__(
+            &fx.wallet,
+            &signer_key(&fx),
+            &transfer_ctx(&fx.env, &fx.wallet, 1),
+        ),
+        contract_err(PolicyError::NotAllowed)
+    );
+
+    // 2. EXACTLY at the window-reset instant (`t0 + DAY`):
+    //    elapsed == DAY >= DAY, so the tumbling window resets (`window_start = t0 + DAY`,
+    //    `spent = 0`) and a fresh window 1 allowance becomes available immediately.
+    fx.env.ledger().with_mut(|l| {
+        l.sequence_number = 102;
+        l.timestamp = t0 + DAY;
+    });
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 60_000_000),
+    );
+
+    // 3. One second/ledger AFTER the reset instant (`t0 + DAY + 1`):
+    //    window 1 is already anchored at `t0 + DAY` (elapsed == 1 < DAY), so
+    //    the 6 XLM spent at `t0 + DAY` carries forward and only 4 XLM remains
+    //    in window 1 — pinning the 2 * daily_limit ceiling across the boundary.
+    fx.env.ledger().with_mut(|l| {
+        l.sequence_number = 103;
+        l.timestamp = t0 + DAY + 1;
+    });
+    assert_eq!(
+        fx.policy.try_policy__(
+            &fx.wallet,
+            &signer_key(&fx),
+            &transfer_ctx(&fx.env, &fx.wallet, 40_000_001),
+        ),
+        contract_err(PolicyError::NotAllowed)
+    );
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 40_000_000),
+    );
+    assert_eq!(
+        fx.policy.try_policy__(
+            &fx.wallet,
+            &signer_key(&fx),
+            &transfer_ctx(&fx.env, &fx.wallet, 1),
+        ),
+        contract_err(PolicyError::NotAllowed)
+    );
+}
+
