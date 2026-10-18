@@ -108,7 +108,9 @@ export function parseWasmSections(bytes: Uint8Array): WasmSection[] {
       if (nameEnd > end) throw new WasmParseError("custom section name overruns the section");
       let name: string;
       try {
-        name = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(nameLen.next, nameEnd));
+        name = new TextDecoder("utf-8", { fatal: true }).decode(
+          bytes.subarray(nameLen.next, nameEnd),
+        );
       } catch {
         throw new WasmParseError("custom section name is not valid UTF-8");
       }
@@ -205,10 +207,135 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
+export interface WasmByteDiffSpan {
+  /** 0-based byte offset where the first contiguous difference starts. */
+  offset: number;
+  /** Length in bytes of the first contiguous differing span. */
+  length: number;
+  /** Hex preview of the rebuilt bytes at the first differing span. */
+  rebuiltHex: string;
+  /** Hex preview of the deployed bytes at the first differing span. */
+  deployedHex: string;
+}
+
+export interface WasmByteDiffReport {
+  /** True when the two byte sequences are byte-for-byte identical. */
+  identical: boolean;
+  /** Total byte length of the rebuilt wasm binary. */
+  rebuiltLength: number;
+  /** Total byte length of the deployed wasm binary. */
+  deployedLength: number;
+  /** Signed length delta (`rebuiltLength - deployedLength`). */
+  lengthDelta: number;
+  /** Total number of byte positions that differ (including any trailing length delta). */
+  differingByteCount: number;
+  /** Number of contiguous differing byte spans across the binaries. */
+  differingSpanCount: number;
+  /** Summary of the first differing byte span, or null when identical. */
+  firstDifference: WasmByteDiffSpan | null;
+}
+
+const DEFAULT_DIFF_PREVIEW_BYTES = 16;
+
+function toHexSlice(bytes: Uint8Array, start: number, maxLen: number): string {
+  if (start >= bytes.length || maxLen <= 0) return "";
+  const end = Math.min(bytes.length, start + maxLen);
+  return Buffer.from(bytes.subarray(start, end)).toString("hex");
+}
+
+/**
+ * Computes a structured byte-level diff summary between two wasm byte sequences.
+ * Kept pure and independent of the verification pass/fail verdict so callers can
+ * inspect divergence offsets, span lengths, differing byte counts, and length deltas.
+ */
+export function computeWasmByteDiff(
+  rebuilt: Uint8Array,
+  deployed: Uint8Array,
+  previewMaxBytes: number = DEFAULT_DIFF_PREVIEW_BYTES,
+): WasmByteDiffReport {
+  const rebuiltLength = rebuilt.length;
+  const deployedLength = deployed.length;
+  const lengthDelta = rebuiltLength - deployedLength;
+  const minLen = Math.min(rebuiltLength, deployedLength);
+  const maxLen = Math.max(rebuiltLength, deployedLength);
+  const extraLen = maxLen - minLen;
+
+  let differingByteCount = 0;
+  let differingSpanCount = 0;
+  let firstOffset = -1;
+  let firstLength = 0;
+  let inDiffSpan = false;
+  let firstSpanClosed = false;
+
+  for (let i = 0; i < minLen; i++) {
+    if (rebuilt[i] !== deployed[i]) {
+      differingByteCount += 1;
+      if (!inDiffSpan) {
+        inDiffSpan = true;
+        differingSpanCount += 1;
+        if (firstOffset === -1) {
+          firstOffset = i;
+        }
+      }
+      if (!firstSpanClosed && firstOffset !== -1) {
+        firstLength += 1;
+      }
+    } else if (inDiffSpan) {
+      inDiffSpan = false;
+      if (firstOffset !== -1 && !firstSpanClosed) {
+        firstSpanClosed = true;
+      }
+    }
+  }
+
+  if (extraLen > 0) {
+    differingByteCount += extraLen;
+    if (!inDiffSpan) {
+      differingSpanCount += 1;
+      if (firstOffset === -1) {
+        firstOffset = minLen;
+        firstLength = extraLen;
+        firstSpanClosed = true;
+      }
+    } else if (!firstSpanClosed && firstOffset !== -1) {
+      firstLength += extraLen;
+      firstSpanClosed = true;
+    }
+  }
+
+  if (differingByteCount === 0) {
+    return {
+      identical: true,
+      rebuiltLength,
+      deployedLength,
+      lengthDelta: 0,
+      differingByteCount: 0,
+      differingSpanCount: 0,
+      firstDifference: null,
+    };
+  }
+
+  const previewLen = Math.min(firstLength, previewMaxBytes);
+  return {
+    identical: false,
+    rebuiltLength,
+    deployedLength,
+    lengthDelta,
+    differingByteCount,
+    differingSpanCount,
+    firstDifference: {
+      offset: firstOffset,
+      length: firstLength,
+      rebuiltHex: toHexSlice(rebuilt, firstOffset, previewLen),
+      deployedHex: toHexSlice(deployed, firstOffset, previewLen),
+    },
+  };
+}
+
 export type WasmComparison =
   | { match: "exact" }
   | { match: "toolchain-metadata"; normalizedKeys: string[] }
-  | { match: "none"; reason: string };
+  | { match: "none"; reason: string; byteDiff: WasmByteDiffReport };
 
 /** Toolchain entries that differ between two parsed modules (for the log). */
 function differingToolchainKeys(a: WasmSection[], b: WasmSection[]): string[] {
@@ -230,7 +357,8 @@ function differingToolchainKeys(a: WasmSection[], b: WasmSection[]): string[] {
 /**
  * Compare a rebuilt artifact to the deployed one. Byte-identical ⇒ "exact".
  * Otherwise ⇒ "toolchain-metadata" only if the two modules are identical after
- * removing TOOLCHAIN_META_KEYS from contractmetav0; anything else ⇒ "none".
+ * removing TOOLCHAIN_META_KEYS from contractmetav0; anything else ⇒ "none"
+ * with a structured `byteDiff` report alongside the failure `reason`.
  * Never throws: an unparseable module is a mismatch.
  */
 export function compareWasm(rebuilt: Uint8Array, deployed: Uint8Array): WasmComparison {
@@ -241,19 +369,31 @@ export function compareWasm(rebuilt: Uint8Array, deployed: Uint8Array): WasmComp
     a = parseWasmSections(rebuilt);
     b = parseWasmSections(deployed);
   } catch (err) {
-    return { match: "none", reason: `unparseable wasm: ${(err as Error).message}` };
+    return {
+      match: "none",
+      reason: `unparseable wasm: ${(err as Error).message}`,
+      byteDiff: computeWasmByteDiff(rebuilt, deployed),
+    };
   }
   const va = normalizedView(a);
   const vb = normalizedView(b);
   if (va.length !== vb.length) {
-    return { match: "none", reason: "section layout differs" };
+    return {
+      match: "none",
+      reason: "section layout differs",
+      byteDiff: computeWasmByteDiff(rebuilt, deployed),
+    };
   }
   for (let i = 0; i < va.length; i++) {
     const sa = va[i]!;
     const sb = vb[i]!;
     if (sa.id !== sb.id || sa.name !== sb.name || !bytesEqual(sa.content, sb.content)) {
       const label = sa.id === 0 ? `custom section "${sa.name}"` : `section id ${sa.id}`;
-      return { match: "none", reason: `${label} differs` };
+      return {
+        match: "none",
+        reason: `${label} differs`,
+        byteDiff: computeWasmByteDiff(rebuilt, deployed),
+      };
     }
   }
   // The bytes differ, yet no toolchain stamp VALUE does: whatever changed (e.g.
@@ -261,7 +401,11 @@ export function compareWasm(rebuilt: Uint8Array, deployed: Uint8Array): WasmComp
   // this normalization exists for. Do not accept a difference we cannot name.
   const normalizedKeys = differingToolchainKeys(a, b);
   if (normalizedKeys.length === 0) {
-    return { match: "none", reason: "binary differs outside the toolchain stamp values" };
+    return {
+      match: "none",
+      reason: "binary differs outside the toolchain stamp values",
+      byteDiff: computeWasmByteDiff(rebuilt, deployed),
+    };
   }
   return { match: "toolchain-metadata", normalizedKeys };
 }
