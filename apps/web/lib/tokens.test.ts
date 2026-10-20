@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  MAINNET_NATIVE_SAC,
   MAINNET_USDC_SAC,
+  TESTNET_NATIVE_SAC,
   TESTNET_USDC_SAC,
-  TOKEN_REGISTRY,
+  assessTokenAllowlist,
   findToken,
   formatAmountWithDecimals,
   getSupportedTokens,
+  isTokenAllowlisted,
   parseAmountWithDecimals,
 } from "./tokens";
 import { fetchBalances } from "./balances";
@@ -19,15 +22,20 @@ describe("Token Registry & Multi-Asset (#396)", () => {
     expect(mainnetUsdc).toBeDefined();
     expect(mainnetUsdc?.contractId).toBe(MAINNET_USDC_SAC);
     expect(mainnetUsdc?.decimals).toBe(7);
+    expect(mainnetUsdc?.allowlisted).toBe(true);
+    expect(mainnetUsdc?.allowlistStatus).toBe("allowlisted");
 
     const testnetUsdc = testnetTokens.find((t) => t.symbol === "USDC");
     expect(testnetUsdc).toBeDefined();
     expect(testnetUsdc?.contractId).toBe(TESTNET_USDC_SAC);
     expect(testnetUsdc?.decimals).toBe(7);
+    expect(testnetUsdc?.allowlisted).toBe(true);
+    expect(testnetUsdc?.allowlistStatus).toBe("allowlisted");
 
     const mainnetXlm = mainnetTokens.find((t) => t.symbol === "XLM");
     expect(mainnetXlm).toBeDefined();
     expect(mainnetXlm?.decimals).toBe(7);
+    expect(mainnetXlm?.allowlisted).toBe(true);
   });
 
   it("finds tokens by symbol and contract address case-insensitively", () => {
@@ -39,6 +47,84 @@ describe("Token Registry & Multi-Asset (#396)", () => {
 
     const unknown = findToken("mainnet", "UNKNOWN");
     expect(unknown).toBeUndefined();
+  });
+
+  describe("Token allowlist check for send-flow visual flagging (#561)", () => {
+    it("marks canonical registry assets as allowlisted without send-flow warning flags", () => {
+      const xlm = assessTokenAllowlist("testnet", {
+        contractId: TESTNET_NATIVE_SAC,
+        symbol: "XLM",
+        decimals: 7,
+      });
+      expect(xlm).toMatchObject({
+        allowlisted: true,
+        status: "allowlisted",
+        flaggedForSendFlow: false,
+        badgeLabel: null,
+        warningCopy: null,
+      });
+      expect(isTokenAllowlisted("testnet", TESTNET_NATIVE_SAC)).toBe(true);
+      expect(isTokenAllowlisted("mainnet", MAINNET_NATIVE_SAC)).toBe(true);
+    });
+
+    it("visually flags an arbitrary unverified custom asset (including symbol lookalikes)", () => {
+      const impostorUsdc = {
+        contractId: "CIMPOSTORUSDC11111111111111111111111111111111111111111111",
+        symbol: "USDC",
+        decimals: 7,
+      };
+      const assessment = assessTokenAllowlist("testnet", impostorUsdc);
+      expect(assessment.allowlisted).toBe(false);
+      expect(assessment.status).toBe("unverified");
+      expect(assessment.flaggedForSendFlow).toBe(true);
+      expect(assessment.badgeLabel).toBe("Unverified custom asset");
+      expect(assessment.warningCopy).toMatch(/not on the verified token allowlist/i);
+      expect(isTokenAllowlisted("testnet", impostorUsdc)).toBe(false);
+    });
+
+    it("distinguishes an asset that was previously allowlisted and has since been removed/revoked", () => {
+      const revokedToken = {
+        contractId: "CREVOKEDTOKEN1111111111111111111111111111111111111111111",
+        symbol: "EURC",
+        name: "Euro Coin",
+        decimals: 7,
+      };
+
+      // Step 1: When present in the allowlist, the asset is allowlisted and unflagged.
+      const beforeRemoval = assessTokenAllowlist("testnet", revokedToken, {
+        allowlist: [...getSupportedTokens("testnet"), revokedToken],
+      });
+      expect(beforeRemoval.allowlisted).toBe(true);
+      expect(beforeRemoval.status).toBe("allowlisted");
+      expect(beforeRemoval.flaggedForSendFlow).toBe(false);
+
+      // Step 2: Once removed from the active allowlist (compared against previousAllowlist or revokedContractIds),
+      // it is flagged specifically as "revoked" rather than a generic unverified token.
+      const afterRemoval = assessTokenAllowlist("testnet", revokedToken, {
+        allowlist: getSupportedTokens("testnet"),
+        previousAllowlist: [...getSupportedTokens("testnet"), revokedToken],
+      });
+      expect(afterRemoval.allowlisted).toBe(false);
+      expect(afterRemoval.status).toBe("revoked");
+      expect(afterRemoval.flaggedForSendFlow).toBe(true);
+      expect(afterRemoval.badgeLabel).toBe("Removed from allowlist");
+      expect(afterRemoval.warningCopy).toMatch(/previously allowlisted.*removed/i);
+
+      // Step 3: Explicit revocation via revokedContractIds on an otherwise allowlisted token also flags as "revoked".
+      const explicitlyRevoked = assessTokenAllowlist(
+        "testnet",
+        { contractId: TESTNET_USDC_SAC, symbol: "USDC", decimals: 7 },
+        { revokedContractIds: [TESTNET_USDC_SAC] },
+      );
+      expect(explicitlyRevoked.allowlisted).toBe(false);
+      expect(explicitlyRevoked.status).toBe("revoked");
+      expect(explicitlyRevoked.flaggedForSendFlow).toBe(true);
+      expect(
+        isTokenAllowlisted("testnet", TESTNET_USDC_SAC, {
+          revokedContractIds: [TESTNET_USDC_SAC],
+        }),
+      ).toBe(false);
+    });
   });
 
   describe("Arbitrary decimal conversion (verified with non-7-decimal tokens)", () => {
