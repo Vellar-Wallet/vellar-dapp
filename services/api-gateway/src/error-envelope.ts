@@ -8,6 +8,29 @@ import type { FastifyError, FastifyInstance, FastifyReply } from "fastify";
 // breaker) were three different ad-hoc shapes ({error, message, retryAfter},
 // {error, reason}, {error, reason, retryAfterMs}), so client-side error
 // handling could not rely on a single field name across routes.
+//
+// Process for adding error-envelope coverage when registering a new route (#545):
+// 1. Add the new route's unversioned and `/v1` prefixes to
+//    `GATEWAY_ERROR_ENVELOPE_ROUTES` below.
+// 2. Ensure any route-specific preHandler or error path sends errors via
+//    `sendError(reply, statusCode, code, message, details)`.
+// 3. Run `error-envelope.test.ts`, which iterates over every entry in
+//    `GATEWAY_ERROR_ENVELOPE_ROUTES`, triggers deterministic gateway error
+//    conditions on each route, and calls `assertErrorEnvelopeForRoute(route, body)`
+//    so any non-conforming route fails the suite by name.
+
+export const GATEWAY_ERROR_ENVELOPE_ROUTES = [
+  "/wallet",
+  "/v1/wallet",
+  "/lifecycle",
+  "/v1/lifecycle",
+  "/policies",
+  "/v1/policies",
+  "/verification",
+  "/v1/verification",
+] as const;
+
+export type GatewayErrorEnvelopeRoute = (typeof GATEWAY_ERROR_ENVELOPE_ROUTES)[number];
 
 export interface ErrorEnvelope {
   error: {
@@ -24,6 +47,48 @@ export interface ErrorEnvelope {
   };
 }
 
+const ALLOWED_ENVELOPE_KEYS = new Set(["code", "message", "details"]);
+
+export function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const topKeys = Object.keys(value);
+  if (topKeys.length !== 1 || topKeys[0] !== "error") return false;
+
+  const err = (value as { error?: unknown }).error;
+  if (typeof err !== "object" || err === null || Array.isArray(err)) return false;
+
+  const errRecord = err as Record<string, unknown>;
+  for (const key of Object.keys(errRecord)) {
+    if (!ALLOWED_ENVELOPE_KEYS.has(key)) return false;
+  }
+
+  if (typeof errRecord.code !== "string" || errRecord.code.trim().length === 0) return false;
+  if (typeof errRecord.message !== "string" || errRecord.message.trim().length === 0) return false;
+  if (
+    errRecord.details !== undefined &&
+    (typeof errRecord.details !== "object" ||
+      errRecord.details === null ||
+      Array.isArray(errRecord.details))
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates that `body` conforms to the documented `ErrorEnvelope` shape and
+ * throws an error naming `route` if it does not (#545).
+ */
+export function assertErrorEnvelopeForRoute(route: string, body: unknown): ErrorEnvelope {
+  if (!isErrorEnvelope(body)) {
+    throw new Error(
+      `Route "${route}" returned an error response that does not match ErrorEnvelope ({ error: { code, message, details? } }): ${JSON.stringify(body)}`,
+    );
+  }
+  return body;
+}
+
 /** Sends a standardized error envelope. `code` and `message` are required;
  * `details` is optional structured context specific to that error. */
 export function sendError(
@@ -33,7 +98,9 @@ export function sendError(
   message: string,
   details?: Record<string, unknown>,
 ): FastifyReply {
-  const body: ErrorEnvelope = details ? { error: { code, message, details } } : { error: { code, message } };
+  const body: ErrorEnvelope = details
+    ? { error: { code, message, details } }
+    : { error: { code, message } };
   return reply.code(statusCode).send(body);
 }
 
@@ -60,9 +127,14 @@ export function registerErrorEnvelope(app: FastifyInstance): void {
     // leaked verbatim to the client.
     const isRateLimited = statusCode === 429;
     const code = isRateLimited ? "too_many_requests" : "internal_error";
-    const message = isRateLimited ? "Too many requests. Please retry later." : "An internal error occurred.";
+    const message = isRateLimited
+      ? "Too many requests. Please retry later."
+      : "An internal error occurred.";
     const retryAfterHeader = reply.getHeader("retry-after");
-    const details = isRateLimited && retryAfterHeader !== undefined ? { retryAfter: retryAfterHeader } : undefined;
+    const details =
+      isRateLimited && retryAfterHeader !== undefined
+        ? { retryAfter: retryAfterHeader }
+        : undefined;
     sendError(reply, statusCode, code, message, details);
   });
 }
