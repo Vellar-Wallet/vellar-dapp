@@ -1,2 +1,8 @@
 // @vellar/ui — Shared UI primitives used by the web app and extension.
-export { TrustBadge, type TrustBadgeProps } from "./trust-badge";
+export {
+  resolveTrustBadgeSignal,
+  TrustBadge,
+  type TrustBadgeProps,
+  type TrustBadgeStatus,
+  type TrustBadgeTone,
+} from "./trust-badge";

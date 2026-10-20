@@ -41,4 +41,67 @@ describe("TrustBadge", () => {
     render(<TrustBadge status="verified" label="Audited" />);
     expect(screen.getByRole("status").textContent).toContain("Audited");
   });
+
+  it("renders a loading variant while a verification lookup is pending", () => {
+    render(<TrustBadge status="loading" />);
+    const badge = screen.getByRole("status");
+    expect(badge.textContent).toContain("Checking verification…");
+    expect(badge.getAttribute("data-status")).toBe("loading");
+    expect(badge.getAttribute("data-tone")).toBe("loading");
+    expect(badge.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("renders an error variant distinct from unverified when the lookup itself fails", () => {
+    const { unmount } = render(<TrustBadge status="error" />);
+    const errorBadge = screen.getByRole("status");
+    expect(errorBadge.textContent).toContain("Verification status unavailable");
+    expect(errorBadge.getAttribute("data-status")).toBe("error");
+    expect(errorBadge.getAttribute("data-tone")).toBe("error");
+    expect(errorBadge.getAttribute("aria-busy")).toBe("false");
+    const errorColor = (errorBadge as HTMLElement).style.color;
+    unmount();
+
+    render(<TrustBadge status="unverified" />);
+    const unverifiedBadge = screen.getByRole("status");
+    expect(unverifiedBadge.getAttribute("data-status")).toBe("unverified");
+    expect(unverifiedBadge.getAttribute("data-tone")).toBe("neutral");
+    expect((unverifiedBadge as HTMLElement).style.color).not.toBe(errorColor);
+  });
+
+  it("transitions cleanly from loading to verified", () => {
+    const { rerender } = render(<TrustBadge status="loading" />);
+    const badge = screen.getByRole("status");
+    expect(badge.getAttribute("data-status")).toBe("loading");
+    expect(badge.getAttribute("aria-busy")).toBe("true");
+
+    rerender(<TrustBadge status="verified" />);
+    expect(badge.getAttribute("data-status")).toBe("verified");
+    expect(badge.getAttribute("data-tone")).toBe("verified");
+    expect(badge.getAttribute("aria-busy")).toBe("false");
+    expect(badge.textContent).toContain("Verified source");
+  });
+
+  it("transitions cleanly from loading to unverified", () => {
+    const { rerender } = render(<TrustBadge loading />);
+    const badge = screen.getByRole("status");
+    expect(badge.getAttribute("data-status")).toBe("loading");
+
+    rerender(<TrustBadge status="unverified" loading={false} />);
+    expect(badge.getAttribute("data-status")).toBe("unverified");
+    expect(badge.getAttribute("data-tone")).toBe("neutral");
+    expect(badge.getAttribute("aria-busy")).toBe("false");
+    expect(badge.textContent).toContain("Unverified");
+  });
+
+  it("transitions cleanly from loading to error when the lookup fails", () => {
+    const { rerender } = render(<TrustBadge loading />);
+    const badge = screen.getByRole("status");
+    expect(badge.getAttribute("data-status")).toBe("loading");
+
+    rerender(<TrustBadge loading={false} error="Lookup failed: gateway timeout" />);
+    expect(badge.getAttribute("data-status")).toBe("error");
+    expect(badge.getAttribute("data-tone")).toBe("error");
+    expect(badge.getAttribute("aria-busy")).toBe("false");
+    expect(badge.textContent).toContain("Lookup failed: gateway timeout");
+  });
 });
