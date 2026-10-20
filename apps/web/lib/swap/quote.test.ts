@@ -1,17 +1,22 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { assetsFor } from "@/lib/assets";
 import {
+  assessQuoteStaleness,
+  assertQuoteFresh,
   assertSlippageBps,
+  ensureFreshQuote,
   formatRate,
   isQuoteFresh,
+  isQuoteStale,
   minimumOut,
   normalizeQuote,
   parseSlippagePercent,
   QUOTE_TTL_MS,
   quotedRate,
   slippageBound,
+  StaleSwapQuoteError,
   worstCaseRate,
 } from "./quote";
 
@@ -117,5 +122,91 @@ describe("normalizeQuote", () => {
     const q = quote();
     expect(isQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS)).toBe(true);
     expect(isQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS + 1)).toBe(false);
+  });
+
+  describe("quote staleness check and boundary handling (#555)", () => {
+    it("treats a quote right at the boundary age (age === maxAgeMs) as fresh and 1ms past as stale", () => {
+      const q = quote(); // quotedAt = 1_000
+      const customMaxAgeMs = 15_000;
+      const boundaryNow = q.quotedAt + customMaxAgeMs;
+
+      const atBoundary = assessQuoteStaleness(q, boundaryNow, customMaxAgeMs);
+      expect(atBoundary).toEqual({
+        isFresh: true,
+        isStale: false,
+        ageMs: customMaxAgeMs,
+        maxAgeMs: customMaxAgeMs,
+        remainingMs: 0,
+        requiresRequote: false,
+      });
+      expect(isQuoteFresh(q, boundaryNow, customMaxAgeMs)).toBe(true);
+      expect(isQuoteStale(q, boundaryNow, customMaxAgeMs)).toBe(false);
+      expect(() => assertQuoteFresh(q, boundaryNow, customMaxAgeMs)).not.toThrow();
+
+      const pastBoundary = assessQuoteStaleness(q, boundaryNow + 1, customMaxAgeMs);
+      expect(pastBoundary).toEqual({
+        isFresh: false,
+        isStale: true,
+        ageMs: customMaxAgeMs + 1,
+        maxAgeMs: customMaxAgeMs,
+        remainingMs: 0,
+        requiresRequote: true,
+      });
+      expect(isQuoteFresh(q, boundaryNow + 1, customMaxAgeMs)).toBe(false);
+      expect(isQuoteStale(q, boundaryNow + 1, customMaxAgeMs)).toBe(true);
+    });
+
+    it("throws StaleSwapQuoteError with requiresRequote=true when assertQuoteFresh fails before building a transaction", () => {
+      const q = quote(); // quotedAt = 1_000
+      expect(() => assertQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS + 500)).toThrowError(
+        StaleSwapQuoteError,
+      );
+
+      try {
+        assertQuoteFresh(q, q.quotedAt + 10_001, 10_000);
+        expect.unreachable("should have thrown StaleSwapQuoteError");
+      } catch (err) {
+        expect(err).toBeInstanceOf(StaleSwapQuoteError);
+        expect(err).toMatchObject({
+          name: "StaleSwapQuoteError",
+          code: "STALE_SWAP_QUOTE",
+          requiresRequote: true,
+          ageMs: 10_001,
+          maxAgeMs: 10_000,
+          quotedAt: 1_000,
+          evaluatedAt: 11_001,
+        });
+      }
+    });
+
+    it("forces a re-quote via ensureFreshQuote when the quote exceeds maxAgeMs, and skips re-quoting at the boundary", async () => {
+      const initialQuote = quote(); // quotedAt = 1_000
+      const refreshedQuote = { ...initialQuote, expectedOut: 10_800_000n, quotedAt: 16_000 };
+      const requote = vi.fn(async () => refreshedQuote);
+
+      // Right at the boundary (age = 15_000ms, maxAgeMs = 15_000ms): no re-quote triggered
+      const boundaryResult = await ensureFreshQuote(initialQuote, {
+        now: 16_000,
+        maxAgeMs: 15_000,
+        requote,
+      });
+      expect(boundaryResult).toEqual({ quote: initialQuote, wasRefreshed: false });
+      expect(requote).not.toHaveBeenCalled();
+
+      // 1ms past the boundary (age = 15_001ms > 15_000ms): forces a re-quote
+      const staleResult = await ensureFreshQuote(initialQuote, {
+        now: 16_001,
+        maxAgeMs: 15_000,
+        requote,
+      });
+      expect(requote).toHaveBeenCalledTimes(1);
+      expect(staleResult).toEqual({ quote: refreshedQuote, wasRefreshed: true });
+    });
+
+    it("rejects non-positive maxAgeMs configuration", () => {
+      const q = quote();
+      expect(() => isQuoteFresh(q, 2_000, 0)).toThrow(/positive/);
+      expect(() => isQuoteFresh(q, 2_000, -5_000)).toThrow(/positive/);
+    });
   });
 });

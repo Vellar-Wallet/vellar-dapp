@@ -135,6 +135,136 @@ export function worstCaseRate(quote: SwapQuote, bound: SlippageBound): string {
 /** A quote older than this is refused at approval time and must be refreshed. */
 export const QUOTE_TTL_MS = 30_000;
 
-export function isQuoteFresh(quote: SwapQuote, now: number): boolean {
-  return now - quote.quotedAt <= QUOTE_TTL_MS;
+export interface QuoteStalenessAssessment {
+  isFresh: boolean;
+  isStale: boolean;
+  ageMs: number;
+  maxAgeMs: number;
+  remainingMs: number;
+  requiresRequote: boolean;
+}
+
+export class StaleSwapQuoteError extends SwapQuoteError {
+  readonly code = "STALE_SWAP_QUOTE" as const;
+  readonly requiresRequote = true as const;
+  readonly ageMs: number;
+  readonly maxAgeMs: number;
+  readonly quotedAt: number;
+  readonly evaluatedAt: number;
+
+  constructor(params: { quotedAt: number; evaluatedAt: number; maxAgeMs: number }) {
+    const ageMs = params.evaluatedAt - params.quotedAt;
+    super(
+      `This quote has expired (age ${ageMs}ms exceeds max age ${params.maxAgeMs}ms). Get a fresh quote before approving.`,
+    );
+    this.name = "StaleSwapQuoteError";
+    this.ageMs = ageMs;
+    this.maxAgeMs = params.maxAgeMs;
+    this.quotedAt = params.quotedAt;
+    this.evaluatedAt = params.evaluatedAt;
+  }
+}
+
+export function assertValidMaxAgeMs(maxAgeMs: number): void {
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
+    throw new SwapQuoteError("Quote max age must be a positive number of milliseconds.");
+  }
+}
+
+/**
+ * Evaluate whether `quote` is still within the allowed `maxAgeMs` window
+ * (inclusive of the exact boundary `now - quote.quotedAt === maxAgeMs`).
+ */
+export function assessQuoteStaleness(
+  quote: Pick<SwapQuote, "quotedAt">,
+  now: number = Date.now(),
+  maxAgeMs: number = QUOTE_TTL_MS,
+): QuoteStalenessAssessment {
+  assertValidMaxAgeMs(maxAgeMs);
+  if (!Number.isFinite(quote.quotedAt) || !Number.isFinite(now)) {
+    return {
+      isFresh: false,
+      isStale: true,
+      ageMs: Number.POSITIVE_INFINITY,
+      maxAgeMs,
+      remainingMs: 0,
+      requiresRequote: true,
+    };
+  }
+  const ageMs = now - quote.quotedAt;
+  const isFresh = ageMs >= 0 && ageMs <= maxAgeMs;
+  return {
+    isFresh,
+    isStale: !isFresh,
+    ageMs,
+    maxAgeMs,
+    remainingMs: isFresh ? maxAgeMs - ageMs : 0,
+    requiresRequote: !isFresh,
+  };
+}
+
+export function isQuoteFresh(
+  quote: Pick<SwapQuote, "quotedAt">,
+  now: number = Date.now(),
+  maxAgeMs: number = QUOTE_TTL_MS,
+): boolean {
+  return assessQuoteStaleness(quote, now, maxAgeMs).isFresh;
+}
+
+export function isQuoteStale(
+  quote: Pick<SwapQuote, "quotedAt">,
+  now: number = Date.now(),
+  maxAgeMs: number = QUOTE_TTL_MS,
+): boolean {
+  return !isQuoteFresh(quote, now, maxAgeMs);
+}
+
+/**
+ * Guard called before building a signable swap transaction. Throws
+ * `StaleSwapQuoteError` (with `requiresRequote: true`) if the quote age exceeds
+ * `maxAgeMs`.
+ */
+export function assertQuoteFresh(
+  quote: Pick<SwapQuote, "quotedAt">,
+  now: number = Date.now(),
+  maxAgeMs: number = QUOTE_TTL_MS,
+): void {
+  const assessment = assessQuoteStaleness(quote, now, maxAgeMs);
+  if (assessment.isStale) {
+    throw new StaleSwapQuoteError({
+      quotedAt: quote.quotedAt,
+      evaluatedAt: now,
+      maxAgeMs,
+    });
+  }
+}
+
+/**
+ * Ensure a quote is fresh before building a signable transaction. When the
+ * quote is older than `maxAgeMs`, forces a re-quote via `requote()` if provided,
+ * or throws `StaleSwapQuoteError`.
+ */
+export async function ensureFreshQuote<T extends Pick<SwapQuote, "quotedAt">>(
+  quote: T,
+  options?: {
+    now?: number;
+    maxAgeMs?: number;
+    requote?: () => Promise<T> | T;
+  },
+): Promise<{ quote: T; wasRefreshed: boolean }> {
+  const evaluatedAt = options?.now ?? Date.now();
+  const maxAgeMs = options?.maxAgeMs ?? QUOTE_TTL_MS;
+  if (isQuoteFresh(quote, evaluatedAt, maxAgeMs)) {
+    return { quote, wasRefreshed: false };
+  }
+  if (!options?.requote) {
+    throw new StaleSwapQuoteError({
+      quotedAt: quote.quotedAt,
+      evaluatedAt,
+      maxAgeMs,
+    });
+  }
+  const refreshed = await options.requote();
+  assertQuoteFresh(refreshed, evaluatedAt, maxAgeMs);
+  return { quote: refreshed, wasRefreshed: true };
 }
