@@ -20,10 +20,33 @@ import type { AgentPolicyGrant } from "vellar-sdk";
 export type AgentVerificationMode =
   { mode: "verified-only"; verifiedOnlyPolicy: string } | { mode: "unrestricted"; reason: string };
 
+export type SpendableBalanceInput =
+  | Record<string, bigint | string>
+  | ReadonlyArray<{ token: string; spendable: bigint | string; symbol?: string }>
+  | Map<string, bigint | string>;
+
+export interface GrantBudgetLimit {
+  /** Requested grant budget in the token's base units. */
+  amountBaseUnits: bigint | string;
+  /** Optional human-readable symbol for diagnostics (e.g. "USDC", "XLM"). */
+  symbol?: string;
+}
+
 export interface AgentGrantInput {
   /** Token contract (C…) -> the spending-limit policy instance(s) budgeting it. */
   budgets: Record<string, string[]>;
   verification: AgentVerificationMode;
+  /**
+   * Optional per-token requested budget amounts (in base units) to validate
+   * against the wallet's current spendable balances at mint time (#562).
+   */
+  budgetAmounts?: Record<string, bigint | string | GrantBudgetLimit>;
+  /**
+   * Wallet's current spendable balances per token contract (C…) in base units.
+   * Each token's grant budget is checked against that specific token's
+   * spendable balance (never the native XLM balance when budgeting another token).
+   */
+  spendableBalances?: SpendableBalanceInput;
 }
 
 /** What the human approved, for the audit trail and the approval screen. */
@@ -42,11 +65,118 @@ export class AgentGrantError extends Error {
   }
 }
 
+export class AgentGrantBalanceError extends AgentGrantError {
+  readonly code = "grant_exceeds_spendable_balance" as const;
+  readonly token: string;
+  readonly requested: bigint;
+  readonly spendable: bigint;
+
+  constructor(token: string, requested: bigint, spendable: bigint, symbol?: string) {
+    const label = symbol ? `${symbol} (${token})` : token;
+    super(
+      `Agent grant budget (${requested.toString()} base units) for ${label} exceeds the wallet's current spendable balance (${spendable.toString()} base units) at mint time.`,
+    );
+    this.name = "AgentGrantBalanceError";
+    this.token = token;
+    this.requested = requested;
+    this.spendable = spendable;
+  }
+}
+
 const MAX_REASON_LENGTH = 200;
 
 function assertContract(id: string, what: string): void {
   if (!StrKey.isValidContract(id))
     throw new AgentGrantError(`${what} must be a contract address (C…).`);
+}
+
+function parseNonNegativeUnits(value: bigint | string, what: string): bigint {
+  let parsed: bigint;
+  if (typeof value === "bigint") {
+    parsed = value;
+  } else {
+    const trimmed = value.trim();
+    if (!/^-?\d+$/.test(trimmed)) {
+      throw new AgentGrantError(`${what} must be an integer base-unit amount.`);
+    }
+    parsed = BigInt(trimmed);
+  }
+  return parsed < 0n ? 0n : parsed;
+}
+
+function parsePositiveBudgetUnits(
+  entry: bigint | string | GrantBudgetLimit,
+  token: string,
+): { requested: bigint; symbol?: string } {
+  const raw =
+    typeof entry === "object" && entry !== null && "amountBaseUnits" in entry
+      ? entry.amountBaseUnits
+      : entry;
+  const symbol =
+    typeof entry === "object" && entry !== null && "symbol" in entry ? entry.symbol : undefined;
+
+  let parsed: bigint;
+  if (typeof raw === "bigint") {
+    parsed = raw;
+  } else {
+    const trimmed = raw.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new AgentGrantError(`Grant budget for ${token} must be a positive base-unit integer.`);
+    }
+    parsed = BigInt(trimmed);
+  }
+  if (parsed <= 0n) {
+    throw new AgentGrantError(`Grant budget for ${token} must be greater than zero.`);
+  }
+  return { requested: parsed, ...(symbol ? { symbol } : {}) };
+}
+
+function normalizeSpendableBalances(
+  input: SpendableBalanceInput,
+): Map<string, { spendable: bigint; symbol?: string }> {
+  const map = new Map<string, { spendable: bigint; symbol?: string }>();
+  if (input instanceof Map) {
+    for (const [token, val] of input.entries()) {
+      map.set(token, { spendable: parseNonNegativeUnits(val, `Spendable balance for ${token}`) });
+    }
+    return map;
+  }
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      map.set(item.token, {
+        spendable: parseNonNegativeUnits(item.spendable, `Spendable balance for ${item.token}`),
+        ...(item.symbol ? { symbol: item.symbol } : {}),
+      });
+    }
+    return map;
+  }
+  for (const [token, val] of Object.entries(input as Record<string, bigint | string>)) {
+    map.set(token, { spendable: parseNonNegativeUnits(val, `Spendable balance for ${token}`) });
+  }
+  return map;
+}
+
+/**
+ * Validate that every requested agent grant budget is within the wallet's
+ * current spendable balance for that specific token at mint time (#562).
+ * Throws `AgentGrantBalanceError` (a subclass of `AgentGrantError`) before any
+ * passkey signing can proceed if any token's budget exceeds its spendable balance.
+ */
+export function validateGrantBudgetsAgainstBalances(
+  budgetAmounts: Record<string, bigint | string | GrantBudgetLimit>,
+  spendableBalances: SpendableBalanceInput,
+): void {
+  const balances = normalizeSpendableBalances(spendableBalances);
+  for (const [token, rawBudget] of Object.entries(budgetAmounts)) {
+    assertContract(token, "Each token");
+    const { requested, symbol } = parsePositiveBudgetUnits(rawBudget, token);
+    const balanceEntry = balances.get(token);
+    const spendable = balanceEntry?.spendable ?? 0n;
+    const resolvedSymbol = symbol ?? balanceEntry?.symbol;
+    if (requested > spendable) {
+      throw new AgentGrantBalanceError(token, requested, spendable, resolvedSymbol);
+    }
+  }
 }
 
 export function buildAgentGrants(input: AgentGrantInput): {
@@ -67,6 +197,21 @@ export function buildAgentGrants(input: AgentGrantInput): {
     if (reason.length > MAX_REASON_LENGTH) {
       throw new AgentGrantError(`Keep the reason under ${MAX_REASON_LENGTH} characters.`);
     }
+  }
+
+  if (input.budgetAmounts !== undefined || input.spendableBalances !== undefined) {
+    if (!input.budgetAmounts || !input.spendableBalances) {
+      throw new AgentGrantError(
+        "Both budgetAmounts and spendableBalances are required to check spendable balances at mint time.",
+      );
+    }
+    for (const token of tokens) {
+      assertContract(token, "Each token");
+      if (!(token in input.budgetAmounts)) {
+        throw new AgentGrantError(`Missing budget amount for token ${token}.`);
+      }
+    }
+    validateGrantBudgetsAgainstBalances(input.budgetAmounts, input.spendableBalances);
   }
 
   const grants = tokens.map((token) => {
