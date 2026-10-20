@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isUserCancellation, normalizePasskeyError, PasskeyError } from "./errors";
+import {
+  isNoAuthenticatorError,
+  isUserCancellation,
+  normalizePasskeyError,
+  PasskeyError,
+} from "./errors";
 
 function domException(name: string, message = "webauthn failed") {
   const err = new Error(message);
@@ -10,6 +15,7 @@ function domException(name: string, message = "webauthn failed") {
 describe("normalizePasskeyError", () => {
   it.each([
     ["NotAllowedError", "cancelled"],
+    ["ConstraintError", "no-authenticator"],
     ["InvalidStateError", "credential-exists"],
     ["NotSupportedError", "unsupported"],
     ["SecurityError", "security"],
@@ -36,6 +42,33 @@ describe("normalizePasskeyError", () => {
     const original = new PasskeyError("security", "bad origin", undefined);
     expect(normalizePasskeyError(original)).toBe(original);
   });
+
+  it("distinguishes no-authenticator failures from user cancellation with distinct codes and messages (#551)", () => {
+    const userCancelled = normalizePasskeyError(
+      domException("NotAllowedError", "The operation was cancelled by the user."),
+    );
+    const noAuthenticator = normalizePasskeyError(
+      domException("NotAllowedError", "No available authenticator found on this device."),
+    );
+    const constraintFailure = normalizePasskeyError(domException("ConstraintError"));
+
+    expect(userCancelled.code).toBe("cancelled");
+    expect(isUserCancellation(userCancelled)).toBe(true);
+    expect(isNoAuthenticatorError(userCancelled)).toBe(false);
+
+    expect(noAuthenticator.code).toBe("no-authenticator");
+    expect(isUserCancellation(noAuthenticator)).toBe(false);
+    expect(isNoAuthenticatorError(noAuthenticator)).toBe(true);
+
+    expect(constraintFailure.code).toBe("no-authenticator");
+    expect(isUserCancellation(constraintFailure)).toBe(false);
+    expect(isNoAuthenticatorError(constraintFailure)).toBe(true);
+
+    // Surfaced error code and message differ clearly between user-cancel and no-authenticator
+    expect(noAuthenticator.code).not.toBe(userCancelled.code);
+    expect(noAuthenticator.message).not.toBe(userCancelled.message);
+    expect(constraintFailure.message).toMatch(/authenticator/i);
+  });
 });
 
 describe("isUserCancellation", () => {
@@ -46,6 +79,7 @@ describe("isUserCancellation", () => {
 
   it("is false for real failures", () => {
     expect(isUserCancellation(domException("SecurityError"))).toBe(false);
+    expect(isUserCancellation(domException("ConstraintError"))).toBe(false);
     expect(isUserCancellation(new Error("network down"))).toBe(false);
   });
 });
