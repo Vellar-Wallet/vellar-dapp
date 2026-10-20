@@ -6,8 +6,21 @@ import { AppShell } from "@/components/app-shell";
 import { Eyebrow } from "@/app/landing/ui";
 import { useBalances } from "@/lib/balances";
 import { useWalletSession } from "@/lib/wallet-context";
-import { SendPayment } from "@/app/dashboard/send-payment";
+import {
+  KNOWN_MEMO_REQUIRED_DESTINATIONS,
+  requiresDestinationMemo,
+  SendPayment,
+  shouldWarnMissingMemo,
+  type MemoRequirementCheck,
+} from "@/app/dashboard/send-payment";
 import { SwapPanel } from "@/app/dashboard/swap-panel";
+
+export {
+  KNOWN_MEMO_REQUIRED_DESTINATIONS,
+  requiresDestinationMemo,
+  shouldWarnMissingMemo,
+  type MemoRequirementCheck,
+};
 
 // Send / Swap page (design.md §7): one focused column, a Send | Swap
 // segmented switch on top, the existing flows below. Both flows keep their

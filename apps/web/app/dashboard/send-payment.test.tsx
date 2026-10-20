@@ -216,4 +216,75 @@ describe("SendPayment", () => {
       expect(dialog.textContent).toContain("<b>order 7</b>");
     });
   });
+
+  describe("memo-required destination warning (#573)", () => {
+    const EXCHANGE_ADDRESS = "GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM";
+
+    it("surfaces a destination-tag warning before submission when no memo is set for a memo-required destination", async () => {
+      const preparePayment = vi.fn().mockResolvedValue({
+        review: {
+          from: FROM,
+          to: EXCHANGE_ADDRESS,
+          token: xlm,
+          amount: 25000000n,
+          network: "testnet",
+        },
+        confirm: vi.fn().mockResolvedValue({ hash: "txhash123" }),
+      });
+      renderSend({ preparePayment });
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), {
+        target: { value: EXCHANGE_ADDRESS },
+      });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+
+      const formWarning = await screen.findByTestId("memo-required-warning");
+      expect(formWarning.textContent).toMatch(/Coinbase requires a memo \/ destination tag/i);
+
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+      await screen.findByRole("dialog", { name: /review payment/i });
+
+      const reviewWarning = screen.getByTestId("memo-required-warning");
+      expect(reviewWarning.textContent).toMatch(/Coinbase requires a memo \/ destination tag/i);
+    });
+
+    it("does not show a warning when a memo-required destination already has a memo set", async () => {
+      const preparePayment = vi.fn().mockResolvedValue({
+        review: {
+          from: FROM,
+          to: EXCHANGE_ADDRESS,
+          token: xlm,
+          amount: 25000000n,
+          network: "testnet",
+        },
+        confirm: vi.fn().mockResolvedValue({ hash: "txhash123" }),
+      });
+      renderSend({ preparePayment });
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), {
+        target: { value: EXCHANGE_ADDRESS },
+      });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+      fireEvent.change(screen.getByLabelText(/memo \/ destination tag/i), {
+        target: { value: "10948572" },
+      });
+
+      await waitFor(() => expect(screen.queryByTestId("memo-required-warning")).toBeNull());
+
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+      const dialog = await screen.findByRole("dialog", { name: /review payment/i });
+
+      expect(screen.queryByTestId("memo-required-warning")).toBeNull();
+      expect(dialog.textContent).toContain("10948572");
+    });
+
+    it("does not show a warning for non-custodial destinations without a memo", () => {
+      renderSend({ preparePayment: vi.fn() });
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+
+      expect(screen.queryByTestId("memo-required-warning")).toBeNull();
+    });
+  });
 });
