@@ -16,8 +16,25 @@ export class RepoUrlError extends Error {
   }
 }
 
-/** Parse + syntactic checks: https only, no userinfo. Throws RepoUrlError. */
-export function parseHttpsRepoUrl(repoUrl: string): URL {
+/**
+ * Deliberate HTTPS port policy for repository clones:
+ * Only standard HTTPS (443) and the standard alternate HTTPS port (8443) are
+ * permitted. Arbitrary / internal-service ports (e.g. 6379 Redis, 5432 Postgres,
+ * 2375 Docker daemon, 9090 Prometheus, 11434 Ollama, 8080 internal HTTP) are
+ * rejected before DNS resolution or socket connection so an allowed public host
+ * or IPv6 literal cannot be used to probe non-HTTPS services.
+ */
+export const ALLOWED_HTTPS_PORTS: ReadonlySet<number> = new Set([443, 8443]);
+
+function stripIpv6Brackets(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+/** Parse + syntactic checks: https only, no userinfo, allowed HTTPS port only. Throws RepoUrlError. */
+export function parseHttpsRepoUrl(
+  repoUrl: string,
+  allowedPorts: ReadonlySet<number> = ALLOWED_HTTPS_PORTS,
+): URL {
   let url: URL;
   try {
     url = new URL(repoUrl);
@@ -32,21 +49,31 @@ export function parseHttpsRepoUrl(repoUrl: string): URL {
   if (url.username || url.password) {
     throw new RepoUrlError("repoUrl must not embed credentials (userinfo).");
   }
+  if (url.port !== "") {
+    const port = Number(url.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !allowedPorts.has(port)) {
+      throw new RepoUrlError(
+        `repoUrl port ${url.port} is not allowed; only standard HTTPS ports (${Array.from(allowedPorts).join(", ")}) are permitted.`,
+      );
+    }
+  }
   return url;
 }
 
 /** True when an IP literal is loopback, private, link-local, or otherwise not a
  * public routable address that the build host should ever fetch from. */
 export function isBlockedAddress(ip: string): boolean {
-  const kind = isIP(ip);
+  const normalizedIp = stripIpv6Brackets(ip.trim());
+  const kind = isIP(normalizedIp);
   if (kind === 4) {
-    const parts = ip.split(".").map((p) => Number(p));
+    const parts = normalizedIp.split(".").map((p) => Number(p));
     if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255))
       return true;
     const a = parts[0] as number;
     const b = parts[1] as number;
     if (a === 0) return true; // 0.0.0.0/8
     if (a === 10) return true; // 10/8 private
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT / shared address space
     if (a === 127) return true; // loopback
     if (a === 169 && b === 254) return true; // link-local incl. 169.254.169.254 metadata
     if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12 private
@@ -55,14 +82,30 @@ export function isBlockedAddress(ip: string): boolean {
     return false;
   }
   if (kind === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true; // loopback / unspecified
-    if (lower.startsWith("fe80")) return true; // link-local
+    const lower = normalizedIp.toLowerCase();
+    if (
+      lower === "::1" ||
+      lower === "::" ||
+      /^(0+:){7}0*1$/.test(lower) ||
+      /^(0+:){7}0+$/.test(lower)
+    ) {
+      return true; // loopback / unspecified
+    }
+    if (/^fe[89ab][0-9a-f]?:/i.test(lower) || lower.startsWith("fe80")) return true; // link-local fe80::/10
     if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
-    if (lower.startsWith("ff")) return true; // multicast
-    // IPv4-mapped ::ffff:a.b.c.d — re-check the embedded v4.
-    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped && mapped[1]) return isBlockedAddress(mapped[1]);
+    if (lower.startsWith("ff")) return true; // multicast ff00::/8
+    if (/^0*64:ff9b:/i.test(lower)) return true; // NAT64 well-known prefix 64:ff9b::/96
+    // IPv4-mapped ::ffff:a.b.c.d (dotted-quad form) — re-check the embedded v4.
+    const mappedDotted = lower.match(/^(?:::ffff:|(?:0+:){5}ffff:)(\d+\.\d+\.\d+\.\d+)$/);
+    if (mappedDotted && mappedDotted[1]) return isBlockedAddress(mappedDotted[1]);
+    // IPv4-mapped ::ffff:xxxx:yyyy (WHATWG URL canonical hex form, e.g. ::ffff:7f00:1)
+    const mappedHex = lower.match(/^(?:::ffff:|(?:0+:){5}ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mappedHex && mappedHex[1] && mappedHex[2]) {
+      const hi = Number.parseInt(mappedHex[1], 16);
+      const lo = Number.parseInt(mappedHex[2], 16);
+      const ipv4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+      return isBlockedAddress(ipv4);
+    }
     return false;
   }
   // Not a parseable IP literal — treat as blocked (caller resolves hostnames).
@@ -72,6 +115,8 @@ export function isBlockedAddress(ip: string): boolean {
 export interface RepoUrlGuardDeps {
   /** Resolve a hostname to IP strings. Injectable for tests. */
   resolve?: (hostname: string) => Promise<string[]>;
+  /** Override allowed HTTPS ports (defaults to ALLOWED_HTTPS_PORTS: 443, 8443). */
+  allowedPorts?: ReadonlySet<number>;
 }
 
 /** A validated resolution the caller pins into git's connection so git does not
@@ -88,8 +133,8 @@ async function defaultResolve(hostname: string): Promise<string[]> {
   return results.map((r) => r.address);
 }
 
-/** Full guard: https-only + EVERY resolved address must be public. Throws
- * RepoUrlError otherwise. Returns the validated pin (host:port:ip) so the caller
+/** Full guard: https-only + allowed port + EVERY resolved address must be public.
+ * Throws RepoUrlError otherwise. Returns the validated pin (host:port:ip) so the caller
  * can force git to connect to the exact address the guard checked — closing the
  * window where git would otherwise resolve the hostname again independently.
  * Undefined for an IP-literal host (the host is already the checked address). */
@@ -97,14 +142,15 @@ export async function assertPublicHttpsRepoUrl(
   repoUrl: string,
   deps: RepoUrlGuardDeps = {},
 ): Promise<ResolvedPin | undefined> {
-  const url = parseHttpsRepoUrl(repoUrl);
+  const url = parseHttpsRepoUrl(repoUrl, deps.allowedPorts);
   const resolve = deps.resolve ?? defaultResolve;
   const port = url.port ? Number(url.port) : 443;
+  const bareHost = stripIpv6Brackets(url.hostname);
 
-  // If the host is already an IP literal, check it directly. No pin: git will
-  // connect to that literal, which is the exact value we validated.
-  if (isIP(url.hostname)) {
-    if (isBlockedAddress(url.hostname)) {
+  // If the host is already an IPv4 or bracketed IPv6 literal, check it directly.
+  // No pin: git will connect to that literal, which is the exact value we validated.
+  if (isIP(bareHost)) {
+    if (isBlockedAddress(bareHost)) {
       throw new RepoUrlError(
         `repoUrl host ${url.hostname} is a private/loopback/link-local address.`,
       );
