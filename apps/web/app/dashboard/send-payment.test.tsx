@@ -215,5 +215,46 @@ describe("SendPayment", () => {
       expect(dialog.querySelector("b")).toBeNull();
       expect(dialog.textContent).toContain("<b>order 7</b>");
     });
+
+    it("surfaces a destination-tag warning when sending to a memo-required destination without a memo", async () => {
+      const memoRequiredDest = "GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSBR54EB4YAWBDMW7SJBOMIB6J";
+      const preparePayment = vi.fn().mockResolvedValue({
+        review: { from: FROM, to: memoRequiredDest, token: xlm, amount: 25000000n, network: "testnet" },
+        confirm: vi.fn(),
+      });
+      renderSend({ preparePayment });
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: memoRequiredDest } });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+
+      expect(screen.getByTestId("memo-warning")).toBeDefined();
+      expect(screen.getByTestId("memo-warning").textContent).toMatch(/memo/i);
+
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+      await screen.findByRole("dialog", { name: /review payment/i });
+
+      expect(screen.getByTestId("review-memo-warning")).toBeDefined();
+    });
+
+    it("does not show destination-tag warning when memo is supplied for a memo-required destination", async () => {
+      const memoRequiredDest = "GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSBR54EB4YAWBDMW7SJBOMIB6J";
+      const preparePayment = vi.fn().mockResolvedValue({
+        review: { from: FROM, to: memoRequiredDest, token: xlm, amount: 25000000n, network: "testnet" },
+        confirm: vi.fn(),
+      });
+      renderSend({ preparePayment });
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: memoRequiredDest } });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+      fireEvent.change(screen.getByLabelText(/memo/i), { target: { value: "12345678" } });
+
+      expect(screen.queryByTestId("memo-warning")).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+      const dialog = await screen.findByRole("dialog", { name: /review payment/i });
+
+      expect(screen.queryByTestId("review-memo-warning")).toBeNull();
+      expect(dialog.textContent).toContain("12345678");
+    });
   });
 });
