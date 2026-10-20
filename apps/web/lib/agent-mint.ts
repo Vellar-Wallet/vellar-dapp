@@ -1,4 +1,5 @@
 import type { GeneratedPolicy } from "vellar-sdk";
+import { findToken, formatAmountWithDecimals } from "./tokens";
 
 // Agent key mint flow (#394) as an explicit state machine (technical-doc.md
 // §17.3). The reducer is pure so every transition and failure path is unit
@@ -31,12 +32,116 @@ export interface MintConfig {
   token: string;
   /** Human label for the token (display only). */
   tokenSymbol: string;
+  /** Optional human-readable asset name (e.g. "Stellar Lumens", "USD Coin"). */
+  tokenName?: string;
+  /** Optional token decimal places (defaults to registry decimals or 7). */
+  tokenDecimals?: number;
   /** Budget in the token's base units, as the policy contract stores it. */
   amountBaseUnits: string;
   windowSeconds: number;
   /** Unix seconds; `undefined` = no expiry (allowed but discouraged). */
   expiresAtSeconds?: number;
   network: "testnet" | "mainnet";
+}
+
+export interface MintConfirmationSummary {
+  /** Human-readable asset name (e.g. "Stellar Lumens", "USD Coin"), never just a contract ID. */
+  tokenName: string;
+  /** Token ticker symbol (e.g. "XLM", "USDC"). */
+  tokenSymbol: string;
+  /** Combined human-readable asset label (e.g. "Stellar Lumens (XLM)"). */
+  tokenDisplay: string;
+  /** Exact SEP-41 token contract ID encoded in the policy and signer grant. */
+  tokenContractId: string;
+  /** Exact budget in base units encoded in the token_spending_limit policy. */
+  amountBaseUnits: string;
+  /** Human-readable decimal budget amount (e.g. "10"). */
+  budgetAmount: string;
+  /** Exact window duration in seconds encoded in the policy. */
+  windowSeconds: number;
+  /** Human-readable window label (e.g. "per 24 hours"). */
+  windowDisplay: string;
+  /** Combined human-readable budget summary (e.g. "10 XLM per 24 hours"). */
+  budgetDisplay: string;
+  /** Exact Unix timestamp in seconds passed to addAgentKey, or undefined if no expiry. */
+  expiresAtSeconds?: number;
+  /** ISO-8601 UTC timestamp for expiry, or null when no expiry is set. */
+  expiresAtIso: string | null;
+  /** Human-readable expiry label (ISO UTC string or "No expiry"). */
+  expiryDisplay: string;
+  /** Target network ("testnet" | "mainnet"). */
+  network: "testnet" | "mainnet";
+  /** Deployed budget policy contract ID, populated once deployed before passkey approval. */
+  policyContractId?: string;
+  /** Generated agent public key (G…), populated once created before passkey approval. */
+  agentPublicKey?: string;
+}
+
+const KNOWN_ASSET_NAMES: Record<string, string> = {
+  XLM: "Stellar Lumens",
+  USDC: "USD Coin",
+  EURC: "Euro Coin",
+};
+
+function formatWindowLabel(windowSeconds: number): string {
+  if (windowSeconds === 3600) return "per hour";
+  if (windowSeconds === 86_400) return "per 24 hours";
+  if (windowSeconds === 604_800) return "per 7 days";
+  if (windowSeconds % 86_400 === 0) return `per ${windowSeconds / 86_400} days`;
+  if (windowSeconds % 3600 === 0) return `per ${windowSeconds / 3600} hours`;
+  return `per ${windowSeconds} seconds`;
+}
+
+/**
+ * Build the user-facing confirmation summary directly from the authoritative
+ * `MintConfig` that is encoded into the budget policy and `addAgentKey` call.
+ * Resolves the human-readable asset name so the summary never displays a raw
+ * contract ID alone.
+ */
+export function buildMintConfirmationSummary(
+  config: MintConfig,
+  context?: { policyContractId?: string; agentPublicKey?: string },
+): MintConfirmationSummary {
+  const byContract = findToken(config.network, config.token);
+  const bySymbol = config.tokenSymbol ? findToken(config.network, config.tokenSymbol) : undefined;
+  const registryToken = byContract ?? bySymbol;
+
+  const symbol = (config.tokenSymbol || registryToken?.symbol || "TOKEN").trim();
+  const resolvedName =
+    config.tokenName?.trim() ||
+    registryToken?.name ||
+    KNOWN_ASSET_NAMES[symbol.toUpperCase()] ||
+    `${symbol} Token`;
+  const decimals = config.tokenDecimals ?? registryToken?.decimals ?? 7;
+
+  const budgetAmount = formatAmountWithDecimals(BigInt(config.amountBaseUnits), decimals);
+  const windowDisplay = formatWindowLabel(config.windowSeconds);
+  const budgetDisplay = `${budgetAmount} ${symbol} ${windowDisplay}`;
+  const tokenDisplay = `${resolvedName} (${symbol})`;
+
+  const expiresAtIso =
+    config.expiresAtSeconds !== undefined
+      ? new Date(config.expiresAtSeconds * 1000).toISOString()
+      : null;
+  const expiryDisplay = expiresAtIso ?? "No expiry";
+
+  return {
+    tokenName: resolvedName,
+    tokenSymbol: symbol,
+    tokenDisplay,
+    tokenContractId: config.token,
+    amountBaseUnits: config.amountBaseUnits,
+    budgetAmount,
+    windowSeconds: config.windowSeconds,
+    windowDisplay,
+    budgetDisplay,
+    ...(config.expiresAtSeconds !== undefined ? { expiresAtSeconds: config.expiresAtSeconds } : {}),
+    expiresAtIso,
+    expiryDisplay,
+    network: config.network,
+    ...(context?.policyContractId ? { policyContractId: context.policyContractId } : {}),
+    ...(context?.agentPublicKey ? { agentPublicKey: context.agentPublicKey } : {}),
+  };
 }
 
 export interface AgentKeyMaterial {
@@ -47,20 +152,28 @@ export interface AgentKeyMaterial {
 
 export type MintState =
   | { step: "idle" }
-  | { step: "creating-key"; config: MintConfig }
-  | { step: "policy-creation"; config: MintConfig; key: AgentKeyMaterial; detail: string }
+  | { step: "creating-key"; config: MintConfig; summary: MintConfirmationSummary }
+  | {
+      step: "policy-creation";
+      config: MintConfig;
+      key: AgentKeyMaterial;
+      detail: string;
+      summary: MintConfirmationSummary;
+    }
   | {
       step: "awaiting-passkey-approval";
       for: "attach-policy" | "add-signer";
       config: MintConfig;
       key: AgentKeyMaterial;
       policyContractId: string;
+      summary: MintConfirmationSummary;
     }
   | {
       step: "attaching-policy";
       config: MintConfig;
       key: AgentKeyMaterial;
       policyContractId: string;
+      summary: MintConfirmationSummary;
     }
   | {
       step: "adding-signer";
@@ -68,6 +181,7 @@ export type MintState =
       key: AgentKeyMaterial;
       policyContractId: string;
       attachTxHash: string;
+      summary: MintConfirmationSummary;
     }
   | {
       step: "confirming";
@@ -76,6 +190,7 @@ export type MintState =
       policyContractId: string;
       attachTxHash: string;
       addSignerTxHash: string;
+      summary: MintConfirmationSummary;
     }
   | {
       step: "success";
@@ -86,6 +201,7 @@ export type MintState =
       policyContractId: string;
       attachTxHash: string;
       addSignerTxHash: string;
+      summary: MintConfirmationSummary;
     }
   | {
       step: "error";
@@ -129,7 +245,13 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
   }
   switch (state.step) {
     case "idle":
-      return event.type === "START" ? { step: "creating-key", config: event.config } : state;
+      return event.type === "START"
+        ? {
+            step: "creating-key",
+            config: event.config,
+            summary: buildMintConfirmationSummary(event.config),
+          }
+        : state;
     case "creating-key":
       return event.type === "KEY_CREATED"
         ? {
@@ -137,6 +259,9 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
             config: state.config,
             key: event.key,
             detail: "Generating policy…",
+            summary: buildMintConfirmationSummary(state.config, {
+              agentPublicKey: event.key.publicKey,
+            }),
           }
         : state;
     case "policy-creation":
@@ -148,6 +273,10 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
           config: state.config,
           key: state.key,
           policyContractId: event.policyContractId,
+          summary: buildMintConfirmationSummary(state.config, {
+            agentPublicKey: state.key.publicKey,
+            policyContractId: event.policyContractId,
+          }),
         };
       }
       return state;
@@ -159,6 +288,7 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
               config: state.config,
               key: state.key,
               policyContractId: state.policyContractId,
+              summary: state.summary,
             }
           : state; // add-signer approval is reported via SIGNER_ADDED below
       }
@@ -170,6 +300,7 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
           policyContractId: state.policyContractId,
           attachTxHash: (state as { attachTxHash?: string }).attachTxHash ?? "",
           addSignerTxHash: event.hash,
+          summary: state.summary,
         };
       }
       return state;
@@ -181,6 +312,7 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
             key: state.key,
             policyContractId: state.policyContractId,
             attachTxHash: event.hash,
+            summary: state.summary,
           }
         : state;
     case "adding-signer":
@@ -192,6 +324,7 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
             policyContractId: state.policyContractId,
             attachTxHash: state.attachTxHash,
             addSignerTxHash: event.hash,
+            summary: state.summary,
           }
         : state;
     case "confirming":
@@ -204,6 +337,7 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
             policyContractId: state.policyContractId,
             attachTxHash: state.attachTxHash,
             addSignerTxHash: state.addSignerTxHash,
+            summary: state.summary,
           }
         : state;
     case "success":
@@ -253,6 +387,8 @@ export interface MintRunnerOptions {
   effects: MintEffects;
   wallet: string;
   dispatch: (event: MintEvent) => void;
+  /** Optional hook invoked with the authoritative confirmation summary before passkey signing. */
+  onConfirmationSummary?: (summary: MintConfirmationSummary) => void | Promise<void>;
   /** Map a thrown error to user-facing copy (never includes key material). */
   errorMessage?: (err: unknown) => string;
 }
@@ -264,23 +400,32 @@ export interface MintRunnerOptions {
  */
 export async function runMint(config: MintConfig, opts: MintRunnerOptions): Promise<void> {
   const { effects, wallet, dispatch } = opts;
+  const frozenConfig: MintConfig = { ...config };
   const describe =
     opts.errorMessage ?? ((err: unknown) => (err instanceof Error ? err.message : String(err)));
   let stage: MintStage = "creating-key";
   try {
-    dispatch({ type: "START", config });
+    dispatch({ type: "START", config: frozenConfig });
     const key = await effects.generateKey();
     dispatch({ type: "KEY_CREATED", key });
 
     stage = "policy-creation";
     dispatch({ type: "POLICY_PROGRESS", detail: "Generating token budget policy…" });
-    const policy = await effects.generatePolicy(config, wallet);
+    const policy = await effects.generatePolicy(frozenConfig, wallet);
     dispatch({ type: "POLICY_PROGRESS", detail: "Checking the deploy will succeed…" });
     const sim = await effects.simulateDeploy(policy.id, wallet);
     if (!sim.ok) throw new Error(sim.error ?? "Policy deploy simulation failed");
     dispatch({ type: "POLICY_PROGRESS", detail: "Deploying the budget policy to testnet…" });
     const { contractId } = await effects.deployInstance(policy.id, wallet);
     dispatch({ type: "POLICY_DEPLOYED", policyContractId: contractId });
+
+    const summary = buildMintConfirmationSummary(frozenConfig, {
+      agentPublicKey: key.publicKey,
+      policyContractId: contractId,
+    });
+    if (opts.onConfirmationSummary) {
+      await opts.onConfirmationSummary(summary);
+    }
 
     stage = "attaching-policy";
     dispatch({ type: "PASSKEY_APPROVED", for: "attach-policy" });
@@ -291,9 +436,9 @@ export async function runMint(config: MintConfig, opts: MintRunnerOptions): Prom
     stage = "adding-signer";
     const added = await effects.addAgentKey({
       publicKey: key.publicKey,
-      token: config.token,
+      token: summary.tokenContractId,
       policyContractId: contractId,
-      expiresAtSeconds: config.expiresAtSeconds,
+      expiresAtSeconds: summary.expiresAtSeconds,
     });
     dispatch({ type: "SIGNER_ADDED", hash: added.hash });
 

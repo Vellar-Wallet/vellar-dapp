@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildMintConfirmationSummary,
   initialMintState,
   isMintBusy,
   mintReducer,
   runMint,
+  type MintConfirmationSummary,
   type MintConfig,
   type MintEffects,
   type MintEvent,
   type MintState,
 } from "./agent-mint";
+import { TESTNET_USDC_SAC } from "./tokens";
 
 const config: MintConfig = {
   token: "CTOKEN",
@@ -55,6 +58,46 @@ describe("mintReducer", () => {
       attachTxHash: "attachtx",
       addSignerTxHash: "addtx",
     });
+  });
+
+  it("populates a confirmation summary with human-readable asset name, budget, and expiry before passkey approval", () => {
+    const awaiting = play(happyPath.slice(0, 3));
+    expect(awaiting.step).toBe("awaiting-passkey-approval");
+    if (awaiting.step === "awaiting-passkey-approval") {
+      expect(awaiting.summary).toEqual({
+        tokenName: "Stellar Lumens",
+        tokenSymbol: "XLM",
+        tokenDisplay: "Stellar Lumens (XLM)",
+        tokenContractId: "CTOKEN",
+        amountBaseUnits: "100000000",
+        budgetAmount: "10",
+        windowSeconds: 86_400,
+        windowDisplay: "per 24 hours",
+        budgetDisplay: "10 XLM per 24 hours",
+        expiresAtSeconds: 1_800_000_000,
+        expiresAtIso: "2027-01-15T08:00:00.000Z",
+        expiryDisplay: "2027-01-15T08:00:00.000Z",
+        network: "testnet",
+        agentPublicKey: "GAGENT",
+        policyContractId: "CPOLICY",
+      });
+    }
+  });
+
+  it("resolves human-readable asset names from the token registry (never showing contract ID alone)", () => {
+    const usdcSummary = buildMintConfirmationSummary({
+      token: TESTNET_USDC_SAC,
+      tokenSymbol: "USDC",
+      amountBaseUnits: "25500000",
+      windowSeconds: 3600,
+      network: "testnet",
+    });
+    expect(usdcSummary.tokenName).toBe("USD Coin");
+    expect(usdcSummary.tokenDisplay).toBe("USD Coin (USDC)");
+    expect(usdcSummary.tokenDisplay).not.toBe(TESTNET_USDC_SAC);
+    expect(usdcSummary.budgetDisplay).toBe("2.55 USDC per hour");
+    expect(usdcSummary.expiryDisplay).toBe("No expiry");
+    expect(usdcSummary.expiresAtIso).toBeNull();
   });
 
   it("DISMISS_SECRET drops the secret and nothing can bring it back", () => {
@@ -190,6 +233,59 @@ describe("runMint", () => {
     });
     const final = events.reduce(mintReducer, initialMintState);
     expect(final.step).toBe("success");
+  });
+
+  it("guarantees the confirmation summary matches the exact policy and addAgentKey transaction arguments without drift", async () => {
+    const mutableConfig: MintConfig = {
+      token: TESTNET_USDC_SAC,
+      tokenSymbol: "USDC",
+      amountBaseUnits: "50000000",
+      windowSeconds: 86_400,
+      expiresAtSeconds: 1_800_000_000,
+      network: "testnet",
+    };
+
+    let capturedSummary: MintConfirmationSummary | undefined;
+    const { e } = effects({
+      generateKey: vi.fn(async () => {
+        // Attempt to mutate caller's config object mid-flight after START
+        mutableConfig.amountBaseUnits = "999999999999";
+        mutableConfig.token = "CMALICIOUS";
+        mutableConfig.expiresAtSeconds = 9_999_999_999;
+        return key;
+      }),
+    });
+
+    const events: MintEvent[] = [];
+    await runMint(mutableConfig, {
+      effects: e,
+      wallet: "CWALLET",
+      dispatch: (ev) => events.push(ev),
+      onConfirmationSummary: (s) => {
+        capturedSummary = s;
+      },
+    });
+
+    expect(capturedSummary).toBeDefined();
+    expect(capturedSummary?.tokenName).toBe("USD Coin");
+    expect(capturedSummary?.tokenDisplay).toBe("USD Coin (USDC)");
+    expect(capturedSummary?.budgetDisplay).toBe("5 USDC per 24 hours");
+
+    // Verify zero drift between confirmation summary and actual transaction / policy calls
+    expect(e.generatePolicy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: capturedSummary!.tokenContractId,
+        amountBaseUnits: capturedSummary!.amountBaseUnits,
+        windowSeconds: capturedSummary!.windowSeconds,
+      }),
+      "CWALLET",
+    );
+    expect(e.addAgentKey).toHaveBeenCalledWith({
+      publicKey: capturedSummary!.agentPublicKey,
+      token: capturedSummary!.tokenContractId,
+      policyContractId: capturedSummary!.policyContractId,
+      expiresAtSeconds: capturedSummary!.expiresAtSeconds,
+    });
   });
 
   it("stops before any passkey prompt when the deploy simulation fails", async () => {
