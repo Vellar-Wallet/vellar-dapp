@@ -5,7 +5,7 @@ import type { PreparedSwap, SwapClient } from "@/lib/swap/client";
 import { SwapQuoteError } from "@/lib/swap/quote";
 import { SwapVenueError } from "@/lib/swap/soroswap";
 import { WalletProvider } from "@/lib/wallet-context";
-import { SwapPanel } from "./swap-panel";
+import { classifySwapExecution, SwapPanel } from "./swap-panel";
 
 const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/track", () => ({ trackTransaction: trackMock }));
@@ -126,6 +126,76 @@ describe("SwapPanel", () => {
     expect(trackMock).toHaveBeenCalledWith("swaphash");
     expect(swaps.readOutcome).toHaveBeenCalledWith("swaphash");
     expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a partial fill outcome with both filled and remaining unswapped amounts", async () => {
+    const swaps = swapClient({
+      readOutcome: vi.fn(async () => ({
+        status: "success" as const,
+        // 6 XLM filled out of 10 XLM requested -> 0.6318 USDC received, 4 XLM unswapped
+        amounts: [60_000_000n, 6_318_000n],
+      })),
+    });
+    const { onSuccess } = renderSwap(swaps);
+    await quoteAndReview();
+    fireEvent.click(screen.getByRole("button", { name: /confirm with passkey/i }));
+
+    const partialCard = await screen.findByTestId("swap-partial-fill");
+    expect(partialCard.textContent).toMatch(/Swap partially filled \(60%\)/i);
+    expect(partialCard.textContent).toContain("Swapped 6 XLM for 0.6318 USDC");
+    const remainingText = screen.getByTestId("swap-remaining-balance");
+    expect(remainingText.textContent).toContain("4 XLM");
+    expect(partialCard.textContent).toMatch(/remaining unswapped balance/i);
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a 0% fill (zero input or output exchanged) as a failed swap rather than a partial fill", async () => {
+    const swaps = swapClient({
+      readOutcome: vi.fn(async () => ({
+        status: "success" as const,
+        amounts: [0n, 0n],
+      })),
+    });
+    const { onSuccess } = renderSwap(swaps);
+    await quoteAndReview();
+    fireEvent.click(screen.getByRole("button", { name: /confirm with passkey/i }));
+
+    expect(await screen.findByText(/swap failed on the network/i)).toBeDefined();
+    expect(screen.getByText(/no tokens were exchanged/i)).toBeDefined();
+    expect(screen.queryByTestId("swap-partial-fill")).toBeNull();
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("classifies full, partial, and 0% swap executions accurately", () => {
+    expect(
+      classifySwapExecution(100_000_000n, {
+        status: "success",
+        amounts: [100_000_000n, 10_530_000n],
+      }),
+    ).toEqual({
+      kind: "success",
+      received: 10_530_000n,
+    });
+
+    expect(
+      classifySwapExecution(100_000_000n, {
+        status: "success",
+        amounts: [60_000_000n, 6_318_000n],
+      }),
+    ).toEqual({
+      kind: "partial",
+      filledIn: 60_000_000n,
+      remainingIn: 40_000_000n,
+      received: 6_318_000n,
+      fillPercent: "60",
+    });
+
+    expect(
+      classifySwapExecution(100_000_000n, {
+        status: "success",
+        amounts: [0n, 0n],
+      }),
+    ).toEqual({ kind: "failed" });
   });
 
   it("reports an on-chain failure as failed, with no tokens exchanged", async () => {
