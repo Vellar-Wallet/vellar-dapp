@@ -61,15 +61,55 @@ describe("Verify page — explorer", () => {
     expect(screen.getByText("1.81.0")).toBeDefined();
   });
 
-  it("shows 'unverified' + a hint when no records exist", async () => {
+  it("shows 'unverified' + an explicit empty-state illustration and copy when no records exist", async () => {
     historyMock.mockResolvedValue([]);
     render(<Verify />);
     fireEvent.change(screen.getByLabelText("Contract address"), { target: { value: C1 } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
 
-    await waitFor(() => expect(historyMock).toHaveBeenCalled());
+    await waitFor(() => expect(historyMock).toHaveBeenCalledWith(C1));
     expect(screen.getByText("Unverified")).toBeDefined();
     expect(screen.getByText(/No verification has been submitted/i)).toBeDefined();
+
+    const emptyState = screen.getByTestId("zero-history-empty-state");
+    expect(emptyState.getAttribute("data-state")).toBe("zero-history");
+    expect(screen.getByTestId("zero-history-illustration")).toBeDefined();
+    expect(emptyState.textContent).toMatch(/Zero verification history for this contract/i);
+    expect(emptyState.textContent).toMatch(/Unlike a failed verification attempt/i);
+    expect(emptyState.textContent).toContain(C1);
+    expect(screen.queryByTestId("verification-record-card")).toBeNull();
+  });
+
+  it("visually and in copy distinguishes a contract with zero history from one that was submitted and failed", async () => {
+    historyMock.mockResolvedValue([
+      {
+        id: "r-failed",
+        contractId: C1,
+        sourceType: "repo",
+        repoUrl: "https://github.com/x/y",
+        commitHash: "badc0de",
+        toolchainVersion: "1.81.0",
+        deployedHash: "aa".repeat(32),
+        outputHash: "bb".repeat(32),
+        status: "failed",
+        statusDetail: "Build failed (hash_mismatch).",
+        createdAt: "2026-07-18T00:00:00.000Z",
+        updatedAt: "2026-07-18T00:00:00.000Z",
+      },
+    ]);
+
+    render(<Verify />);
+    fireEvent.change(screen.getByLabelText("Contract address"), { target: { value: C1 } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+
+    await waitFor(() => expect(historyMock).toHaveBeenCalledWith(C1));
+    expect((await screen.findAllByText("Verification failed")).length).toBeGreaterThan(0);
+    expect(screen.getByText("1 verification attempt")).toBeDefined();
+    expect(screen.getByText("Build failed (hash_mismatch).")).toBeDefined();
+
+    const card = screen.getByTestId("verification-record-card");
+    expect(card.getAttribute("data-status")).toBe("failed");
+    expect(screen.queryByTestId("zero-history-empty-state")).toBeNull();
   });
 
   it("rejects an invalid contract id before calling the API", async () => {
@@ -78,6 +118,7 @@ describe("Verify page — explorer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByText(/valid contract address/i)).toBeDefined();
     expect(historyMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("zero-history-empty-state")).toBeNull();
   });
 });
 
