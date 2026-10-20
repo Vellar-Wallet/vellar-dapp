@@ -75,21 +75,96 @@ describe("warn mode assessment", () => {
     });
   });
 
-  it("warns only in warn mode and only for unverified/unavailable targets", () => {
+  it("warns only in warn mode and only for unverified/superseded/unavailable targets", () => {
     expect(shouldWarn({ mode: "warn" }, { level: "unverified" })).toBe(true);
+    expect(shouldWarn({ mode: "warn" }, { level: "superseded" })).toBe(true);
     expect(shouldWarn({ mode: "warn" }, { level: "unavailable" })).toBe(true);
     expect(shouldWarn({ mode: "warn" }, { level: "verified" })).toBe(false);
     expect(shouldWarn({ mode: "warn" }, { level: "builtin" })).toBe(false);
     expect(shouldWarn({ mode: "off" }, { level: "unverified" })).toBe(false);
+    expect(shouldWarn({ mode: "off" }, { level: "superseded" })).toBe(false);
     expect(shouldWarn({ mode: "strict" }, { level: "unverified" })).toBe(false);
+    expect(shouldWarn({ mode: "strict" }, { level: "superseded" })).toBe(false);
   });
 
-  it("warning copy speaks of provenance, never safety guarantees", () => {
-    for (const level of ["unverified", "unavailable"] as const) {
+  it("classifies a contract upgraded to an unverified wasm hash as superseded (not verified or unverified)", async () => {
+    const HASH_A = "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff66660000777788889999";
+    const HASH_B = "99998888777700006666ffffeeee5555dddd4444cccc3333bbbb2222aaaa1111";
+
+    // Case 1: status still reports the older verified record for HASH_A while on-chain is HASH_B
+    const fromStatus = await assessProvenance(
+      { contractId: "CUPGRADED", currentWasmHash: HASH_B },
+      {
+        getStatus: async () => ({
+          status: "verified",
+          deployedHash: HASH_A,
+        }),
+      },
+    );
+    expect(fromStatus).toEqual({
+      level: "superseded",
+      contractId: "CUPGRADED",
+      status: "verified",
+      currentWasmHash: HASH_B,
+      verifiedWasmHash: HASH_A,
+    });
+
+    // Case 2: status reports unverified for current hash, while history shows prior verified HASH_A
+    const fromHistory = await assessProvenance(
+      { contractId: "CUPGRADED", currentWasmHash: HASH_B },
+      {
+        getStatus: async () => ({ status: "unverified" }),
+        getHistory: async () => [
+          { status: "failed", deployedHash: HASH_B },
+          { status: "verified", deployedHash: HASH_A },
+        ],
+      },
+    );
+    expect(fromHistory).toEqual({
+      level: "superseded",
+      contractId: "CUPGRADED",
+      status: "unverified",
+      currentWasmHash: HASH_B,
+      verifiedWasmHash: HASH_A,
+    });
+  });
+
+  it("classifies an upgraded contract as verified when the new wasm hash B has itself been verified", async () => {
+    const HASH_A = "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff66660000777788889999";
+    const HASH_B = "99998888777700006666ffffeeee5555dddd4444cccc3333bbbb2222aaaa1111";
+
+    const res = await assessProvenance(
+      { contractId: "CUPGRADED", currentWasmHash: `0x${HASH_B.toUpperCase()}` },
+      {
+        getStatus: async () => ({
+          status: "verified",
+          deployedHash: HASH_A,
+        }),
+        getHistory: async () => [
+          { status: "verified", deployedHash: HASH_B },
+          { status: "verified", deployedHash: HASH_A },
+        ],
+      },
+    );
+    expect(res).toEqual({
+      level: "verified",
+      contractId: "CUPGRADED",
+      status: "verified",
+      currentWasmHash: `0x${HASH_B.toUpperCase()}`,
+      verifiedWasmHash: HASH_B,
+    });
+  });
+
+  it("warning copy speaks of provenance, never safety guarantees, and distinguishes superseded from unverified", () => {
+    for (const level of ["unverified", "superseded", "unavailable"] as const) {
       const copy = provenanceWarningCopy({ level });
       expect(copy).toMatch(/provenance/i);
       expect(copy).not.toMatch(/\bis safe\b|guarantee/i);
     }
+    expect(provenanceWarningCopy({ level: "superseded" })).toMatch(/upgraded/i);
+    expect(provenanceWarningCopy({ level: "superseded" })).not.toBe(
+      provenanceWarningCopy({ level: "unverified" }),
+    );
   });
 });
 
