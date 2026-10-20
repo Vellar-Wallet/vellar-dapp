@@ -40,6 +40,7 @@ const STAGING_ENV: NodeJS.ProcessEnv = {
   VERIFICATION_SERVICE_URL: "https://staging.verification.internal.vellar.example",
   STELLAR_RPC_URL: "https://soroban-testnet.stellar.org",
   STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
+  BUILD_TIMEOUT_MS: "600000",
 };
 
 describe("staging config (#338)", () => {
