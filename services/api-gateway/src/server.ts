@@ -53,6 +53,18 @@ export interface GatewayOptions {
    * exactly this timeout, independent of anything downstream). Env
    * REQUEST_TIMEOUT_MS. */
   requestTimeoutMs?: number;
+  /** Consecutive connection-level failures to wallet-service before the breaker opens. Default 5; env WALLET_CB_FAILURE_THRESHOLD. */
+  walletCircuitFailureThreshold?: number;
+  /** Cooldown (ms) before a half-open trial is allowed for wallet-service. Default 30_000; env WALLET_CB_COOLDOWN_MS. */
+  walletCircuitCooldownMs?: number;
+  /** Consecutive connection-level failures to lifecycle-service before the breaker opens. Default 5; env LIFECYCLE_CB_FAILURE_THRESHOLD. */
+  lifecycleCircuitFailureThreshold?: number;
+  /** Cooldown (ms) before a half-open trial is allowed for lifecycle-service. Default 30_000; env LIFECYCLE_CB_COOLDOWN_MS. */
+  lifecycleCircuitCooldownMs?: number;
+  /** Consecutive connection-level failures to policy-service before the breaker opens. Default 5; env POLICY_CB_FAILURE_THRESHOLD. */
+  policyCircuitFailureThreshold?: number;
+  /** Cooldown (ms) before a half-open trial is allowed for policy-service. Default 30_000; env POLICY_CB_COOLDOWN_MS. */
+  policyCircuitCooldownMs?: number;
   /** Consecutive connection-level failures to verification-service before
    * the breaker opens. Default 5; env VERIFICATION_CB_FAILURE_THRESHOLD. */
   verificationCircuitFailureThreshold?: number;
@@ -91,7 +103,8 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   const rateLimitMax = options.rateLimitMax ?? numEnv("RATE_LIMIT_MAX", 120);
   const rateLimitWindowMs = options.rateLimitWindowMs ?? numEnv("RATE_LIMIT_WINDOW_MS", 60_000);
   const tenantBucketCapacity = options.tenantBucketCapacity ?? numEnv("TENANT_BUCKET_CAPACITY", 60);
-  const tenantBucketRefillRate = options.tenantBucketRefillRate ?? numEnv("TENANT_BUCKET_REFILL_RATE", 10);
+  const tenantBucketRefillRate =
+    options.tenantBucketRefillRate ?? numEnv("TENANT_BUCKET_REFILL_RATE", 10);
 
   const tenantLimiter = new TokenBucketLimiter({
     capacity: tenantBucketCapacity,
@@ -187,14 +200,21 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     }
 
     // Per-tenant token bucket rate limit (#259)
-    const tenantId = (request.headers["x-tenant-id"] || request.headers["x-session-id"]) as string | undefined;
+    const tenantId = (request.headers["x-tenant-id"] || request.headers["x-session-id"]) as
+      string | undefined;
     if (tenantId && request.url !== "/health") {
       const result = tenantLimiter.tryConsume(tenantId);
       if (!result.allowed) {
         reply.header("Retry-After", String(result.retryAfterSeconds ?? 1));
-        return sendError(reply, 429, "too_many_requests", "Tenant rate limit exceeded. Please retry later.", {
-          retryAfter: result.retryAfterSeconds,
-        });
+        return sendError(
+          reply,
+          429,
+          "too_many_requests",
+          "Tenant rate limit exceeded. Please retry later.",
+          {
+            retryAfter: result.retryAfterSeconds,
+          },
+        );
       }
     }
 
@@ -226,27 +246,72 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
   registerHealth(app, "api-gateway");
   registerMetrics(app, "api-gateway");
 
-  registerVersionedProxyRoute(app, { upstream: walletServiceUrl, prefix: "/wallet" });
+  const walletBreakerLimits = circuitBreakerLimitsFromEnv(
+    {
+      failureThresholdVar: "WALLET_CB_FAILURE_THRESHOLD",
+      cooldownMsVar: "WALLET_CB_COOLDOWN_MS",
+    },
+    { defaultFailureThreshold: 5, defaultCooldownMs: 30_000 },
+  );
+  registerVersionedProxyRoute(app, {
+    upstream: walletServiceUrl,
+    prefix: "/wallet",
+    circuitBreaker: {
+      serviceName: "wallet-service",
+      failureThreshold:
+        options.walletCircuitFailureThreshold ?? walletBreakerLimits.failureThreshold,
+      cooldownMs: options.walletCircuitCooldownMs ?? walletBreakerLimits.cooldownMs,
+    },
+  });
 
   const lifecycleServiceUrl =
     options.lifecycleServiceUrl ?? process.env.LIFECYCLE_SERVICE_URL ?? "http://localhost:4002";
-  registerVersionedProxyRoute(app, { upstream: lifecycleServiceUrl, prefix: "/lifecycle" });
+  const lifecycleBreakerLimits = circuitBreakerLimitsFromEnv(
+    {
+      failureThresholdVar: "LIFECYCLE_CB_FAILURE_THRESHOLD",
+      cooldownMsVar: "LIFECYCLE_CB_COOLDOWN_MS",
+    },
+    { defaultFailureThreshold: 5, defaultCooldownMs: 30_000 },
+  );
+  registerVersionedProxyRoute(app, {
+    upstream: lifecycleServiceUrl,
+    prefix: "/lifecycle",
+    circuitBreaker: {
+      serviceName: "lifecycle-service",
+      failureThreshold:
+        options.lifecycleCircuitFailureThreshold ?? lifecycleBreakerLimits.failureThreshold,
+      cooldownMs: options.lifecycleCircuitCooldownMs ?? lifecycleBreakerLimits.cooldownMs,
+    },
+  });
 
   const policyServiceUrl =
     options.policyServiceUrl ?? process.env.POLICY_SERVICE_URL ?? "http://localhost:4003";
-  registerVersionedProxyRoute(app, { upstream: policyServiceUrl, prefix: "/policies" });
+  const policyBreakerLimits = circuitBreakerLimitsFromEnv(
+    {
+      failureThresholdVar: "POLICY_CB_FAILURE_THRESHOLD",
+      cooldownMsVar: "POLICY_CB_COOLDOWN_MS",
+    },
+    { defaultFailureThreshold: 5, defaultCooldownMs: 30_000 },
+  );
+  registerVersionedProxyRoute(app, {
+    upstream: policyServiceUrl,
+    prefix: "/policies",
+    circuitBreaker: {
+      serviceName: "policy-service",
+      failureThreshold:
+        options.policyCircuitFailureThreshold ?? policyBreakerLimits.failureThreshold,
+      cooldownMs: options.policyCircuitCooldownMs ?? policyBreakerLimits.cooldownMs,
+    },
+  });
 
   const verificationServiceUrl =
     options.verificationServiceUrl ??
     process.env.VERIFICATION_SERVICE_URL ??
     "http://localhost:4004";
 
-  // Circuit breaker (#326): api-gateway has no protection against a
-  // verification-service outage cascading into slow gateway responses —
-  // every caller would otherwise wait out the same timeout against the same
-  // broken dependency. Opens after `failureThreshold` consecutive failed
-  // proxy attempts; while open, requests fail fast with 503 instead of
-  // reaching the (assumed-still-down) upstream at all.
+  // Circuit breaker (#326, generalized per-upstream in #546): each upstream
+  // service gets its own isolated CircuitBreaker instance so an outage in one
+  // downstream never trips or degrades the other three.
   const verificationBreakerLimits = circuitBreakerLimitsFromEnv(
     {
       failureThresholdVar: "VERIFICATION_CB_FAILURE_THRESHOLD",
@@ -254,58 +319,14 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     },
     { defaultFailureThreshold: 5, defaultCooldownMs: 30_000 },
   );
-  const verificationBreaker = createCircuitBreaker({
-    failureThreshold:
-      options.verificationCircuitFailureThreshold ?? verificationBreakerLimits.failureThreshold,
-    cooldownMs: options.verificationCircuitCooldownMs ?? verificationBreakerLimits.cooldownMs,
-    onStateChange: (from, to) => {
-      app.log.warn({ breaker: "verification-service", from, to }, "circuit breaker state change");
-      domainMetrics.circuitBreakerStateChanges.inc({
-        service: "api-gateway",
-        breaker: "verification-service",
-        from,
-        to,
-      });
-    },
-  });
-
   registerVersionedProxyRoute(app, {
     upstream: verificationServiceUrl,
     prefix: "/verification",
-    // Runs before the proxy forwards the request — fast-fails while the
-    // breaker is open, so an outage doesn't tie up a connection waiting on
-    // a downstream that's already known to be unhealthy.
-    preHandler: async (request, reply) => {
-      try {
-        verificationBreaker.beforeCall();
-      } catch (err) {
-        if (err instanceof CircuitOpenError) {
-          return sendError(
-            reply,
-            503,
-            "verification_service_unavailable",
-            "Circuit breaker open: verification-service is failing.",
-            { retryAfterMs: err.retryAfterMs },
-          );
-        }
-        throw err;
-      }
-    },
-    replyOptions: {
-      // A response — even an upstream error status — means the TCP/HTTP
-      // round-trip to verification-service itself succeeded; only a
-      // genuine connection-level failure (ECONNREFUSED, timeout) counts
-      // against the breaker. An upstream 4xx/5xx is the verification
-      // service correctly reporting a domain-level outcome, not the
-      // service being unreachable.
-      onResponse: (_request, reply, res) => {
-        verificationBreaker.recordOutcome("success");
-        reply.send(res.stream);
-      },
-      onError: (reply, error) => {
-        verificationBreaker.recordOutcome("failure");
-        reply.send(error.error);
-      },
+    circuitBreaker: {
+      serviceName: "verification-service",
+      failureThreshold:
+        options.verificationCircuitFailureThreshold ?? verificationBreakerLimits.failureThreshold,
+      cooldownMs: options.verificationCircuitCooldownMs ?? verificationBreakerLimits.cooldownMs,
     },
   });
 
