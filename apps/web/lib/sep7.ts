@@ -78,6 +78,8 @@ export class Sep7Error extends Error {
   }
 }
 
+export type Sep7OriginStatus = "unverified" | "pending_verification" | "verified";
+
 export interface Sep7PayRequest {
   destination: string;
   destinationKind: "account" | "contract";
@@ -86,9 +88,15 @@ export interface Sep7PayRequest {
   asset: RegisteredAsset;
   /** Off-chain note from the requester. Untrusted — render as text only. */
   msg?: string;
-  /** Claimed origin. NOT verified by the parser — see verifySep7Origin. */
+  /** Claimed origin. NOT verified by the parser — see verifySep7Origin / parseAndVerifyPayUri. */
   originDomain?: string;
   signature?: string;
+  /**
+   * Explicit origin verification state at parse time:
+   * - "unverified": URI has no `origin_domain` / `signature` fields.
+   * - "pending_verification": URI declares `origin_domain` + `signature` and requires cryptographic check.
+   */
+  originStatus: "unverified" | "pending_verification";
   /** The URI as received, for origin-signature verification. */
   uri: string;
 }
@@ -315,6 +323,8 @@ export function parsePayUri(input: unknown, ctx: Sep7Context): Sep7ParseResult {
     if (!signature) {
       return fail("invalid_origin", "The request claims an origin but isn't signed.");
     }
+  } else if (signature !== undefined) {
+    return fail("invalid_origin", "The request includes a signature without an origin domain.");
   }
 
   return {
@@ -327,6 +337,7 @@ export function parsePayUri(input: unknown, ctx: Sep7Context): Sep7ParseResult {
       ...(msg !== undefined && msg !== "" && { msg }),
       ...(originDomain !== undefined && { originDomain }),
       ...(signature !== undefined && { signature }),
+      originStatus: originDomain !== undefined ? "pending_verification" : "unverified",
       uri,
     },
   };
@@ -340,12 +351,35 @@ export type OriginVerification =
   | { status: "invalid"; domain: string; reason: string };
 
 export interface OriginVerifyDeps {
-  fetch: (url: string) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  fetch?: (url: string) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  /** Optional direct signing-key resolver (can be used instead of or before fetching stellar.toml). */
+  resolveSigningKey?: (
+    domain: string,
+  ) => Promise<string | null | undefined> | string | null | undefined;
   /** Last-seen URI_REQUEST_SIGNING_KEY per domain (SEP-7 step 5). */
   keyCache?: { get(domain: string): string | null; set(domain: string, key: string): void };
 }
 
+export interface VerifiedSep7PayRequest extends Omit<Sep7PayRequest, "originStatus"> {
+  originStatus: "unverified" | "verified";
+}
+
+export type Sep7VerifiedParseResult =
+  | {
+      ok: true;
+      request: VerifiedSep7PayRequest;
+      verificationStatus: "unverified" | "verified";
+      originDomain?: string;
+    }
+  | {
+      ok: false;
+      code: Sep7ErrorCode;
+      error: string;
+      originDomain?: string;
+    };
+
 const SIGNATURE_PREFIX = "stellar.sep.7 - URI Scheme";
+const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /** The SEP-7 signing payload: 35 zero bytes, 0x04, prefix, then the URI without its signature. */
 export function sep7SignaturePayload(uriWithoutSignature: string): Uint8Array {
@@ -354,6 +388,24 @@ export function sep7SignaturePayload(uriWithoutSignature: string): Uint8Array {
   payload[35] = 4;
   payload.set(body, 36);
   return payload;
+}
+
+/**
+ * Append `origin_domain` (if not already present) and a SEP-7 ed25519 `signature`
+ * as the final query parameter of a `web+stellar:pay` URI.
+ */
+export function signPayUri(unsignedUri: string, originDomain: string, signer: Keypair): string {
+  if (!FQDN.test(originDomain)) {
+    throw new Sep7Error("invalid_origin", "Origin domain must be a valid fully-qualified domain.");
+  }
+  const hasOrigin = unsignedUri.includes(`origin_domain=`);
+  const withOrigin = hasOrigin
+    ? unsignedUri
+    : `${unsignedUri}&origin_domain=${encodeURIComponent(originDomain)}`;
+  const payload = sep7SignaturePayload(withOrigin);
+  const sigBytes = signer.sign(Buffer.from(payload));
+  const sigBase64 = Buffer.from(sigBytes).toString("base64");
+  return `${withOrigin}&signature=${encodeURIComponent(sigBase64)}`;
 }
 
 function stripSignature(uri: string): string | null {
@@ -370,6 +422,54 @@ function signingKeyFromToml(toml: string): string | null {
   return null;
 }
 
+function decodeBase64Signature(raw: string): Uint8Array | null {
+  if (!raw || raw.length % 4 !== 0 || !BASE64_PATTERN.test(raw)) {
+    return null;
+  }
+  try {
+    return Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+async function resolveOriginSigningKey(
+  domain: string,
+  deps: OriginVerifyDeps,
+): Promise<{ ok: true; key: string } | { ok: false; reason: string }> {
+  if (deps.resolveSigningKey) {
+    try {
+      const resolved = await deps.resolveSigningKey(domain);
+      if (!resolved || !StrKey.isValidEd25519PublicKey(resolved)) {
+        return { ok: false, reason: "The origin doesn't publish a request-signing key." };
+      }
+      return { ok: true, key: resolved };
+    } catch {
+      return { ok: false, reason: "The origin's signing key couldn't be resolved." };
+    }
+  }
+
+  if (!deps.fetch) {
+    return { ok: false, reason: "The origin's stellar.toml couldn't be loaded." };
+  }
+
+  let toml: string;
+  try {
+    const res = await deps.fetch(`https://${domain}/.well-known/stellar.toml`);
+    if (!res.ok) return { ok: false, reason: "The origin's stellar.toml couldn't be loaded." };
+    toml = await res.text();
+  } catch {
+    return { ok: false, reason: "The origin's stellar.toml couldn't be loaded." };
+  }
+
+  const key = signingKeyFromToml(toml);
+  if (!key || !StrKey.isValidEd25519PublicKey(key)) {
+    return { ok: false, reason: "The origin doesn't publish a request-signing key." };
+  }
+
+  return { ok: true, key };
+}
+
 /**
  * Verify a request's claimed `origin_domain` per SEP-7: fetch the domain's
  * stellar.toml, read URI_REQUEST_SIGNING_KEY, check the ed25519 signature over
@@ -382,7 +482,16 @@ export async function verifySep7Origin(
   deps: OriginVerifyDeps,
 ): Promise<OriginVerification> {
   const domain = request.originDomain;
-  if (!domain) return { status: "none" };
+  if (!domain) {
+    if (request.signature) {
+      return {
+        status: "invalid",
+        domain: "",
+        reason: "The request includes a signature without an origin domain.",
+      };
+    }
+    return { status: "none" };
+  }
   const invalid = (reason: string): OriginVerification => ({ status: "invalid", domain, reason });
 
   const unsigned = stripSignature(request.uri);
@@ -390,29 +499,19 @@ export async function verifySep7Origin(
     return invalid("The signature must be the request's last field.");
   }
 
-  let toml: string;
-  try {
-    const res = await deps.fetch(`https://${domain}/.well-known/stellar.toml`);
-    if (!res.ok) return invalid("The origin's stellar.toml couldn't be loaded.");
-    toml = await res.text();
-  } catch {
-    return invalid("The origin's stellar.toml couldn't be loaded.");
+  const resolvedKey = await resolveOriginSigningKey(domain, deps);
+  if (!resolvedKey.ok) {
+    return invalid(resolvedKey.reason);
   }
-
-  const key = signingKeyFromToml(toml);
-  if (!key || !StrKey.isValidEd25519PublicKey(key)) {
-    return invalid("The origin doesn't publish a request-signing key.");
-  }
+  const key = resolvedKey.key;
 
   const cached = deps.keyCache?.get(domain);
   if (cached && cached !== key) {
     return invalid("The origin's signing key changed since your last request from it.");
   }
 
-  let signature: Uint8Array;
-  try {
-    signature = Uint8Array.from(atob(request.signature), (c) => c.charCodeAt(0));
-  } catch {
+  const signature = decodeBase64Signature(request.signature);
+  if (!signature || signature.length !== 64) {
     return invalid("The request's signature is malformed.");
   }
 
@@ -431,4 +530,47 @@ export async function verifySep7Origin(
 
   deps.keyCache?.set(domain, key);
   return { status: "verified", domain };
+}
+
+/**
+ * Parse a `web+stellar:pay` URI and verify its origin signature when
+ * `origin_domain` is declared:
+ * - URIs with no `origin_domain` / `signature` succeed with `verificationStatus: "unverified"`.
+ * - URIs with `origin_domain` + valid signature against the domain's signing key succeed with `verificationStatus: "verified"`.
+ * - URIs where the signature is missing, malformed, does not match, or the origin's signing key cannot be resolved are rejected with `code: "invalid_origin"`.
+ */
+export async function parseAndVerifyPayUri(
+  input: unknown,
+  ctx: Sep7Context,
+  deps: OriginVerifyDeps,
+): Promise<Sep7VerifiedParseResult> {
+  const parsed = parsePayUri(input, ctx);
+  if (!parsed.ok) return parsed;
+
+  const { request } = parsed;
+  const verification = await verifySep7Origin(request, deps);
+
+  if (verification.status === "none") {
+    return {
+      ok: true,
+      request: { ...request, originStatus: "unverified" },
+      verificationStatus: "unverified",
+    };
+  }
+
+  if (verification.status === "invalid") {
+    return {
+      ok: false,
+      code: "invalid_origin",
+      error: verification.reason,
+      originDomain: verification.domain || request.originDomain,
+    };
+  }
+
+  return {
+    ok: true,
+    request: { ...request, originStatus: "verified" },
+    verificationStatus: "verified",
+    originDomain: verification.domain,
+  };
 }
