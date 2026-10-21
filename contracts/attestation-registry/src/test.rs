@@ -450,3 +450,112 @@ fn revoke_clears_publisher_and_reupsert_without_publisher_drops_attribution() {
     assert!(f.registry.is_verified(&contract));
     assert_eq!(f.registry.publisher_of(&contract), None);
 }
+
+// ----- Deterministic write resolution: same-ledger conflicting writes (Issue #701) -----
+
+#[test]
+fn same_ledger_conflicting_writes_resolve_last_write_wins() {
+    // Issue #701: Two attestation writes for the same contract ID arrive in the
+    // same ledger from different authorized attestors (e.g. Attestor A writes,
+    // rotates to Attestor B, and Attestor B writes a conflicting WASM hash).
+    // Soroban invocation order is sequential and deterministic; the outcome
+    // must be last-write-wins (LWW) with the final state matching the last write.
+    let f = setup();
+    let attestor_b = Address::generate(&f.env);
+    let contract = Address::generate(&f.env);
+    let hash_a = wasm_hash(&f.env, 0xAA);
+    let hash_b = wasm_hash(&f.env, 0xBB);
+    let now = f.env.ledger().sequence();
+
+    // 1. Attestor A issues first write in ledger `now`
+    assert!(upsert_as(&f, &f.attestor, &contract, &hash_a, now + 1000));
+    assert_eq!(
+        f.registry.attestation(&contract).unwrap().wasm_hash,
+        hash_a
+    );
+
+    // 2. In the SAME ledger `now`, Attestor A rotates authority to Attestor B
+    f.registry
+        .mock_auths(&[MockAuth {
+            address: &f.attestor,
+            invoke: &MockAuthInvoke {
+                contract: &f.registry.address,
+                fn_name: "set_attestor",
+                args: (attestor_b.clone(),).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_attestor(&attestor_b);
+    assert_eq!(f.registry.attestor(), attestor_b);
+
+    // 3. In the SAME ledger `now`, Attestor B writes a CONFLICTING hash and different expiry
+    assert!(upsert_as(&f, &attestor_b, &contract, &hash_b, now + 2000));
+
+    // Assert deterministic outcome: Last-Write-Wins (LWW)
+    assert!(f.registry.is_verified(&contract));
+    let final_record = f.registry.attestation(&contract).unwrap();
+    assert_eq!(final_record.wasm_hash, hash_b);
+    assert_eq!(final_record.attested_ledger, now);
+    assert_eq!(final_record.expires_ledger, now + 2000);
+
+    // 4. If the prior attestor (Attestor A) attempts to write again in the same ledger
+    // after losing authority, it is rejected with an auth error, and the record remains unchanged.
+    assert!(!upsert_as(&f, &f.attestor, &contract, &hash_a, now + 3000));
+    assert_eq!(
+        f.registry.attestation(&contract).unwrap().wasm_hash,
+        hash_b
+    );
+}
+
+#[test]
+fn same_ledger_conflicting_attributed_writes_resolve_last_write_wins() {
+    // Verifies that publisher attribution and WASM hash together follow deterministic LWW
+    // when different authorized attestors write conflicting data in the same ledger.
+    let f = setup();
+    let attestor_b = Address::generate(&f.env);
+    let contract = Address::generate(&f.env);
+    let hash_a = wasm_hash(&f.env, 0x11);
+    let hash_b = wasm_hash(&f.env, 0x22);
+    let pub_a = publisher_id(&f.env, 0xA1);
+    let pub_b = publisher_id(&f.env, 0xB2);
+    let now = f.env.ledger().sequence();
+
+    // Attestor A writes with publisher A
+    assert!(upsert_with_publisher_as(
+        &f,
+        &f.attestor,
+        &contract,
+        &hash_a,
+        &pub_a,
+        now + 500
+    ));
+
+    // Rotate to Attestor B in same ledger
+    f.registry
+        .mock_auths(&[MockAuth {
+            address: &f.attestor,
+            invoke: &MockAuthInvoke {
+                contract: &f.registry.address,
+                fn_name: "set_attestor",
+                args: (attestor_b.clone(),).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_attestor(&attestor_b);
+
+    // Attestor B writes with conflicting hash and publisher B in same ledger
+    assert!(upsert_with_publisher_as(
+        &f,
+        &attestor_b,
+        &contract,
+        &hash_b,
+        &pub_b,
+        now + 1500
+    ));
+
+    let record = f.registry.attestation(&contract).unwrap();
+    assert_eq!(record.wasm_hash, hash_b);
+    assert_eq!(record.publisher, Some(pub_b.clone()));
+    assert_eq!(record.expires_ledger, now + 1500);
+    assert_eq!(f.registry.publisher_of(&contract), Some(pub_b));
+}

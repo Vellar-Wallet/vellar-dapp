@@ -73,6 +73,56 @@ describe("memory job store — reaper (M7)", () => {
     expect(res.reclaimed).toBe(0);
     expect(store.get("r1")!.status).toBe("building");
   });
+
+  it("encounters a row manually edited to look fresh vs genuinely fresh (issue #694 accepted gap)", async () => {
+    // Issue #694: Test that age-based reaper not catching an artificially updated timestamp is an accepted gap.
+    // Staleness relies purely on the recorded timestamp (startedBuildingAtMs / updated_at).
+    const store = createMemoryJobStore();
+    const timeoutMs = 900_000; // 15 minutes
+    const now = 1_000_000_000;
+
+    // 1. Genuinely fresh row: claimed at `now`
+    store.submit("fresh-row", job("C1"), now);
+    // 2. Stranded row that had its timestamp manually edited to look fresh
+    store.submit("tampered-row", job("C2"), now - 10_000_000);
+
+    await store.claimSubmitted(2); // both become 'building'
+
+    // Simulate an operator or migration script manually updating startedBuildingAtMs
+    // on 'tampered-row' to make it look freshly claimed (5 seconds ago) even though
+    // the worker that originally claimed it has crashed / was abandoned.
+    const freshRow = store.get("fresh-row")!;
+    const tamperedRow = store.get("tampered-row")!;
+    freshRow.startedBuildingAtMs = now;
+    tamperedRow.startedBuildingAtMs = now - 5_000; // artificially edited to look fresh
+
+    // Run reaper at `now + 10_000` (10 seconds after `now`):
+    // - fresh-row is 10s old (< 15 min timeout) -> legitimately NOT reaped
+    // - tampered-row is 15s old (< 15 min timeout from edited timestamp) -> NOT reaped!
+    // This demonstrates the accepted gap: the age-based reaper cannot distinguish between
+    // a genuinely fresh row and an artificially edited timestamp without out-of-band heartbeats.
+    let res = await store.reapStranded({
+      timeoutMs,
+      maxAttempts: 3,
+      nowMs: now + 10_000,
+    });
+    expect(res.reclaimed).toBe(0);
+    expect(store.get("fresh-row")!.status).toBe("building");
+    expect(store.get("tampered-row")!.status).toBe("building");
+
+    // Once the timeout actually elapses past the artificially edited timestamp
+    // (now - 5_000 + 900_001 = now + 895_001):
+    res = await store.reapStranded({
+      timeoutMs,
+      maxAttempts: 3,
+      nowMs: now + 895_001,
+    });
+    // tampered-row has now exceeded the timeout relative to its edited timestamp and is reaped
+    expect(res.reclaimed).toBe(1);
+    expect(store.get("tampered-row")!.status).toBe("submitted");
+    // fresh-row was started at `now`, so at `now + 895_001` (895s < 900s) it remains untouched
+    expect(store.get("fresh-row")!.status).toBe("building");
+  });
 });
 
 describe("memory job store — queue controls (M7)", () => {
