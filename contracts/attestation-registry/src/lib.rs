@@ -54,6 +54,19 @@
 //! together. `upsert` (no publisher) is kept for attestors that cannot
 //! attribute; such attestations are verified but unattributed and never match
 //! a trusted-publisher set (deny-by-default).
+//!
+//! ## Deterministic same-ledger write resolution (Issue #701)
+//!
+//! If multiple attestation writes for the same contract ID arrive within the same
+//! ledger sequence from different authorized attestors (e.g. Attestor A writes,
+//! rotates write authority to Attestor B via `set_attestor`, and Attestor B writes
+//! a conflicting WASM hash within that same ledger), the outcome is strictly
+//! deterministic:
+//! - Soroban executes contract invocations sequentially in transaction order.
+//! - For authorized attestors, the latest invocation unconditionally updates the
+//!   contract's persistent storage record: LAST-WRITE-WINS (LWW).
+//! - Any write attempted by an un-authorized or de-authorized attestor fails with
+//!   an authentication error, preserving the prior valid attestation.
 
 #![no_std]
 

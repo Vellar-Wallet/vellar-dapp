@@ -216,6 +216,25 @@ describe("runCleanup — eligible row selection", () => {
     expect(store.rows.size).toBe(2);
     expect(store.archive.size).toBe(0);
   });
+
+  it("building rows are never eligible for cleanup, even if old or artificially modified (issue #694)", async () => {
+    // Issue #694: Cleanup strictly ignores non-terminal rows (building/submitted)
+    // regardless of their age or manual timestamp edits.
+    const store = makeStore([
+      makeRow("fresh-building", "building", 0),
+      makeRow("stranded-building", "building", 1000), // very old building row
+      makeRow("artificially-updated-building", "building", 5), // manually edited
+    ]);
+    const repo = createFakeCleanupRepository(store);
+    const result = await runCleanupViaRepo(repo, BASE_CONFIG);
+
+    expect(result.archived).toBe(0);
+    expect(result.deleted).toBe(0);
+    expect(store.rows.size).toBe(3);
+    expect(store.rows.has("fresh-building")).toBe(true);
+    expect(store.rows.has("stranded-building")).toBe(true);
+    expect(store.rows.has("artificially-updated-building")).toBe(true);
+  });
 });
 
 describe("runCleanup — idempotency (interrupted run safety)", () => {
