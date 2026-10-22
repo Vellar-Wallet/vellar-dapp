@@ -39,7 +39,16 @@ describe("loadState", () => {
     await expect(loadState(kv)).resolves.toEqual({ grants: [] });
   });
 
-  it("returns empty state when storage itself throws", async () => {
+
+  it("applies defaults independently when storage is only partially initialized", async () => {
+    const kv = memoryKv({
+      "vela.extension.state": { grants: [grant] },
+    });
+
+    await expect(loadState(kv)).resolves.toEqual({
+      grants: [grant],
+    });
+  });  it("returns empty state when storage itself throws", async () => {
     const kv: KeyValueStore = {
       get: async () => {
         throw new Error("storage broken");
