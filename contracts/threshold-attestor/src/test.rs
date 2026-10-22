@@ -4,7 +4,8 @@ use super::*;
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sdk::{
     auth::{ContractContext, CustomAccountInterface},
-    symbol_short, testutils::Address as _,
+    symbol_short,
+    testutils::Address as _,
     Address, Bytes, BytesN, Env, Vec,
 };
 use vela_attestation_registry::{
@@ -278,8 +279,10 @@ fn test_integration_with_attestation_registry() {
     let threshold_attestor_id = env.register(Contract, (2u32, signers, Some(1u32)));
 
     // Deploy attestation registry pointing to the threshold attestor contract!
-    let registry_id =
-        env.register(AttestationRegistryContract, (threshold_attestor_id.clone(),));
+    let registry_id = env.register(
+        AttestationRegistryContract,
+        (threshold_attestor_id.clone(),),
+    );
     let registry = AttestationRegistryClient::new(&env, &registry_id);
 
     assert_eq!(registry.attestor(), threshold_attestor_id);
@@ -294,12 +297,151 @@ fn test_integration_with_attestation_registry() {
     registry.upsert(&target, &wasm_hash, &expires_ledger);
 
     assert!(registry.is_verified(&target));
-    assert_eq!(
-        registry.attestation(&target).unwrap().wasm_hash,
-        wasm_hash
-    );
+    assert_eq!(registry.attestation(&target).unwrap().wasm_hash, wasm_hash);
 
     // Revoke
     registry.revoke(&target);
     assert!(!registry.is_verified(&target));
+}
+
+// ----- #593: threshold exactly equal to signer count (unanimous), and the
+// threshold == 1 boundary (any single signer suffices), as distinct
+// configurations from "threshold strictly below signer count". -----
+
+#[test]
+fn test_unanimous_threshold_succeeds_only_when_every_signer_has_signed() {
+    // threshold == signer_count: ALL THREE signers must sign; this is a
+    // distinct boundary from the general "2 of 3" case already covered by
+    // `test_check_auth_threshold_success` above.
+    let env = Env::default();
+    let (sk1, pk1) = generate_key(&env, 1);
+    let (sk2, pk2) = generate_key(&env, 2);
+    let (sk3, pk3) = generate_key(&env, 3);
+
+    let signers = Vec::from_array(&env, [pk1, pk2, pk3]);
+    let contract_id = env.register(Contract, (3u32, signers, None::<u32>));
+
+    let (hash_payload, payload_bytes) = create_payload_and_hash(&env, &[7u8; 32]);
+    let target_contract = Address::generate(&env);
+    let auth_contexts = Vec::from_array(
+        &env,
+        [Context::Contract(ContractContext {
+            contract: target_contract,
+            fn_name: symbol_short!("upsert"),
+            args: Vec::new(&env),
+        })],
+    );
+
+    // All three sign: unanimous agreement reached, must succeed.
+    let sig1_bytes = sk1.sign(&payload_bytes).to_bytes();
+    let sig2_bytes = sk2.sign(&payload_bytes).to_bytes();
+    let sig3_bytes = sk3.sign(&payload_bytes).to_bytes();
+    let all_sigs = ThresholdSignatures {
+        signatures: Vec::from_array(
+            &env,
+            [
+                SignerSignature {
+                    signer_index: 0,
+                    signature: BytesN::from_array(&env, &sig1_bytes),
+                },
+                SignerSignature {
+                    signer_index: 1,
+                    signature: BytesN::from_array(&env, &sig2_bytes),
+                },
+                SignerSignature {
+                    signer_index: 2,
+                    signature: BytesN::from_array(&env, &sig3_bytes),
+                },
+            ],
+        ),
+    };
+    let res = env.as_contract(&contract_id, || {
+        Contract::__check_auth(
+            env.clone(),
+            hash_payload.clone(),
+            all_sigs,
+            auth_contexts.clone(),
+        )
+    });
+    assert_eq!(res, Ok(()));
+
+    // Missing even one signer (2 of 3, under a unanimous threshold) fails —
+    // the distinguishing property of this boundary vs. a strictly-lower
+    // threshold, where 2 of 3 would have been enough.
+    let two_sigs = ThresholdSignatures {
+        signatures: Vec::from_array(
+            &env,
+            [
+                SignerSignature {
+                    signer_index: 0,
+                    signature: BytesN::from_array(&env, &sig1_bytes),
+                },
+                SignerSignature {
+                    signer_index: 1,
+                    signature: BytesN::from_array(&env, &sig2_bytes),
+                },
+            ],
+        ),
+    };
+    let res = env.as_contract(&contract_id, || {
+        Contract::__check_auth(env.clone(), hash_payload, two_sigs, auth_contexts)
+    });
+    assert_eq!(res, Err(ThresholdError::InsufficientSignatures));
+}
+
+#[test]
+fn test_threshold_of_one_any_single_signer_suffices() {
+    // threshold == 1: the OTHER boundary — any one of the configured signers
+    // alone is enough, in contrast to the unanimous (threshold == signer
+    // count) case above. Exercised with each of the three signers in turn to
+    // show it is genuinely "any one", not "only signer 0".
+    let env = Env::default();
+    let (sk1, pk1) = generate_key(&env, 1);
+    let (sk2, pk2) = generate_key(&env, 2);
+    let (sk3, pk3) = generate_key(&env, 3);
+
+    let signers = Vec::from_array(&env, [pk1, pk2, pk3]);
+    let contract_id = env.register(Contract, (1u32, signers, None::<u32>));
+
+    let (hash_payload, payload_bytes) = create_payload_and_hash(&env, &[11u8; 32]);
+    let target_contract = Address::generate(&env);
+    let auth_contexts = Vec::from_array(
+        &env,
+        [Context::Contract(ContractContext {
+            contract: target_contract,
+            fn_name: symbol_short!("upsert"),
+            args: Vec::new(&env),
+        })],
+    );
+
+    for (index, sk) in [(0u32, &sk1), (1u32, &sk2), (2u32, &sk3)] {
+        let sig_bytes = sk.sign(&payload_bytes).to_bytes();
+        let sigs = ThresholdSignatures {
+            signatures: Vec::from_array(
+                &env,
+                [SignerSignature {
+                    signer_index: index,
+                    signature: BytesN::from_array(&env, &sig_bytes),
+                }],
+            ),
+        };
+        let res = env.as_contract(&contract_id, || {
+            Contract::__check_auth(
+                env.clone(),
+                hash_payload.clone(),
+                sigs,
+                auth_contexts.clone(),
+            )
+        });
+        assert_eq!(res, Ok(()));
+    }
+
+    // Zero signatures still fails — threshold 1 is not threshold 0.
+    let no_sigs = ThresholdSignatures {
+        signatures: Vec::new(&env),
+    };
+    let res = env.as_contract(&contract_id, || {
+        Contract::__check_auth(env.clone(), hash_payload, no_sigs, auth_contexts)
+    });
+    assert_eq!(res, Err(ThresholdError::InsufficientSignatures));
 }

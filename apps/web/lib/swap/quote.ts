@@ -86,8 +86,14 @@ export function normalizeQuote(input: {
   if (path.length < 2 || path[0] !== sell.contractId || path[path.length - 1] !== buy.contractId) {
     throw new SwapQuoteError("The venue returned a route for different assets.");
   }
-  if (hopAmounts.length !== path.length || hopAmounts[0] !== amountIn) {
+  if (!Array.isArray(hopAmounts) || hopAmounts.length !== path.length || hopAmounts[0] !== amountIn) {
     throw new SwapQuoteError("The venue returned an inconsistent quote.");
+  }
+  // A missing hop must fail here as a typed error — comparing a hole against a
+  // bigint throws a TypeError that would surface as a confusing UI crash rather
+  // than "this quote is unusable".
+  if (hopAmounts.some((a) => typeof a !== "bigint")) {
+    throw new SwapQuoteError("The venue returned an unexpected response.");
   }
   if (hopAmounts.some((a) => a <= 0n)) {
     throw new SwapQuoteError("Not enough liquidity on this route for that amount.");
@@ -132,9 +138,15 @@ export function worstCaseRate(quote: SwapQuote, bound: SlippageBound): string {
   return formatRate(quote.amountIn, bound.minOut, quote.sell.decimals, quote.buy.decimals);
 }
 
-/** A quote older than this is refused at approval time and must be refreshed. */
+/** Default max age for a quote. A quote older than this is refused at approval
+ * time and must be refreshed. Override per client with `maxQuoteAgeMs`. */
 export const QUOTE_TTL_MS = 30_000;
 
-export function isQuoteFresh(quote: SwapQuote, now: number): boolean {
-  return now - quote.quotedAt <= QUOTE_TTL_MS;
+/**
+ * Whether `quote` is still within `maxAgeMs` of `now`. Checked immediately
+ * before the signable transaction is built, so a quote that aged out between
+ * fetch and approval forces a re-quote rather than signing a stale price.
+ */
+export function isQuoteFresh(quote: SwapQuote, now: number, maxAgeMs: number = QUOTE_TTL_MS): boolean {
+  return now - quote.quotedAt <= maxAgeMs;
 }

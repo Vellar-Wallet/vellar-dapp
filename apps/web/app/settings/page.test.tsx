@@ -24,6 +24,22 @@ vi.mock("@/lib/agent-keys", () => ({
   useRevokeAgentKey: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
+// WalletUpgradeCard's data seam (#572). Mocked like the other hooks so the
+// settings suite does not need a QueryClientProvider just to render the shell.
+vi.mock("@/lib/wallet-version", () => ({
+  useWalletVersion: () => ({
+    data: {
+      state: "current",
+      currentHash: "fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0",
+      targetHash: "fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0",
+    },
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
+  useUpgradeWallet: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 // Signer hooks (#401): the query is mocked at the hook seam (like sessions);
 // the pure classification/lockout logic it wraps is exercised for real via
 // the actual signer-model module.

@@ -23,6 +23,11 @@ export type AgentVerificationMode =
 export interface AgentGrantInput {
   /** Token contract (C…) -> the spending-limit policy instance(s) budgeting it. */
   budgets: Record<string, string[]>;
+  /** Token contract -> the budget the spending-limit policy encodes, base units. */
+  budgetAmounts: Record<string, string>;
+  /** Token contract -> the wallet's current spendable balance of THAT token,
+   * base units. Per-token, never the native balance standing in for another asset. */
+  spendableBalances: Record<string, string>;
   verification: AgentVerificationMode;
 }
 
@@ -47,6 +52,44 @@ const MAX_REASON_LENGTH = 200;
 function assertContract(id: string, what: string): void {
   if (!StrKey.isValidContract(id))
     throw new AgentGrantError(`${what} must be a contract address (C…).`);
+}
+
+function parseBaseUnits(raw: string, what: string): bigint {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new AgentGrantError(`${what} must be a non-negative integer in base units.`);
+  }
+  return BigInt(trimmed);
+}
+
+/**
+ * Mint-time budget check: a grant budget may not exceed the wallet's current
+ * spendable balance of that token.
+ *
+ * Decision: BLOCK (not warn). Consistent with the no-silent-signing principle —
+ * a budget larger than the spendable balance can never be fully used and
+ * misleads the human about what the agent can spend. Fail closed: lower the
+ * budget or fund the wallet. Checked per token against THAT token's balance,
+ * so a token-scoped budget is never validated against the native balance.
+ */
+function assertBudgetWithinBalance(token: string, input: AgentGrantInput): void {
+  const rawBudget = input.budgetAmounts[token];
+  const rawBalance = input.spendableBalances[token];
+  if (rawBudget === undefined) {
+    throw new AgentGrantError(`Every token needs a budget amount for the balance check.`);
+  }
+  if (rawBalance === undefined) {
+    throw new AgentGrantError(
+      `Every token needs the wallet's current spendable balance for the balance check.`,
+    );
+  }
+  const budget = parseBaseUnits(rawBudget, "The grant budget");
+  const spendable = parseBaseUnits(rawBalance, "The spendable balance");
+  if (budget > spendable) {
+    throw new AgentGrantError(
+      `The grant budget (${budget} base units) exceeds the wallet's current spendable balance (${spendable} base units) for token ${token}. Lower the budget or fund the wallet.`,
+    );
+  }
 }
 
 export function buildAgentGrants(input: AgentGrantInput): {
@@ -81,6 +124,7 @@ export function buildAgentGrants(input: AgentGrantInput): {
     if (v.mode === "verified-only" && budget.includes(v.verifiedOnlyPolicy)) {
       throw new AgentGrantError("The verified-only policy can't double as a spending limit.");
     }
+    assertBudgetWithinBalance(token, input);
     return {
       token,
       policies: v.mode === "verified-only" ? [...budget, v.verifiedOnlyPolicy] : budget,

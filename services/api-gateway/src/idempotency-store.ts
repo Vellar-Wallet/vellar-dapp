@@ -39,6 +39,9 @@ export interface IdempotencyRecord {
   headers: Record<string, string>;
   body: string;
   recordedAt: number;
+  /** Route this record was recorded under, used to pick the per-route TTL
+   * override when one is configured. Absent means the global default applies. */
+  route?: string;
 }
 
 export type IdempotencyLookupResult =
@@ -49,13 +52,38 @@ export type IdempotencyLookupResult =
 export class IdempotencyStore {
   private records = new Map<string, IdempotencyRecord>();
   private readonly ttlMs: number;
+  private readonly routeTtlMs: Record<string, number>;
 
-  constructor(options: { ttlMs?: number } = {}) {
+  /** Routes that need a longer idempotency window than the global default:
+   *
+   * - `POST /policies/deploy` — a policy deployment is a multi-step,
+   *   potentially slow on-chain operation. A client retry hours later must
+   *   still deduplicate against the original deployment rather than
+   *   starting a second one.
+   * - `POST /lifecycle/execute` — same reasoning: a paid, long-running
+   *   execution whose settlement can take minutes to hours.
+   *
+   * Routes with short, repeatable reads (e.g. `GET /wallet/balance`) do not
+   * need an override — the global default is already generous for them.
+   */
+  constructor(
+    options: {
+      ttlMs?: number;
+      /** Per-route TTL overrides in ms, keyed by the route string stored on
+       * each record. Falls back to the global `ttlMs` (default 24h). */
+      routeTtlMs?: Record<string, number>;
+    } = {},
+  ) {
     this.ttlMs = options.ttlMs ?? 24 * 60 * 60 * 1000; // 24h default
+    this.routeTtlMs = options.routeTtlMs ?? {};
+  }
+
+  private ttlFor(route: string | undefined): number {
+    return (route !== undefined ? this.routeTtlMs[route] : undefined) ?? this.ttlMs;
   }
 
   private isExpired(record: IdempotencyRecord, now: number): boolean {
-    return now - record.recordedAt > this.ttlMs;
+    return now - record.recordedAt > this.ttlFor(record.route);
   }
 
   /** Looks up a key against the payload it would be used with THIS time.

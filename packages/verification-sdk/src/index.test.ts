@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ClientTimeoutError,
   createVerificationClient,
   trustSignal,
   VerificationApiError,
@@ -96,5 +97,91 @@ describe("trustSignal", () => {
     expect(trustSignal("submitted").tone).toBe("pending");
     expect(trustSignal("building").tone).toBe("pending");
     expect(trustSignal("unverified")).toEqual({ label: "Unverified", tone: "neutral" });
+  });
+
+  it("gives never-verified (unverified) a distinct, lower-severity tone than explicitly-failed verification (#587)", () => {
+    const unverified = trustSignal("unverified");
+    const failed = trustSignal("failed");
+    expect(unverified.tone).toBe("neutral");
+    expect(failed.tone).toBe("warning");
+    expect(unverified.tone).not.toBe(failed.tone);
+    expect(unverified.label).not.toBe(failed.label);
+  });
+
+  it("treats dead_letter as a failure, not as unverified/neutral (#587)", () => {
+    // A dead_letter job genuinely failed after exhausting retries; it must
+    // not silently fall through to the unverified default, which would
+    // misrepresent a confirmed failure as an unchecked contract.
+    expect(trustSignal("dead_letter")).toEqual(trustSignal("failed"));
+    expect(trustSignal("dead_letter").tone).not.toBe(trustSignal("unverified").tone);
+  });
+});
+
+function hangingFetch(): typeof fetch {
+  return vi.fn<typeof fetch>(
+    (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }),
+  ) as unknown as typeof fetch;
+}
+
+describe("client-side timeout (issue #550)", () => {
+  it("throws ClientTimeoutError when the network request hangs with no response", async () => {
+    const client = createVerificationClient({
+      apiUrl: "https://api.test",
+      fetch: hangingFetch(),
+      timeoutMs: 50,
+    });
+    const err = await client.getStatus(C1).catch((e) => e);
+    expect(err).toBeInstanceOf(ClientTimeoutError);
+    expect(err.name).toBe("ClientTimeoutError");
+    expect(err.code).toBe("client_timeout");
+    expect(err.timeoutMs).toBe(50);
+  });
+
+  it("ClientTimeoutError is distinguishable from a server-reported build-timeout", async () => {
+    // Server-reported build-timeout arrives as a normal API error response.
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ error: "build_timeout", message: "Build timed out" }, 504),
+    );
+    const client = createVerificationClient({ apiUrl: "https://api.test", fetch: fetchMock });
+    const serverErr = await client.submit(submitInput).catch((e) => e);
+    expect(serverErr).toBeInstanceOf(VerificationApiError);
+    expect(serverErr.name).toBe("VerificationApiError");
+    expect(serverErr.status).toBe(504);
+
+    // Client-side timeout is a distinct class.
+    const hangClient = createVerificationClient({
+      apiUrl: "https://api.test",
+      fetch: hangingFetch(),
+      timeoutMs: 50,
+    });
+    const clientErr = await hangClient.getStatus(C1).catch((e) => e);
+    expect(clientErr).toBeInstanceOf(ClientTimeoutError);
+    expect(clientErr).not.toBeInstanceOf(VerificationApiError);
+  });
+
+  it("does not timeout when the response arrives within the window", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ contractId: C1, status: "verified" }),
+    );
+    const client = createVerificationClient({
+      apiUrl: "https://api.test",
+      fetch: fetchMock,
+      timeoutMs: 5000,
+    });
+    const status = await client.getStatus(C1);
+    expect(status.status).toBe("verified");
+  });
+
+  it("uses default 30s timeout when not specified", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ contractId: C1, status: "verified" }),
+    );
+    const client = createVerificationClient({ apiUrl: "https://api.test", fetch: fetchMock });
+    await client.getStatus(C1);
+    // Request completed — no timeout error.
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

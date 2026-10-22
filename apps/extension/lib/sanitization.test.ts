@@ -50,6 +50,56 @@ describe("input sanitization helpers (#312)", () => {
       expect(sanitizeString(null)).toBe("");
       expect(sanitizeString(undefined)).toBe("");
     });
+
+    // #578: a dApp-supplied memo (or any other free-text field) containing
+    // control characters, which — unsanitized — could affect terminal/log
+    // rendering or visually spoof the approval screen.
+    describe("control characters in a dApp-supplied memo field", () => {
+      it("strips null bytes and other non-printable C0 control characters", () => {
+        // \x00 null byte, \x07 bell, \x1b ESC (start of an ANSI escape code).
+        const memo = "Pay\x00invoice\x07 #42\x1b[31m";
+        expect(sanitizeString(memo)).toBe("Payinvoice #42[31m");
+      });
+
+      it("strips a full ANSI escape sequence rather than just its ESC byte", () => {
+        // \x1b[31m is "set foreground red" — a terminal/log-spoofing vector if
+        // this memo is ever echoed to a console or log viewer.
+        const memo = "\x1b[31mDANGER\x1b[0m normal text";
+        const result = sanitizeString(memo);
+        expect(result).not.toContain("\x1b");
+        expect(result).toContain("DANGER");
+        expect(result).toContain("normal text");
+      });
+
+      it("strips DEL (0x7f) and preserves space/tab/newline", () => {
+        const memo = "line one\x7f\nline two\ttabbed";
+        const result = sanitizeString(memo);
+        expect(result).not.toContain("\x7f");
+        expect(result).toBe("line one\nline two\ttabbed");
+      });
+
+      it("strips Unicode bidirectional-text override characters (UI-spoofing vector)", () => {
+        // U+202E (RIGHT-TO-LEFT OVERRIDE) + U+202C (POP DIRECTIONAL FORMATTING)
+        // can visually reorder the surrounding text on the approval screen —
+        // e.g. making "gpj.exe" render as "exe.jpg" — without being caught by
+        // the C0/C1 control-character range, since bidi overrides are
+        // themselves printable Unicode characters.
+        const memo = "Invoice ‮exe.gpj‬.pdf";
+        const result = sanitizeString(memo);
+        expect(result).not.toContain("‮");
+        expect(result).not.toContain("‬");
+        expect(result).toBe("Invoice exe.gpj.pdf");
+      });
+
+      it("strips Unicode bidirectional isolate characters alongside overrides", () => {
+        // U+2066-U+2069 (LRI/RLI/FSI/PDI) are the isolate counterparts to the
+        // override characters above and carry the same spoofing risk.
+        const memo = "⁦hidden⁩ memo";
+        const result = sanitizeString(memo);
+        expect(result).not.toMatch(/[⁦-⁩]/);
+        expect(result).toBe("hidden memo");
+      });
+    });
   });
 
   describe("sanitizeDAppMetadata", () => {

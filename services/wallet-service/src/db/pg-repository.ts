@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lt, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, or } from "drizzle-orm";
 import type { Network } from "@vellar/types";
 import {
   decodeAuditCursor,
@@ -141,7 +141,8 @@ function toAuditEvent(row: typeof activityLogs.$inferSelect) {
     data: row.data,
     // Real actor column (issue #256) is authoritative; data.actor is kept
     // only as a fallback for any pre-migration row the backfill missed.
-    actor: row.actor ?? ((row.data as Record<string, unknown> | undefined)?.actor as string | undefined),
+    actor:
+      row.actor ?? ((row.data as Record<string, unknown> | undefined)?.actor as string | undefined),
   };
 }
 
@@ -163,6 +164,9 @@ export function createPgAuditLog(db: Db): AuditLog {
       if (filter?.type) {
         events = events.filter((e) => e.type === filter.type);
       }
+      if (filter?.types) {
+        events = events.filter((e) => filter.types!.includes(e.type));
+      }
       if (filter?.actor) {
         events = events.filter((e) => e.actor === filter.actor);
       }
@@ -172,6 +176,8 @@ export function createPgAuditLog(db: Db): AuditLog {
     async listPage(filter) {
       const conditions = [];
       if (filter.type) conditions.push(eq(activityLogs.type, filter.type));
+      else if (filter.types && filter.types.length > 0)
+        conditions.push(inArray(activityLogs.type, filter.types));
       if (filter.actor) conditions.push(eq(activityLogs.actor, filter.actor));
 
       if (filter.after) {
@@ -182,7 +188,10 @@ export function createPgAuditLog(db: Db): AuditLog {
         // exactly, so a page boundary landing on a tied `at` cannot skip or
         // repeat a row.
         conditions.push(
-          or(lt(activityLogs.at, afterAt), and(eq(activityLogs.at, afterAt), lt(activityLogs.id, decoded.id))),
+          or(
+            lt(activityLogs.at, afterAt),
+            and(eq(activityLogs.at, afterAt), lt(activityLogs.id, decoded.id)),
+          ),
         );
       }
 

@@ -283,11 +283,55 @@ export interface ClassicOp {
   starting_balance?: string;
   /** Horizon's forward-only page token for the operations collection. */
   paging_token?: string;
+  /** invoke_host_function: the invoked contract (C… address). */
+  address?: string;
+  /** invoke_host_function: contract function name, when Horizon exposes it. */
+  function_name?: string;
+  /** invoke_host_function: host-function type discriminator. */
+  function?: string;
 }
 
 export const NATIVE_DECIMALS = 7;
 
+/**
+ * Human-readable description for a Soroban invokeHostFunction operation.
+ *
+ * An invocation the parser can specifically identify (Horizon carried the
+ * contract function name) reads as "Contract call: swap"; one it cannot
+ * identify falls back to a generic "Contract invocation" rather than
+ * throwing or being dropped. Both are distinct from a bare unknown-operation
+ * fallback, which produces no row at all.
+ */
+export function describeInvokeHostFunction(op: ClassicOp): string {
+  const name = op.function_name;
+  if (typeof name === "string" && /^[\w.:-]{1,64}$/.test(name)) {
+    return `Contract call: ${name}`;
+  }
+  return "Contract invocation";
+}
+
+function invokeHostFunctionRow(op: ClassicOp): HistoryTx | undefined {
+  const contractId = typeof op.address === "string" ? op.address : "";
+  return {
+    // Namespaced so a classic op can never collide with a Soroban event id.
+    id: `classic:${op.id}`,
+    kind: "soroban",
+    direction: "self",
+    counterparty: contractId,
+    amount: 0n,
+    asset: { kind: "soroban", code: "Contract", decimals: NATIVE_DECIMALS, contractId },
+    timestamp: op.created_at,
+    status: op.transaction_successful ? "success" : "failed",
+    txHash: op.transaction_hash,
+    description: describeInvokeHostFunction(op),
+  };
+}
+
 export function classicOpToRow(accountId: string, op: ClassicOp): HistoryTx | undefined {
+  if (op.type === "invoke_host_function") {
+    return invokeHostFunctionRow(op);
+  }
+
   const asset = classicAssetOf(op);
   if (!asset) return undefined;
 
@@ -309,8 +353,8 @@ export function classicOpToRow(accountId: string, op: ClassicOp): HistoryTx | un
     counterparty = op.account ?? "";
     direction = op.from === accountId ? "out" : "in";
   } else {
-    // Trustline changes, set_options, invoke_host_function, etc. are not
-    // transfer-shaped and carry no amount to show.
+    // Trustline changes, set_options, etc. are not transfer-shaped and carry
+    // no amount to show.
     return undefined;
   }
 

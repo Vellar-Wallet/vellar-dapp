@@ -244,6 +244,18 @@ body,
   line-height: 1.5;
   color: var(--ink-faint);
 }
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 8px;
+}
+.empty-cta {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
 
 /* Not-paired state */
 .unpaired {

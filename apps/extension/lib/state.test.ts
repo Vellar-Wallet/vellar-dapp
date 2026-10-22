@@ -4,6 +4,8 @@ import {
   addGrant,
   clearPairedWallet,
   loadState,
+  MAX_PAIRED_ORIGINS,
+  PairedOriginLimitError,
   revokeGrant,
   setPairedWallet,
   type KeyValueStore,
@@ -171,5 +173,67 @@ describe("grants", () => {
     await expect(revokeGrant(kv, "https://dapp.example", "testnet")).resolves.toBe(true);
     await expect(revokeGrant(kv, "https://dapp.example", "testnet")).resolves.toBe(false);
     expect((await loadState(kv)).grants).toEqual([]);
+  });
+});
+
+// #579: an explicit, configurable ceiling on distinct paired dApp origins.
+describe("paired-origin limit (#579)", () => {
+  function originGrant(i: number): PermissionGrant {
+    return { ...grant, origin: `https://dapp-${i}.example` };
+  }
+
+  it("the last allowed pairing (exactly reaching the limit) still succeeds", async () => {
+    const kv = memoryKv();
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+    const state = await loadState(kv);
+    expect(state.grants).toHaveLength(MAX_PAIRED_ORIGINS);
+  });
+
+  it("pairing one more ORIGIN past the limit throws PairedOriginLimitError", async () => {
+    const kv = memoryKv();
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+    await expect(addGrant(kv, originGrant(MAX_PAIRED_ORIGINS))).rejects.toBeInstanceOf(
+      PairedOriginLimitError,
+    );
+    // Rejected pairing must not have been persisted.
+    expect((await loadState(kv)).grants).toHaveLength(MAX_PAIRED_ORIGINS);
+  });
+
+  it("at the limit, granting a NEW network for an ALREADY-paired origin is never blocked", async () => {
+    const kv = memoryKv();
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+    // origin-0 is already paired (testnet); adding mainnet for the SAME origin
+    // doesn't add a new distinct origin, so it must not be blocked by the limit.
+    await expect(addGrant(kv, { ...originGrant(0), network: "mainnet" })).resolves.toBeUndefined();
+    expect((await loadState(kv)).grants).toHaveLength(MAX_PAIRED_ORIGINS + 1);
+  });
+
+  it("at the limit, replacing the grant for an already-paired origin+network is never blocked", async () => {
+    const kv = memoryKv();
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+    await expect(
+      addGrant(kv, { ...originGrant(0), capabilities: ["connect"] }),
+    ).resolves.toBeUndefined();
+    const state = await loadState(kv);
+    expect(state.grants).toHaveLength(MAX_PAIRED_ORIGINS);
+    expect(state.grants.find((g) => g.origin === originGrant(0).origin)?.capabilities).toEqual([
+      "connect",
+    ]);
+  });
+
+  it("the error message suggests unpairing an unused origin", async () => {
+    const kv = memoryKv();
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+    await expect(addGrant(kv, originGrant(MAX_PAIRED_ORIGINS))).rejects.toThrow(/unpair/i);
   });
 });

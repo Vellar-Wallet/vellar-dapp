@@ -57,6 +57,8 @@ const PUBLIC_BUILD_HINTS: Partial<Record<BuildExecutorError["code"], string>> = 
     "Dependencies could not be resolved for an offline build: commit an up-to-date Cargo.lock that uses only crates.io and public https git dependencies (no submodules).",
   dependency_fetch_failed:
     "A dependency host was unreachable while pre-fetching from Cargo.lock; the build will be retried.",
+  insufficient_disk_space:
+    "The verification worker does not have enough free disk space to pre-fetch dependencies; this is an operator issue, not a problem with the submission.",
 };
 
 export interface RunVerificationDeps {

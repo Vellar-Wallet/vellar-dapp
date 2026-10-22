@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { bucketFor, isFlagEnabled, readFlagConfig } from "./feature-flags";
 
 describe("readFlagConfig (#335)", () => {
@@ -44,6 +44,36 @@ describe("readFlagConfig (#335)", () => {
   it("clamps a negative rolloutPercent up to 0", () => {
     const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: "-10" });
     expect(cfg.rolloutPercent).toBe(0);
+  });
+
+  it("falls back to 0% when rolloutPercent is NaN from a malformed value", () => {
+    const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: "25.5.5" });
+    expect(cfg.rolloutPercent).toBe(0);
+  });
+
+  it("falls back to empty allowlist when allowlist is malformed (commas only)", () => {
+    const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ALLOWLIST: ",,," });
+    expect(cfg.allowlist).toEqual([]);
+  });
+
+  it("treats an entirely absent rolloutPercent as the default (0%)", () => {
+    const cfg = readFlagConfig("f", {});
+    expect(cfg.rolloutPercent).toBe(0);
+  });
+
+  it("treats an entirely absent allowlist as the default (empty)", () => {
+    const cfg = readFlagConfig("f", {});
+    expect(cfg.allowlist).toEqual([]);
+  });
+
+  it("handles rolloutPercent as an empty string by treating it as absent", () => {
+    const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ROLLOUT_PERCENT: "" });
+    expect(cfg.rolloutPercent).toBe(0);
+  });
+
+  it("handles allowlist as an empty string by treating it as absent", () => {
+    const cfg = readFlagConfig("f", { NEXT_PUBLIC_FLAG_F_ALLOWLIST: "" });
+    expect(cfg.allowlist).toEqual([]);
   });
 });
 

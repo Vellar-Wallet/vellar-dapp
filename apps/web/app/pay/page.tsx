@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TrustBadge } from "@vellar/ui";
 import { AppShell } from "@/components/app-shell";
 import { Eyebrow, LpActionButton, LpButton } from "@/app/landing/ui";
 import { SendPayment } from "@/app/dashboard/send-payment";
@@ -11,6 +12,7 @@ import {
   type OriginVerification,
   type Sep7PayRequest,
 } from "@/lib/sep7";
+import { getVerificationStatus, type VerificationStatusResult } from "@/lib/verification";
 import { useWalletSession } from "@/lib/wallet-context";
 
 // Incoming SEP-7 payment requests (issue #402). Reached from a
@@ -49,11 +51,24 @@ type Intake =
   | { state: "verifying"; request: Sep7PayRequest }
   | { state: "ready"; request: Sep7PayRequest; origin: OriginVerification };
 
+type ContractTrust = VerificationStatusResult | "loading" | "error" | null;
+
+/** Maps the lookup state to TrustBadge's status prop (issue #703). */
+function trustBadgeStatus(trust: ContractTrust): "loading" | "error" | VerificationStatusResult["status"] {
+  if (trust === null) return "loading";
+  if (trust === "loading" || trust === "error") return trust;
+  return trust.status;
+}
+
 export default function PayPage() {
   const session = useWalletSession();
   const [raw, setRaw] = useState<string | null | undefined>(undefined);
   const [intake, setIntake] = useState<Intake>({ state: "loading" });
   const [pasted, setPasted] = useState("");
+  // #703: when the request's destination is a contract, surface the same
+  // trust-signal pattern used in verify/page.tsx and the extension approval
+  // screen before the user reaches the approval step, not a generic error.
+  const [contractTrust, setContractTrust] = useState<ContractTrust>(null);
 
   useEffect(() => {
     setRaw(new URLSearchParams(window.location.search).get("uri"));
@@ -91,6 +106,26 @@ export default function PayPage() {
       cancelled = true;
     };
   }, [raw, session]);
+
+  useEffect(() => {
+    if (intake.state !== "ready" || intake.request.destinationKind !== "contract") {
+      setContractTrust(null);
+      return;
+    }
+    const contractId = intake.request.destination;
+    let cancelled = false;
+    setContractTrust("loading");
+    void getVerificationStatus(contractId)
+      .then((status) => {
+        if (!cancelled) setContractTrust(status);
+      })
+      .catch(() => {
+        if (!cancelled) setContractTrust("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [intake]);
 
   return (
     <AppShell>
@@ -164,20 +199,39 @@ export default function PayPage() {
         )}
 
         {intake.state === "ready" && session && (
-          <SendPayment
-            from={session.accountId}
-            token={intake.request.asset}
-            network={session.network}
-            onSuccess={() => undefined}
-            prefill={{
-              to: intake.request.destination,
-              ...(intake.request.amount !== undefined && { amount: intake.request.amount }),
-            }}
-            request={{
-              originDomain: intake.origin.status === "verified" ? intake.origin.domain : null,
-              ...(intake.request.msg !== undefined && { msg: intake.request.msg }),
-            }}
-          />
+          <div className="flex flex-col gap-3">
+            {intake.request.destinationKind === "contract" && (
+              <section
+                className="lpa-panel flex items-center gap-2.5"
+                aria-label="Contract verification status"
+              >
+                <TrustBadge status={trustBadgeStatus(contractTrust)} />
+                {contractTrust !== null &&
+                  contractTrust !== "loading" &&
+                  contractTrust !== "error" &&
+                  contractTrust.status !== "verified" && (
+                    <p role="alert" className="lpa-bad text-sm">
+                      This payment request targets a contract with no verified source. Review
+                      carefully before approving.
+                    </p>
+                  )}
+              </section>
+            )}
+            <SendPayment
+              from={session.accountId}
+              token={intake.request.asset}
+              network={session.network}
+              onSuccess={() => undefined}
+              prefill={{
+                to: intake.request.destination,
+                ...(intake.request.amount !== undefined && { amount: intake.request.amount }),
+              }}
+              request={{
+                originDomain: intake.origin.status === "verified" ? intake.origin.domain : null,
+                ...(intake.request.msg !== undefined && { msg: intake.request.msg }),
+              }}
+            />
+          </div>
         )}
       </div>
     </AppShell>

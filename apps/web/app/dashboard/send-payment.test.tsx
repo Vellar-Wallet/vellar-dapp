@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PaymentClient, PreparedPayment } from "vellar-sdk";
 import { WalletProvider } from "@/lib/wallet-context";
-import { SendPayment } from "./send-payment";
+import { SendPayment, knownBalance } from "./send-payment";
 
 const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/track", () => ({ trackTransaction: trackMock }));
@@ -148,6 +148,82 @@ describe("SendPayment", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/insufficient balance/i);
+  });
+
+  describe("inline balance validation before the passkey step", () => {
+    function renderWithBalances(
+      payments: PaymentClient,
+      amount: bigint,
+      onSuccess = vi.fn(),
+    ): { onSuccess: typeof onSuccess; rerender: (amount: bigint) => void } {
+      const ui = (balance: bigint) => (
+        <WalletProvider payments={payments}>
+          <SendPayment
+            from={FROM}
+            token={xlm}
+            availableTokens={[{ ...xlm, amount: balance }]}
+            network="testnet"
+            onSuccess={onSuccess}
+          />
+        </WalletProvider>
+      );
+      const { rerender: rtlRerender } = render(ui(amount));
+      return {
+        onSuccess,
+        rerender: (balance: bigint) => rtlRerender(ui(balance)),
+      };
+    }
+
+    it("lets a payment within the locally known balance through to review", async () => {
+      const preparePayment = vi.fn().mockResolvedValue(prepared());
+      // 3 XLM available, sending 2.5.
+      renderWithBalances({ preparePayment }, 30_000_000n);
+      await fillAndReview();
+      expect(preparePayment).toHaveBeenCalled();
+    });
+
+    it("blocks an amount over the known balance before the passkey step", async () => {
+      const preparePayment = vi.fn();
+      const confirm = vi.fn();
+      // 1 XLM available, sending 2.5.
+      renderWithBalances({ preparePayment }, 10_000_000n);
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toMatch(/insufficient .*balance/i);
+      expect(alert.textContent).toMatch(/1 XLM/);
+      // No transaction is built and the passkey step is never reached.
+      expect(preparePayment).not.toHaveBeenCalled();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: /review payment/i })).toBeNull();
+    });
+
+    it("re-checks at signing time when the balance drops after the form loaded", async () => {
+      const confirm = vi.fn().mockResolvedValue({ hash: "txhash123" });
+      const preparePayment = vi.fn().mockResolvedValue(prepared(confirm));
+      // 3 XLM at form load: 2.5 clears the first check and reaches review.
+      const { rerender } = renderWithBalances({ preparePayment }, 30_000_000n);
+      await fillAndReview();
+      expect(preparePayment).toHaveBeenCalled();
+
+      // Balance drops to 1 XLM before the user submits.
+      rerender(10_000_000n);
+      fireEvent.click(screen.getByRole("button", { name: /confirm with passkey/i }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toMatch(/insufficient .*balance/i);
+      // The signing ceremony is never started.
+      expect(confirm).not.toHaveBeenCalled();
+    });
+
+    it("knownBalance reads the current entry for the selected token", () => {
+      expect(knownBalance(xlm, [{ ...xlm, amount: 5n }])).toBe(5n);
+      expect(knownBalance({ ...xlm, amount: 7n }, [])).toBe(7n);
+      expect(knownBalance(xlm, [])).toBeNull();
+    });
   });
 
   describe("prefilled from a payment request", () => {

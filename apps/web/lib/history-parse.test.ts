@@ -4,6 +4,7 @@ import {
   buildClassicRail,
   buildSorobanRail,
   classicOpToRow,
+  describeInvokeHostFunction,
   contractIdOf,
   decimalToRaw,
   decodePageCursor,
@@ -278,9 +279,94 @@ describe("classicOpToRow", () => {
 
   it("skips operations that carry no amount to show", () => {
     expect(classicOpToRow(ACCOUNT, classicPayment({ type: "set_options" }))).toBeUndefined();
-    expect(classicOpToRow(ACCOUNT, classicPayment({ type: "invoke_host_function" }))).toBeUndefined();
     // A payment with no asset information would render a bare number.
     expect(classicOpToRow(ACCOUNT, classicPayment({ asset_type: undefined }))).toBeUndefined();
+  });
+});
+
+// --- Soroban contract invocations (issue #557) --------------------------------
+// invokeHostFunction is how a Soroban call (swap, policy interaction, …)
+// appears on Horizon's classic operations stream. It is not transfer-shaped,
+// so it gets a human-readable description instead of an amount — distinct
+// from a generic unknown-operation fallback, which still drops the row.
+
+function invokeOp(overrides: Partial<ClassicOp> = {}): ClassicOp {
+  return {
+    id: "999000111",
+    type: "invoke_host_function",
+    transaction_successful: true,
+    created_at: "2026-09-24T12:00:00Z",
+    transaction_hash: "bb".repeat(32),
+    address: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    function: "HostFunctionTypeHostFunctionTypeInvokeContract",
+    function_name: "swap",
+    paging_token: "21115403551948899",
+    ...overrides,
+  };
+}
+
+describe("describeInvokeHostFunction", () => {
+  it("names the contract function when Horizon exposes it", () => {
+    expect(describeInvokeHostFunction(invokeOp())).toBe("Contract call: swap");
+    expect(describeInvokeHostFunction(invokeOp({ function_name: "policy_interact" }))).toBe(
+      "Contract call: policy_interact",
+    );
+  });
+
+  it("falls back gracefully when the invocation cannot be specifically identified", () => {
+    // No function_name, or one we cannot safely render: never throws, and the
+    // description stays distinct from a named call.
+    expect(describeInvokeHostFunction(invokeOp({ function_name: undefined }))).toBe(
+      "Contract invocation",
+    );
+    expect(describeInvokeHostFunction(invokeOp({ function_name: "" }))).toBe("Contract invocation");
+    expect(describeInvokeHostFunction(invokeOp({ function_name: "<script>" }))).toBe(
+      "Contract invocation",
+    );
+    expect(
+      describeInvokeHostFunction(invokeOp({ function_name: undefined, function: undefined })),
+    ).toBe("Contract invocation");
+  });
+});
+
+describe("classicOpToRow — Soroban invokeHostFunction", () => {
+  it("parses an identifiable contract invocation with a human-readable description", () => {
+    const row = classicOpToRow(ACCOUNT, invokeOp());
+    expect(row).toBeDefined();
+    expect(row!.kind).toBe("soroban");
+    expect(row!.description).toBe("Contract call: swap");
+    expect(row!.counterparty).toBe(invokeOp().address);
+    expect(row!.status).toBe("success");
+    expect(row!.txHash).toBe(invokeOp().transaction_hash);
+    expect(row!.timestamp).toBe(invokeOp().created_at);
+    expect(row!.id).toBe("classic:999000111");
+  });
+
+  it("parses an unidentifiable invocation with the generic fallback description", () => {
+    const row = classicOpToRow(ACCOUNT, invokeOp({ function_name: undefined, address: undefined }));
+    expect(row).toBeDefined();
+    expect(row!.description).toBe("Contract invocation");
+    expect(row!.counterparty).toBe("");
+  });
+
+  it("marks a reverted invocation as failed rather than dropping it", () => {
+    const row = classicOpToRow(ACCOUNT, invokeOp({ transaction_successful: false }));
+    expect(row).toBeDefined();
+    expect(row!.status).toBe("failed");
+    expect(row!.description).toBe("Contract call: swap");
+  });
+
+  it("keeps invocation rows distinct from payment rows and from unknown ops", () => {
+    const invocation = classicOpToRow(ACCOUNT, invokeOp())!;
+    const payment = classicOpToRow(ACCOUNT, classicPayment())!;
+    // Distinct from a payment row: different kind + a description the payment lacks.
+    expect(invocation.kind).toBe("soroban");
+    expect(payment.kind).toBe("classic");
+    expect(payment.description).toBeUndefined();
+    expect(invocation.description).toBeDefined();
+    // Distinct from a generic unknown-operation fallback: those return
+    // undefined (no row at all) rather than a described row.
+    expect(classicOpToRow(ACCOUNT, classicPayment({ type: "set_options" }))).toBeUndefined();
   });
 });
 

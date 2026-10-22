@@ -79,10 +79,15 @@ export function provenancePolicyDefinition(
 // --- Warn mode: the pre-signing provenance look-up ---------------------------
 
 export type ProvenanceLevel =
-  /** A live "verified" record exists for the contract. */
+  /** A live "verified" record exists for the contract's current wasm hash. */
   | "verified"
   /** The contract has no verified record (unverified, failed, or unknown). */
   | "unverified"
+  /** A verified record exists, but it covers a wasm hash the contract has since
+   * been upgraded away from. Meaningfully different from verified (the bytes
+   * running now were never reproduced) and from unverified (source was
+   * reproduced once, just not for what is deployed now). */
+  | "stale"
   /** Native asset contract: built into the network, no source to reproduce. */
   | "builtin"
   /** The recipient is a classic G-account: no code to verify. */
@@ -97,7 +102,13 @@ export interface ProvenanceAssessment {
 }
 
 export interface ProvenanceLookup {
-  getStatus(contractId: string): Promise<{ status: VerificationStatus }>;
+  getStatus(contractId: string): Promise<{
+    status: VerificationStatus;
+    /** Wasm hash the current verification record covers (its build output). */
+    verifiedHash?: string | null;
+    /** Wasm hash currently deployed on-chain for this contract. */
+    onChainHash?: string | null;
+  }>;
 }
 
 /** Assess the target of a payment. `contractId` is the contract whose code the
@@ -109,12 +120,18 @@ export async function assessProvenance(
   if ("classicAccount" in target) return { level: "no-code" };
   if (target.isNativeAsset) return { level: "builtin", contractId: target.contractId };
   try {
-    const { status } = await lookup.getStatus(target.contractId);
-    return {
-      level: status === "verified" ? "verified" : "unverified",
-      contractId: target.contractId,
-      status,
-    };
+    const { status, verifiedHash, onChainHash } = await lookup.getStatus(target.contractId);
+    if (status !== "verified") {
+      return { level: "unverified", contractId: target.contractId, status };
+    }
+    // A "verified" record is only about the bytes it was built against. If the
+    // contract was upgraded on-chain past that hash, the running code has no
+    // reproduced source — unless a later verification covers the new hash, in
+    // which case the lookup already reports that record and the hashes match.
+    if (verifiedHash && onChainHash && verifiedHash !== onChainHash) {
+      return { level: "stale", contractId: target.contractId, status };
+    }
+    return { level: "verified", contractId: target.contractId, status };
   } catch {
     return { level: "unavailable", contractId: target.contractId };
   }
@@ -123,7 +140,7 @@ export async function assessProvenance(
 /** Whether warn mode should surface a warning for this assessment. */
 export function shouldWarn(pref: ProvenancePreference, a: ProvenanceAssessment): boolean {
   if (pref.mode !== "warn") return false;
-  return a.level === "unverified" || a.level === "unavailable";
+  return a.level === "unverified" || a.level === "unavailable" || a.level === "stale";
 }
 
 /** Copy for the warn-mode signal. Says provenance, never safety. */
@@ -131,6 +148,8 @@ export function provenanceWarningCopy(a: ProvenanceAssessment): string {
   switch (a.level) {
     case "unverified":
       return "This contract has no verified source provenance: its deployed code has not been reproduced from inspectable source. That is a provenance signal, not a safety verdict — verified code can still be malicious, and unverified code can be fine. Proceed only if you trust the target for other reasons.";
+    case "stale":
+      return "This contract's verified source provenance covers an older wasm hash than the code now deployed: it was upgraded after verification and the current bytes have not been reproduced. That is a provenance signal, not a safety verdict. Proceed only if you trust the target for other reasons.";
     case "unavailable":
       return "Provenance could not be checked: the verification service is unreachable. Treat the target as unverified; provenance being unknown is not a verdict either way.";
     default:

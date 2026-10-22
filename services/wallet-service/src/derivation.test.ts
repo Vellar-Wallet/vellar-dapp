@@ -84,4 +84,27 @@ describe("derivation gate (V1)", () => {
 
     expect(fromKit).toBe(expectedContractId);
   });
+
+  it("regression test: pins the deterministic contract id for a fixed passkey across stellar-sdk upgrades (Issue #519)", () => {
+    // CRITICAL: The derived contract address for a given passkey credential id must NEVER change.
+    // Existing user smart-account wallets are deployed at this deterministic address.
+    // If a stellar-sdk or passkey-kit upgrade alters the encoding, hashing, or preimage routines,
+    // existing wallets will derive a different address, permanently locking users out of their funds
+    // and breaking all existing wallet mappings (idea.md section 6.1).
+    const PINNED_KEY_ID = "AAECAwQFBgcICQoLDA0ODw";
+    const EXPECTED_CONTRACT_ID = "CA3TKZ44U5KVK7WHIIXVZ6WXVPNACXRQGKJL65L3I62QJRQF33BDSABY";
+
+    const derived = deriveWalletContractId(PINNED_KEY_ID, { networkPassphrase: TESTNET });
+
+    if (derived !== EXPECTED_CONTRACT_ID) {
+      throw new Error(
+        `CRITICAL BREAKING CHANGE FOR EXISTING WALLETS: Derived contract address changed from ${EXPECTED_CONTRACT_ID} to ${derived} for keyId "${PINNED_KEY_ID}". ` +
+          `A stellar-sdk or passkey-kit update has altered the deterministic address derivation scheme. ` +
+          `This will cause existing users to lose access to their deployed smart-account contracts. ` +
+          `Do NOT merge this upgrade without verifying derivation backward compatibility!`,
+      );
+    }
+
+    expect(derived).toBe(EXPECTED_CONTRACT_ID);
+  });
 });

@@ -45,14 +45,14 @@ describe("provenancePolicyDefinition", () => {
   });
 });
 
-describe("warn mode assessment", () => {
-  const lookup = (status: string | Error) => ({
-    getStatus: async () => {
-      if (status instanceof Error) throw status;
-      return { status: status as never };
-    },
-  });
+const lookup = (status: string | Error) => ({
+  getStatus: async () => {
+    if (status instanceof Error) throw status;
+    return { status: status as never };
+  },
+});
 
+describe("warn mode assessment", () => {
   it("classifies verified / unverified / builtin / no-code / unavailable", async () => {
     expect(await assessProvenance({ contractId: "C1" }, lookup("verified"))).toMatchObject({
       level: "verified",
@@ -78,6 +78,7 @@ describe("warn mode assessment", () => {
   it("warns only in warn mode and only for unverified/unavailable targets", () => {
     expect(shouldWarn({ mode: "warn" }, { level: "unverified" })).toBe(true);
     expect(shouldWarn({ mode: "warn" }, { level: "unavailable" })).toBe(true);
+    expect(shouldWarn({ mode: "warn" }, { level: "stale" })).toBe(true);
     expect(shouldWarn({ mode: "warn" }, { level: "verified" })).toBe(false);
     expect(shouldWarn({ mode: "warn" }, { level: "builtin" })).toBe(false);
     expect(shouldWarn({ mode: "off" }, { level: "unverified" })).toBe(false);
@@ -85,11 +86,69 @@ describe("warn mode assessment", () => {
   });
 
   it("warning copy speaks of provenance, never safety guarantees", () => {
-    for (const level of ["unverified", "unavailable"] as const) {
+    for (const level of ["unverified", "unavailable", "stale"] as const) {
       const copy = provenanceWarningCopy({ level });
       expect(copy).toMatch(/provenance/i);
       expect(copy).not.toMatch(/\bis safe\b|guarantee/i);
     }
+  });
+});
+
+describe("provenance against a since-superseded wasm hash", () => {
+  const hashed = (verifiedHash: string | null, onChainHash: string | null) => ({
+    getStatus: async () => ({
+      status: "verified" as const,
+      verifiedHash,
+      onChainHash,
+    }),
+  });
+
+  it("reads as stale when the on-chain wasm no longer matches the verified record", async () => {
+    const a = await assessProvenance(
+      { contractId: "C1" },
+      hashed("wasm_old_hash", "wasm_new_hash"),
+    );
+    expect(a).toMatchObject({ level: "stale", contractId: "C1", status: "verified" });
+  });
+
+  it("surfaces stale distinctly from verified and from unverified", async () => {
+    const stale = await assessProvenance(
+      { contractId: "C1" },
+      hashed("wasm_old_hash", "wasm_new_hash"),
+    );
+    const verified = await assessProvenance(
+      { contractId: "C1" },
+      hashed("wasm_same_hash", "wasm_same_hash"),
+    );
+    const unverified = await assessProvenance({ contractId: "C1" }, lookup("unverified"));
+
+    expect(stale.level).toBe("stale");
+    expect(verified.level).toBe("verified");
+    expect(unverified.level).toBe("unverified");
+    expect(stale.level).not.toBe(verified.level);
+    expect(stale.level).not.toBe(unverified.level);
+
+    // The warn-mode signal treats stale as its own warnable state, not a
+    // re-labelled verified or unverified one.
+    expect(shouldWarn({ mode: "warn" }, stale)).toBe(true);
+    expect(shouldWarn({ mode: "warn" }, verified)).toBe(false);
+    expect(provenanceWarningCopy(stale)).toMatch(/upgraded/i);
+    expect(provenanceWarningCopy(stale)).not.toMatch(/no verified source/i);
+  });
+
+  it("reads as verified again once the new hash has itself been verified", async () => {
+    // The status lookup reports the LATEST record: a separate verification that
+    // covers the current on-chain hash means verifiedHash === onChainHash.
+    const a = await assessProvenance(
+      { contractId: "C1" },
+      hashed("wasm_new_hash", "wasm_new_hash"),
+    );
+    expect(a).toMatchObject({ level: "verified" });
+  });
+
+  it("falls back to the status alone when hashes are not reported", async () => {
+    const a = await assessProvenance({ contractId: "C1" }, lookup("verified"));
+    expect(a).toMatchObject({ level: "verified" });
   });
 });
 

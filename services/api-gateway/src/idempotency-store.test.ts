@@ -87,3 +87,103 @@ describe("IdempotencyStore (issue #260)", () => {
     );
   });
 });
+
+describe("IdempotencyStore per-route TTL override", () => {
+  it("honours a longer per-route TTL where the global default would have expired the key", () => {
+    // Global default 24h; the policy-deployment route gets 48h.
+    const store = new IdempotencyStore({
+      ttlMs: 24 * 60 * 60 * 1000,
+      routeTtlMs: { "POST /policies/deploy": 48 * 60 * 60 * 1000 },
+    });
+    const recordedAt = 1_000_000;
+    store.record("deploy-1", {
+      payloadHash: "hash-a",
+      statusCode: 201,
+      headers: {},
+      body: "{}",
+      recordedAt,
+      route: "POST /policies/deploy",
+    });
+
+    // 30h later: still valid under the route's 48h TTL, but would have
+    // expired under the old 24h global default.
+    const at30h = recordedAt + 30 * 60 * 60 * 1000;
+    expect(store.lookup("deploy-1", "hash-a", at30h)).toMatchObject({ kind: "hit" });
+
+    // A record without a route still uses the 24h global default and is
+    // long gone by the same clock.
+    store.record("global-1", {
+      payloadHash: "hash-a",
+      statusCode: 200,
+      headers: {},
+      body: "{}",
+      recordedAt,
+    });
+    expect(store.lookup("global-1", "hash-a", at30h)).toEqual({ kind: "miss" });
+  });
+
+  it("falls back to the global default when the route has no override", () => {
+    const store = new IdempotencyStore({
+      ttlMs: 1000,
+      routeTtlMs: { "POST /policies/deploy": 10_000 },
+    });
+    const recordedAt = 5_000;
+    store.record("other", {
+      payloadHash: "h",
+      statusCode: 200,
+      headers: {},
+      body: "{}",
+      recordedAt,
+      route: "GET /wallet/balance",
+    });
+
+    expect(store.lookup("other", "h", recordedAt + 999).kind).toBe("hit");
+    expect(store.lookup("other", "h", recordedAt + 1001)).toEqual({ kind: "miss" });
+  });
+
+  it("pruneExpired respects the per-route TTL rather than the global one", () => {
+    const store = new IdempotencyStore({
+      ttlMs: 1000,
+      routeTtlMs: { "POST /policies/deploy": 10_000 },
+    });
+    const now = 100_000;
+    store.record("deploy", {
+      payloadHash: "h",
+      statusCode: 201,
+      headers: {},
+      body: "{}",
+      recordedAt: now - 5_000,
+      route: "POST /policies/deploy",
+    });
+    store.record("short", {
+      payloadHash: "h",
+      statusCode: 200,
+      headers: {},
+      body: "{}",
+      recordedAt: now - 5_000,
+      route: "GET /wallet/balance",
+    });
+
+    const pruned = store.pruneExpired(now);
+    expect(pruned).toBe(1);
+    expect(store.size).toBe(1);
+    expect(store.lookup("deploy", "h", now).kind).toBe("hit");
+    expect(store.lookup("short", "h", now)).toEqual({ kind: "miss" });
+  });
+
+  it("still reports a conflict for a differing payload under a route with a longer TTL", () => {
+    const store = new IdempotencyStore({
+      routeTtlMs: { "POST /policies/deploy": 48 * 60 * 60 * 1000 },
+    });
+    store.record("deploy-1", {
+      payloadHash: "hash-a",
+      statusCode: 201,
+      headers: {},
+      body: "{}",
+      recordedAt: Date.now(),
+      route: "POST /policies/deploy",
+    });
+
+    expect(store.lookup("deploy-1", "hash-b")).toEqual({ kind: "conflict" });
+  });
+});

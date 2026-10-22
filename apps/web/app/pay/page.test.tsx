@@ -11,8 +11,20 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/pay",
 }));
 
+const { getVerificationStatusMock } = vi.hoisted(() => ({
+  getVerificationStatusMock: vi.fn(),
+}));
+vi.mock("@/lib/verification", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/verification")>("@/lib/verification");
+  return {
+    ...actual,
+    getVerificationStatus: getVerificationStatusMock,
+  };
+});
+
 const WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const PAYEE = "GCALNQQBXAPZ2WIRSDDBMSTAKCUH5SG6U76YBFLQLIXJTF7FE5AX7AOO";
+const CONTRACT_PAYEE = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
 const TP = encodeURIComponent(Networks.TESTNET);
 
 const session: WalletSession = {
@@ -43,6 +55,7 @@ function renderPay(payments: PaymentClient) {
 beforeEach(() => {
   window.localStorage.clear();
   window.localStorage.setItem("vellar.session", JSON.stringify(session));
+  getVerificationStatusMock.mockReset();
 });
 
 afterEach(() => {
@@ -110,5 +123,56 @@ describe("/pay — incoming SEP-7 requests", () => {
     await waitFor(() =>
       expect((screen.getByLabelText(/recipient/i) as HTMLInputElement).value).toBe(PAYEE),
     );
+  });
+
+  describe("contract destination verification (#703)", () => {
+    it("warns when the destination contract has no verification record", async () => {
+      getVerificationStatusMock.mockResolvedValue({
+        contractId: CONTRACT_PAYEE,
+        status: "unverified",
+      });
+      openWith(`web+stellar:pay?destination=${CONTRACT_PAYEE}&network_passphrase=${TP}`);
+      renderPay({ preparePayment: vi.fn() });
+
+      await screen.findByLabelText(/recipient/i);
+      expect(getVerificationStatusMock).toHaveBeenCalledWith(CONTRACT_PAYEE);
+      expect(
+        await screen.findByText(/no verified source\. review carefully/i),
+      ).toBeDefined();
+      expect(screen.getByLabelText(/contract verification status/i)).toBeDefined();
+    });
+
+    it("shows no warning when the destination contract is verified", async () => {
+      getVerificationStatusMock.mockResolvedValue({
+        contractId: CONTRACT_PAYEE,
+        status: "verified",
+      });
+      openWith(`web+stellar:pay?destination=${CONTRACT_PAYEE}&network_passphrase=${TP}`);
+      renderPay({ preparePayment: vi.fn() });
+
+      await screen.findByLabelText(/recipient/i);
+      await waitFor(() => expect(getVerificationStatusMock).toHaveBeenCalled());
+      expect(screen.queryByText(/no verified source/i)).toBeNull();
+    });
+
+    it("surfaces a couldn't-check state when the verification lookup fails, not a silent pass", async () => {
+      getVerificationStatusMock.mockRejectedValue(new Error("network error"));
+      openWith(`web+stellar:pay?destination=${CONTRACT_PAYEE}&network_passphrase=${TP}`);
+      renderPay({ preparePayment: vi.fn() });
+
+      await screen.findByLabelText(/recipient/i);
+      expect(await screen.findByText(/couldn't check verification/i)).toBeDefined();
+      expect(screen.queryByText(/no verified source/i)).toBeNull();
+    });
+
+    it("does not call the verification lookup for a regular account destination", async () => {
+      openWith(`web+stellar:pay?destination=${PAYEE}&network_passphrase=${TP}`);
+      renderPay({ preparePayment: vi.fn() });
+
+      await screen.findByLabelText(/recipient/i);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(getVerificationStatusMock).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText(/contract verification status/i)).toBeNull();
+    });
   });
 });

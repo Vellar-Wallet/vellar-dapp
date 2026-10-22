@@ -42,6 +42,29 @@ describe("boundedExpirationLedger (L4 window cap)", () => {
     expect(exp).toBeLessThanOrEqual(0xffffffff);
     expect(Number.isInteger(exp)).toBe(true);
   });
+
+  // #580: the exact-boundary case. signatureExpirationLedger is a Stellar
+  // protocol field evaluated as "valid THROUGH this ledger, inclusive" — a
+  // signature is only expired once the CURRENT ledger is STRICTLY GREATER
+  // than signatureExpirationLedger (core's auth check is `ledger >
+  // expiration`, not `>=`). boundedExpirationLedger sets that field to
+  // anchor + MAX_EXPIRATION_LEDGERS, so the ledger exactly at the boundary —
+  // the one the request was anchored from, plus the cap — must still be
+  // INSIDE the authorized window, not past it. This pins that deliberate
+  // choice rather than leaving it an accident of the `+`/comparison used.
+  it("the boundary ledger (anchor + cap) is the last ledger still inside the window, not past it", () => {
+    const anchor = 1_000;
+    const expiration = boundedExpirationLedger(anchor);
+
+    // One ledger before the boundary: unambiguously inside the window.
+    expect(expiration - 1).toBeLessThan(expiration);
+    // Exactly at the boundary: still the authorized expiration ledger itself
+    // (inclusive) — the signature is valid for a request evaluated here.
+    expect(expiration).toBe(anchor + MAX_EXPIRATION_LEDGERS);
+    // One ledger after the boundary: unambiguously outside the window — this
+    // is the first ledger at which the signature is expired.
+    expect(expiration + 1).toBeGreaterThan(expiration);
+  });
 });
 
 describe("resolveTrustedRpcUrl (L4 anchor source)", () => {

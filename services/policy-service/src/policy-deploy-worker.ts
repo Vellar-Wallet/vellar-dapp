@@ -9,6 +9,7 @@
  * - Handle concurrent failures safely (DB transaction + row-level locks)
  */
 
+import { retryWithJitter } from "@vellar/service-kit";
 import { summarizeError, type DLQStore, type DLQRecord } from "./dlq-store";
 import type { PolicyDeployer } from "./deploy";
 import type { PolicyRepository, PolicyRecord } from "./server";
@@ -220,14 +221,18 @@ export class InMemoryDeployJobStore implements DeployJobStore {
 }
 
 /**
- * Compute exponential backoff delay in milliseconds.
- * Capped at 1 hour to avoid runaway delays.
+ * Compute exponential backoff delay in milliseconds with full jitter.
+ *
+ * Delegates to the shared `retryWithJitter` helper in
+ * packages/service-kit (issue #549) so the jittered-retry pattern is
+ * defined once rather than duplicated across services. Capped at 1 hour
+ * to avoid runaway delays.
  */
 export function computeBackoff(retryCount: number): number {
-  const baseDelayMs = 1000;
-  const maxDelayMs = 60 * 60 * 1000; // 1 hour
-  const delayMs = baseDelayMs * Math.pow(2, Math.max(0, retryCount - 1));
-  return Math.min(delayMs, maxDelayMs);
+  return retryWithJitter(Math.max(0, retryCount - 1), {
+    baseDelayMs: 1000,
+    maxDelayMs: 60 * 60 * 1000, // 1 hour
+  });
 }
 
 /**

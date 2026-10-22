@@ -1,13 +1,49 @@
 "use client";
 
 import type { WalletSession } from "@vellar/types";
-import type { VelaProvider } from "@vellar/provider-sdk";
+import { normalizeOrigin, type VelaProvider } from "@vellar/provider-sdk";
 import { walletConfig } from "./config";
 import { getWalletRuntime } from "./connector-factory";
 
 // Web-to-extension pairing (technical-doc.md §7.2; docs/decisions.md device
 // signer): ask the injected extension provider for a device public key, then
 // add it as an expiring on-chain signer with the user's passkey.
+//
+// L3 (docs/security-audit.md): pairing is gated on a fail-closed web-app-origin
+// allowlist. The extension enforces the same policy server-side
+// (apps/extension/lib/pair-origins.ts); this client-side gate is defense in
+// depth so a phished copy of the app never even reaches the extension prompt.
+
+/** Origins allowed to initiate pairing. Fail-closed: anything else is refused. */
+export const PAIRING_ALLOWED_ORIGINS: readonly string[] = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "https://app.vellar.xyz",
+  "https://vellar.xyz",
+];
+
+export class PairingOriginError extends Error {
+  readonly code = "pairing_origin_not_allowed";
+  constructor(origin: string) {
+    super(`Pairing is not permitted from this origin: ${origin}`);
+    this.name = "PairingOriginError";
+  }
+}
+
+/** True when `origin` may initiate pairing (L5: a single trailing dot on the
+ * host is the same FQDN and is normalized before the allowlist check). */
+export function isPairingOriginAllowed(origin: string): boolean {
+  const normalized = normalizeOrigin(origin);
+  return normalized !== undefined && PAIRING_ALLOWED_ORIGINS.includes(normalized);
+}
+
+/** Rejects a pairing attempt from an origin not on the allowlist, with a
+ * logged reason. Fail-closed: a malformed origin is refused too. */
+export function assertPairingOriginAllowed(origin: string): void {
+  if (isPairingOriginAllowed(origin)) return;
+  console.warn(`[extension-pairing] rejected pairing request from origin ${origin}`);
+  throw new PairingOriginError(origin);
+}
 
 export function getInjectedProvider(): VelaProvider | undefined {
   if (typeof window === "undefined") return undefined;
@@ -60,6 +96,7 @@ export async function checkPairingStatus(session: WalletSession): Promise<boolea
 }
 
 export async function pairExtension(session: WalletSession): Promise<PairingResult> {
+  assertPairingOriginAllowed(window.location.origin);
   const provider = getInjectedProvider();
   if (!provider) throw new Error("The Vellar extension is not installed in this browser");
   if (!session.keyId) {

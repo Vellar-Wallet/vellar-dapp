@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, statfs, writeFile } from "node:fs/promises";
 import { request } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import { join } from "node:path";
@@ -53,6 +53,14 @@ const MAX_INDEX_BYTES = 8 * 1024 * 1024;
 const MAX_CRATE_BYTES = 64 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
 
+// Disk-space preflight. Sizes are not known before the fetch (the lockfile has
+// no byte counts), so the requirement is an estimate: a per-package allowance
+// plus a fixed safety margin for index files, git object overhead and whatever
+// else shares the volume. Override via PrefetchDeps.diskSpace.
+export const DEFAULT_ESTIMATED_CRATE_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_ESTIMATED_GIT_DEP_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_DISK_SAFETY_MARGIN_BYTES = 512 * 1024 * 1024;
+
 export type DependencyPrefetchErrorCode =
   /** The submission cannot be built offline as-is (missing/invalid lockfile,
    * unsupported source, unknown crate, checksum mismatch). Permanent. */
@@ -61,7 +69,11 @@ export type DependencyPrefetchErrorCode =
    * same guarded pre-fetch followed by the same offline build. */
   | "dependency_fetch_failed"
   /** A git dependency URL failed the SSRF guard. Permanent. */
-  | "repo_url_rejected";
+  | "repo_url_rejected"
+  /** The volume holding the deps directory is too small for the estimated
+   * dependency tree. Raised before any download starts. A host condition, not
+   * a defect in the submission. */
+  | "insufficient_disk_space";
 
 export class DependencyPrefetchError extends Error {
   constructor(
@@ -280,6 +292,32 @@ export interface PrefetchDeps {
   run: RunCommand;
   /** Parallel downloads. */
   concurrency?: number;
+  /** Free bytes available to this process on the volume containing `dir`;
+   * defaults to statfs. Unreadable capacity skips the check (see assertDiskSpace). */
+  getFreeBytes?: (dir: string) => Promise<number>;
+  /** Overrides for the disk-space estimate. */
+  diskSpace?: DiskSpaceEstimate;
+}
+
+export interface DiskSpaceEstimate {
+  perCrateBytes?: number;
+  perGitDependencyBytes?: number;
+  safetyMarginBytes?: number;
+}
+
+export const defaultGetFreeBytes = async (dir: string): Promise<number> => {
+  const fs = await statfs(dir);
+  return Number(fs.bavail) * Number(fs.bsize);
+};
+
+/** Bytes the pre-fetch is expected to need: per-package allowances plus the
+ * safety margin. */
+export function estimateRequiredBytes(plan: DependencyPlan, est: DiskSpaceEstimate = {}): number {
+  return (
+    plan.registry.length * (est.perCrateBytes ?? DEFAULT_ESTIMATED_CRATE_BYTES) +
+    plan.git.length * (est.perGitDependencyBytes ?? DEFAULT_ESTIMATED_GIT_DEP_BYTES) +
+    (est.safetyMarginBytes ?? DEFAULT_DISK_SAFETY_MARGIN_BYTES)
+  );
 }
 
 function pinnedLookup(ip: string): LookupFunction {
@@ -387,6 +425,8 @@ export async function prefetchCargoDependencies(
   await mkdir(join(registryDir, "index"), { recursive: true });
   await mkdir(join(depsDir, "git"), { recursive: true });
 
+  const diskNote = await assertDiskSpace(plan, depsDir, deps);
+
   // Fixed hosts: validated once per pre-fetch, then every request is pinned to
   // the validated address.
   let indexPin: ResolvedPin | undefined;
@@ -492,8 +532,41 @@ export async function prefetchCargoDependencies(
 
   return {
     plan,
-    log: `[prefetch] ${plan.registry.length} crates.io package(s), ${plan.git.length} git dependency(ies) resolved from Cargo.lock`,
+    log:
+      `[prefetch] ${plan.registry.length} crates.io package(s), ${plan.git.length} git dependency(ies) resolved from Cargo.lock` +
+      (diskNote ? `\n${diskNote}` : ""),
   };
+}
+
+/**
+ * Fails fast, before any download, when the volume cannot hold the estimated
+ * dependency tree. Free space must be strictly greater than the requirement:
+ * a fetch that would land exactly on zero free bytes leaves nothing for the
+ * build that follows, so the boundary counts as insufficient. If capacity
+ * cannot be read the check is skipped (returning a note for the build log) —
+ * an unmeasurable volume must not block builds that would have fit.
+ */
+async function assertDiskSpace(
+  plan: DependencyPlan,
+  depsDir: string,
+  deps: PrefetchDeps,
+): Promise<string | undefined> {
+  if (plan.registry.length === 0 && plan.git.length === 0) return undefined;
+  const required = estimateRequiredBytes(plan, deps.diskSpace);
+  let free: number;
+  try {
+    free = await (deps.getFreeBytes ?? defaultGetFreeBytes)(depsDir);
+    if (!Number.isFinite(free) || free < 0) throw new Error(`invalid free byte count: ${free}`);
+  } catch (err) {
+    return `[prefetch] disk space check skipped: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  if (free <= required) {
+    throw new DependencyPrefetchError(
+      `Insufficient disk space for dependency pre-fetch: ${free} bytes free, more than ${required} bytes required (${plan.registry.length} crates.io package(s), ${plan.git.length} git dependency(ies)).`,
+      "insufficient_disk_space",
+    );
+  }
+  return undefined;
 }
 
 async function mirrorGitDependency(

@@ -204,6 +204,7 @@ describe("parsePayUri — hostile and malformed requests", () => {
     [`${base}&msg=line%0Abreak`, "unsafe_text"],
     [`${base}&msg=${"m".repeat(301)}`, "unsafe_text"],
     [`${base}&origin_domain=example.com`, "invalid_origin"],
+    [`${base}&signature=abc`, "invalid_origin"],
     [`${base}&origin_domain=localhost&signature=abc`, "invalid_origin"],
     [`${base}&origin_domain=10.0.0.1&signature=abc`, "invalid_origin"],
     [`${base}&origin_domain=evil.com%2Fpath&signature=abc`, "invalid_origin"],
@@ -301,5 +302,29 @@ describe("verifySep7Origin", () => {
     };
     await verifySep7Origin(parseOk(signedUri()), { fetch: okFetch, keyCache });
     expect(store.get("shop.example.com")).toBe(signer.publicKey());
+  });
+
+  // Issue #558: origin-domain signature validation end to end — a crafted URI
+  // must not be able to spoof a trusted origin in the UI.
+  it("treats a URI with no origin/signature fields as unverified, not silently trusted", async () => {
+    const req = parseOk(`web+stellar:pay?destination=${C_ADDR}&network_passphrase=${TP}`);
+    expect(req.originDomain).toBeUndefined();
+    expect(req.signature).toBeUndefined();
+    await expect(verifySep7Origin(req, { fetch: okFetch })).resolves.toEqual({ status: "none" });
+  });
+
+  it("rejects a URI whose signature does not match its declared origin domain", async () => {
+    // Same declared origin, signature over different bytes → invalid, and the
+    // pay route must refuse it (see app/pay/page.tsx).
+    const forged = signedUri().replace("amount=5", "amount=5000");
+    const result = await verifySep7Origin(parseOk(forged), { fetch: okFetch });
+    expect(result).toMatchObject({ status: "invalid", domain: "shop.example.com" });
+  });
+
+  it("rejects a URI whose origin's signing key cannot be resolved", async () => {
+    const result = await verifySep7Origin(parseOk(signedUri()), {
+      fetch: async () => ({ ok: true, text: async () => `VERSION="2.0.0"\n` }),
+    });
+    expect(result.status).toBe("invalid");
   });
 });

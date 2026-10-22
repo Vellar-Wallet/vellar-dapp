@@ -5,9 +5,15 @@ import { useCallback, useEffect, useState } from "react";
 import { browser } from "wxt/browser";
 import type { PermissionGrant } from "@vellar/provider-sdk";
 import { browserKv } from "../../lib/browser-kv";
+import {
+  checkDeviceKeyStatus,
+  createIdbDeviceKeyStore,
+  type DeviceKeyStatus,
+} from "../../lib/device-key";
 import type { PendingApprovalSummary } from "../../lib/messages";
-import { loadState, revokeGrant, type ExtensionState } from "../../lib/state";
+import { loadState, revokeGrant, STATE_KEY, type ExtensionState } from "../../lib/state";
 import { ApprovalScreen } from "./ApprovalScreen";
+import { DeviceKeyRecovery } from "./DeviceKeyRecovery";
 import { HomeScreen } from "./HomeScreen";
 
 // Popup (technical-doc.md §4.2, §7.3; design.md §8): a pending approval takes
@@ -18,6 +24,7 @@ export function App() {
   const [state, setState] = useState<ExtensionState | null>(null);
   const [approvals, setApprovals] = useState<PendingApprovalSummary[]>([]);
   const [total, setTotal] = useState(0);
+  const [deviceKeyStatus, setDeviceKeyStatus] = useState<DeviceKeyStatus | null>(null);
 
   const refresh = useCallback(async () => {
     setState(await loadState(browserKv));
@@ -33,6 +40,29 @@ export function App() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // A pairing/approval can land while this popup instance is already open —
+  // e.g. the user approves a connection in a separate approval window, or
+  // the web app pairs a new grant directly. browser.storage.onChanged fires
+  // in every open extension context, so an already-open popup's "Connected
+  // dApps" list updates immediately instead of requiring it to be closed
+  // and reopened (#588).
+  useEffect(() => {
+    const onChanged = (changes: Record<string, unknown>, areaName: string) => {
+      if (areaName === "local" && STATE_KEY in changes) void refresh();
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => browser.storage.onChanged.removeListener(onChanged);
+  }, [refresh]);
+  // #581: check the device key on every popup open, read-only. A wallet is
+  // paired but the local signing key can't be loaded/verified — distinct from
+  // the normal pre-pairing "missing" state, which the Unpaired screen already
+  // covers and needs no banner.
+  useEffect(() => {
+    void checkDeviceKeyStatus(createIdbDeviceKeyStore()).then((check) =>
+      setDeviceKeyStatus(check.status),
+    );
+  }, []);
 
   const isApprovalWindow = new URLSearchParams(window.location.search).has("approval");
 
@@ -58,6 +88,15 @@ export function App() {
         onResolved={() => void onResolved()}
       />
     );
+  }
+
+  // Only a paired wallet with a broken/invalid key needs the recovery path —
+  // pre-pairing "missing" is the ordinary first-run state (Unpaired screen).
+  const needsKeyRecovery =
+    !!state?.pairedWallet && (deviceKeyStatus === "load_failed" || deviceKeyStatus === "invalid");
+
+  if (needsKeyRecovery && deviceKeyStatus) {
+    return <DeviceKeyRecovery status={deviceKeyStatus} wallet={state!.pairedWallet} />;
   }
 
   return <HomeScreen state={state} onRevoke={(grant) => void revoke(grant)} />;

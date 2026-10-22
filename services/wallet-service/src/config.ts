@@ -18,6 +18,38 @@ export interface WalletServiceConfig {
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
 
+/** Validate relayer base URL has a proper scheme and is https by default.
+ * Throws with a clear error message if validation fails. */
+function validateRelayerUrl(baseUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch (error) {
+    throw new Error(
+      `RELAYER_BASE_URL="${baseUrl}" is not a valid URL. Provide a full URL with scheme, e.g., https://relayer.example.com`,
+    );
+  }
+
+  // Require https for production security; warn but allow http for localhost dev.
+  if (url.protocol === "http:") {
+    if (
+      url.hostname !== "localhost" &&
+      url.hostname !== "127.0.0.1" &&
+      !url.hostname.startsWith("192.168.") &&
+      !url.hostname.startsWith("10.") &&
+      url.hostname !== "[::1]"
+    ) {
+      throw new Error(
+        `RELAYER_BASE_URL="${baseUrl}" uses http:// scheme. Relayer URLs must use https:// for security. Use http:// only for localhost/internal IPs.`,
+      );
+    }
+  } else if (url.protocol !== "https:") {
+    throw new Error(
+      `RELAYER_BASE_URL="${baseUrl}" has scheme "${url.protocol}". Only https:// and http://localhost are supported.`,
+    );
+  }
+}
+
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WalletServiceConfig {
   const baseUrl = env.RELAYER_BASE_URL;
   const apiKey = env.RELAYER_API_KEY;
@@ -25,6 +57,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): WalletServi
   const sponsorSecretKey = env.SPONSOR_SECRET_KEY || undefined;
 
   if (!baseUrl || !apiKey) return { relayer: undefined, sponsorSecretKey, databaseUrl };
+
+  // Validate the relayer URL at boot time
+  validateRelayerUrl(baseUrl);
 
   return {
     relayer: {

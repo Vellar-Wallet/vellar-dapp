@@ -4,7 +4,7 @@ import jsQR from "jsqr";
 import { Networks } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import { assetsFor } from "./assets";
-import { qrMatrix, qrPath } from "./qr";
+import { isDenseQrPayload, QR_SCAN_SAFE_MAX_BYTES, qrMatrix, qrPath } from "./qr";
 import { buildPayUri } from "./sep7";
 
 const C_ADDR = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
@@ -61,5 +61,47 @@ describe("qrMatrix", () => {
       4,
     );
     expect(path).toBe("M4 4h1v1h-1zM5 5h1v1h-1z");
+  });
+});
+
+// Scan-reliability ceiling (issue #560). A very long payload (e.g. a SEP-7 URI
+// with many parameters) pushes the code past QR version 25 density, which
+// typical phone cameras cannot read reliably at UI size. isDenseQrPayload
+// flags that case so the receive flow can warn or shorten before rendering.
+describe("isDenseQrPayload — scan-reliability threshold", () => {
+  it("defines the threshold just above QR version 25 byte capacity (997 bytes at ECC M)", () => {
+    expect(QR_SCAN_SAFE_MAX_BYTES).toBe(1024);
+  });
+
+  it("does not flag a payload well under the threshold", () => {
+    expect(isDenseQrPayload("x".repeat(QR_SCAN_SAFE_MAX_BYTES - 2))).toBe(false);
+  });
+
+  it("does not flag a payload exactly at the threshold boundary", () => {
+    // Boundary: length === QR_SCAN_SAFE_MAX_BYTES is still inside the
+    // reliably scannable range and must NOT be flagged.
+    expect(isDenseQrPayload("x".repeat(QR_SCAN_SAFE_MAX_BYTES))).toBe(false);
+    expect(QR_SCAN_SAFE_MAX_BYTES).toBeLessThanOrEqual(1024);
+  });
+
+  it("flags a payload just over the threshold", () => {
+    expect(isDenseQrPayload("x".repeat(QR_SCAN_SAFE_MAX_BYTES + 1))).toBe(true);
+  });
+
+  it("flags a long SEP-7 URI that would encode too densely to scan", () => {
+    // A realistic SEP-7 request can grow past the ceiling (many params /
+    // long percent-encoded msg); build the URI string directly so the
+    // parser's 300-char msg cap does not limit the fixture.
+    const uri = `web+stellar:pay?destination=${C_ADDR}&msg=${"p".repeat(QR_SCAN_SAFE_MAX_BYTES)}`;
+    expect(uri.length).toBeGreaterThan(QR_SCAN_SAFE_MAX_BYTES);
+    expect(isDenseQrPayload(uri)).toBe(true);
+  });
+
+  it("still encodes a threshold-length payload that decodes back exactly", () => {
+    // At the boundary the code remains scannable: the flag is about density
+    // reliability, not a hard encode failure.
+    const payload = "A".repeat(QR_SCAN_SAFE_MAX_BYTES);
+    expect(isDenseQrPayload(payload)).toBe(false);
+    expect(decode(qrMatrix(payload))).toBe(payload);
   });
 });

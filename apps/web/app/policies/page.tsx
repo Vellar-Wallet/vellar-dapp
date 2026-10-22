@@ -7,6 +7,8 @@ import { Eyebrow, LpActionButton } from "@/app/landing/ui";
 import { getWalletRuntime } from "@/lib/connector-factory";
 import { useWalletSession } from "@/lib/wallet-context";
 import { isFlagEnabled, readFlagConfig } from "@/lib/feature-flags";
+import { attachedPolicyDefinitions, recordPolicyDeployment } from "@/lib/policy-deployments";
+import { findScopeConflicts } from "@/lib/policy-scope";
 import {
   deployPolicy,
   detachPolicy,
@@ -19,6 +21,7 @@ import {
   type GeneratedPolicy,
   type PolicyTemplateInfo,
 } from "@/lib/policy";
+import { useSigners } from "@/lib/signers";
 
 // Policy builder (technical-doc.md §5.4, §7.5; idea.md §6.2, §19 D3 — policies
 // come from structured templates, reviewed before deploy). Flow: pick template
@@ -53,7 +56,8 @@ export function xlmToBaseUnits(value: string): string {
 const POLICY_BUILDER_FLAG = readFlagConfig("policyBuilderV2", {
   NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT:
     process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ROLLOUT_PERCENT,
-  NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST: process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST,
+  NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST:
+    process.env.NEXT_PUBLIC_FLAG_POLICY_BUILDER_V2_ALLOWLIST,
 });
 
 /** Exported for tests — the gating decision as a pure function of session. */
@@ -483,6 +487,7 @@ function ReviewCard({
   onDone: () => void;
 }) {
   const [state, setState] = useState<DeployState>({ name: "idle" });
+  const signers = useSigners(session.accountId, session.network, session.keyId);
 
   const enforcement = policy.manifest.enforcement;
   // Spending limits deploy a contract instance; other templates don't yet.
@@ -507,6 +512,16 @@ function ReviewCard({
       : undefined;
   const busy = state.name === "simulating" || state.name === "deploying";
 
+  // Scope overlap with an already-attached policy (#570): warn before the
+  // passkey step, without blocking the deploy.
+  const attachedPolicyIds = (signers.data ?? [])
+    .filter((s) => s.kind === "policy")
+    .map((s) => s.key.value);
+  const scopeConflicts = findScopeConflicts(
+    definition,
+    attachedPolicyDefinitions(session.accountId, attachedPolicyIds),
+  );
+
   async function runDeploy() {
     setState({ name: "simulating" });
     try {
@@ -526,6 +541,7 @@ function ReviewCard({
           return runtime.attachPolicy(contractId);
         },
       });
+      recordPolicyDeployment(session.accountId, result.contractId, definition);
       setState({
         name: "done",
         contractId: result.contractId,
@@ -677,6 +693,25 @@ function ReviewCard({
         <p role="alert" className="lpa-bad text-[13px]">
           {state.message}
         </p>
+      )}
+
+      {scopeConflicts.length > 0 && state.name !== "done" && state.name !== "detaching" && (
+        <div
+          role="alert"
+          className="lpa-well border-2 border-amber-400 text-[13px] leading-relaxed text-[var(--lp-ink-soft)]"
+          data-testid="policy-scope-warning"
+        >
+          <strong className="text-amber-800">
+            ⚠ This policy overlaps{" "}
+            {scopeConflicts.length === 1 ? "a policy" : `${scopeConflicts.length} policies`} already
+            attached to your account.
+          </strong>{" "}
+          Overlapping policies can produce confusing or contradictory enforcement. This one shares{" "}
+          {scopeConflicts.map((c) => c.domains.join(", ")).join("; ")} with{" "}
+          {scopeConflicts.map((c) => c.label.slice(0, 6) + "…" + c.label.slice(-6)).join(", ")}. You
+          can still deploy if you understand the overlap — or detach the existing policy first from
+          Settings.
+        </div>
       )}
 
       <div className="flex items-center gap-3">

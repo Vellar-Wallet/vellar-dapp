@@ -53,3 +53,23 @@ describe("hasPlatformAuthenticator", () => {
     await expect(hasPlatformAuthenticator(failing)).resolves.toBe(false);
   });
 });
+
+describe("WebAuthn feature-detection failure (issue #551)", () => {
+  it("returns unsupported with no-webauthn reason when PublicKeyCredential is missing", () => {
+    const env = { isSecureContext: true, publicKeyCredential: undefined };
+    const support = detectPasskeySupport(env);
+    expect(support).toEqual({ supported: false, reason: "no-webauthn" });
+  });
+
+  it("returns unsupported with insecure-context reason when not in secure context", () => {
+    const env = { isSecureContext: false, publicKeyCredential: undefined };
+    const support = detectPasskeySupport(env);
+    expect(support).toEqual({ supported: false, reason: "insecure-context" });
+  });
+
+  it("feature-detection failure is not a runtime error — detectPasskeySupport does not throw", () => {
+    const env = { isSecureContext: true, publicKeyCredential: undefined };
+    expect(() => detectPasskeySupport(env)).not.toThrow();
+    expect(() => detectPasskeySupport({ isSecureContext: false, publicKeyCredential: {} })).not.toThrow();
+  });
+});

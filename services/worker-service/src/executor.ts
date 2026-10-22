@@ -69,7 +69,8 @@ export class BuildExecutorError extends Error {
       | "unsupported_source"
       | "repo_url_rejected"
       | "dependencies_unresolved"
-      | "dependency_fetch_failed",
+      | "dependency_fetch_failed"
+      | "insufficient_disk_space",
     readonly log = "",
   ) {
     super(message);

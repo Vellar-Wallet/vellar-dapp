@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isUserCancellation, normalizePasskeyError, PasskeyError } from "./errors";
+import { isUserCancellation, normalizePasskeyError, PasskeyError, toPasskeyError, PASSKEY_ERROR_MESSAGES } from "./errors";
 
 function domException(name: string, message = "webauthn failed") {
   const err = new Error(message);
@@ -47,5 +47,51 @@ describe("isUserCancellation", () => {
   it("is false for real failures", () => {
     expect(isUserCancellation(domException("SecurityError"))).toBe(false);
     expect(isUserCancellation(new Error("network down"))).toBe(false);
+  });
+});
+
+describe("toPasskeyError (issue #551)", () => {
+  function domException(name: string, message = "webauthn failed") {
+    const err = new Error(message);
+    err.name = name;
+    return err;
+  }
+
+  it("maps NotAllowedError with no authenticator to no-authenticator with distinct message", () => {
+    const result = toPasskeyError(domException("NotAllowedError"), false);
+    expect(result.code).toBe("no-authenticator");
+    expect(result.message).toBe("No passkey authenticator is available on this device.");
+  });
+
+  it("maps NotAllowedError with authenticator available to cancelled with distinct message", () => {
+    const result = toPasskeyError(domException("NotAllowedError"), true);
+    expect(result.code).toBe("cancelled");
+    expect(result.message).toBe("Passkey registration was cancelled.");
+  });
+
+  it("error messages differ between no-authenticator and user-cancel", () => {
+    const noAuth = toPasskeyError(domException("NotAllowedError"), false);
+    const cancelled = toPasskeyError(domException("NotAllowedError"), true);
+    expect(noAuth.message).not.toBe(cancelled.message);
+    expect(noAuth.code).not.toBe(cancelled.code);
+  });
+
+  it("maps other DOM errors to their existing codes regardless of hadAuthenticator", () => {
+    expect(toPasskeyError(domException("InvalidStateError"), true).code).toBe("credential-exists");
+    expect(toPasskeyError(domException("NotSupportedError"), false).code).toBe("unsupported");
+    expect(toPasskeyError(domException("SecurityError"), true).code).toBe("security");
+    expect(toPasskeyError(domException("AbortError"), false).code).toBe("aborted");
+  });
+
+  it("passes through an existing PasskeyError unchanged", () => {
+    const original = new PasskeyError("security", "bad origin", undefined);
+    expect(toPasskeyError(original, true)).toBe(original);
+    expect(toPasskeyError(original, false)).toBe(original);
+  });
+
+  it("maps unknown errors to unknown", () => {
+    const result = toPasskeyError(new Error("weird"), true);
+    expect(result.code).toBe("unknown");
+    expect(result.message).toBe("Passkey operation failed.");
   });
 });

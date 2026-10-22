@@ -12,8 +12,9 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-    Address, BytesN, Env, IntoVal,
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke},
+    vec, Address, BytesN, Env, IntoVal,
 };
 
 use crate::{Contract, ContractClient};
@@ -449,4 +450,127 @@ fn revoke_clears_publisher_and_reupsert_without_publisher_drops_attribution() {
         .upsert(&contract, &wasm_hash(&f.env, 0x02), &(now + 2000));
     assert!(f.registry.is_verified(&contract));
     assert_eq!(f.registry.publisher_of(&contract), None);
+}
+
+// ----- Event emission (#592: off-chain indexers discover attestations via
+// events rather than polling full contract state) -----
+
+#[test]
+fn successful_upsert_emits_attest_event_with_contract_and_wasm_hash() {
+    let f = setup();
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0xAB);
+    let now = f.env.ledger().sequence();
+    let expires = now + 1000;
+
+    assert!(upsert_as(&f, &f.attestor, &contract, &hash, expires));
+
+    // Exactly one event, carrying the contract id (topic) and the wasm hash
+    // (data), as required by the issue's acceptance criteria.
+    let events = f.env.events().all();
+    assert_eq!(
+        events,
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("attest"), contract.clone()).into_val(&f.env),
+                (hash.clone(), expires).into_val(&f.env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn rejected_upsert_emits_no_event() {
+    // A write that fails validation (expiry not strictly in the future) must
+    // not emit an event: an off-chain indexer should never see a record for an
+    // attestation that was never actually written.
+    let f = setup();
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0x01);
+    let now = f.env.ledger().sequence();
+
+    assert!(!upsert_as(&f, &f.attestor, &contract, &hash, now));
+    assert!(f.env.events().all().events().is_empty());
+}
+
+#[test]
+fn rejected_upsert_by_non_attestor_emits_no_event() {
+    // Failing the auth check (not even reaching validation) must also emit
+    // nothing.
+    let f = setup();
+    let mallory = Address::generate(&f.env);
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0x01);
+    let expires = f.env.ledger().sequence() + 1000;
+
+    assert!(!upsert_as(&f, &mallory, &contract, &hash, expires));
+    assert!(f.env.events().all().events().is_empty());
+}
+
+#[test]
+fn upsert_with_publisher_emits_attest_event_with_contract_and_wasm_hash() {
+    // The publisher-attributed write path shares the same event shape as the
+    // unattributed one — the event is about "this contract's code was
+    // attested", not about attribution.
+    let f = setup();
+    let contract = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0x01);
+    let publisher = publisher_id(&f.env, 0x42);
+    let now = f.env.ledger().sequence();
+    let expires = now + 1000;
+
+    assert!(upsert_with_publisher_as(
+        &f,
+        &f.attestor,
+        &contract,
+        &hash,
+        &publisher,
+        expires
+    ));
+
+    let events = f.env.events().all();
+    assert_eq!(
+        events,
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("attest"), contract.clone()).into_val(&f.env),
+                (hash.clone(), expires).into_val(&f.env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn revoke_emits_revoke_event_only_when_something_was_actually_removed() {
+    let f = setup();
+    let contract = Address::generate(&f.env);
+    let now = f.env.ledger().sequence();
+
+    assert!(upsert_as(
+        &f,
+        &f.attestor,
+        &contract,
+        &wasm_hash(&f.env, 0x01),
+        now + 1000
+    ));
+
+    f.env.mock_all_auths();
+    f.registry.revoke(&contract);
+
+    let events = f.env.events().all();
+    assert_eq!(
+        events,
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("revoke"), contract.clone()).into_val(&f.env),
+                ().into_val(&f.env),
+            ),
+        ]
+    );
 }

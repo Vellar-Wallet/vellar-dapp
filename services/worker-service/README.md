@@ -259,7 +259,13 @@ host, from `Cargo.lock` only (`src/cargo-prefetch.ts`):
 - git dependencies go through the same guard, IP pin, redirect block and
   https-only protocol list as the repo clone;
 - any other source is refused. There is no networked fallback: a pre-fetch
-  failure ends the job before a container starts.
+  failure ends the job before a container starts;
+- before any download, free space on the deps volume is checked against an
+  estimate (per-crate and per-git-dependency allowances plus a safety margin;
+  see `DiskSpaceEstimate`). Free space equal to the estimate counts as
+  insufficient and fails with `insufficient_disk_space`, distinct from a fetch
+  or I/O error. If capacity cannot be read the check is skipped and noted in the
+  private log.
 
 The build then runs `stellar contract build --locked` with the deps mounted
 read-only at `/deps` (cargo local-registry + git mirrors). Public `statusDetail`

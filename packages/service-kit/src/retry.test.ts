@@ -253,3 +253,52 @@ describe("retryWithBackoff — edge cases", () => {
     expect(result).toBe(3);
   });
 });
+
+// ─── retryWithJitter (issue #549) ─────────────────────────────────────────
+
+import { retryWithJitter } from "./retry";
+
+describe("retryWithJitter (issue #549)", () => {
+  it("returns delay within [0, base] for attempt 0", () => {
+    for (let i = 0; i <= 20; i++) {
+      const r = i / 20;
+      const delay = retryWithJitter(0, { baseDelayMs: 1000, maxDelayMs: 30_000, random: () => r });
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeLessThanOrEqual(1000);
+    }
+  });
+
+  it("returns delay within [0, 2*base] for attempt 1", () => {
+    for (let i = 0; i <= 20; i++) {
+      const r = i / 20;
+      const delay = retryWithJitter(1, { baseDelayMs: 1000, maxDelayMs: 30_000, random: () => r });
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeLessThanOrEqual(2000);
+    }
+  });
+
+  it("caps delay at maxDelayMs regardless of attempt", () => {
+    for (let attempt = 0; attempt <= 20; attempt++) {
+      const delay = retryWithJitter(attempt, { baseDelayMs: 1000, maxDelayMs: 5000, random: () => 0.9999 });
+      expect(delay).toBeLessThanOrEqual(5000);
+    }
+  });
+
+  it("retries are not perfectly periodic (jitter produces varied delays)", () => {
+    const delays = new Set<number>();
+    for (let i = 0; i < 50; i++) {
+      delays.add(retryWithJitter(0, { baseDelayMs: 1000, maxDelayMs: 30_000 }));
+    }
+    expect(delays.size).toBeGreaterThan(1);
+  });
+
+  it("full jitter covers the full range (random=0 → 0, random≈1 → cap)", () => {
+    expect(retryWithJitter(2, { baseDelayMs: 1000, maxDelayMs: 30_000, random: () => 0 })).toBe(0);
+    expect(retryWithJitter(2, { baseDelayMs: 1000, maxDelayMs: 30_000, random: () => 0.9999 })).toBeLessThanOrEqual(4000);
+  });
+
+  it("uses default baseDelayMs=1000 and maxDelayMs=30000 when not provided", () => {
+    expect(retryWithJitter(0, { random: () => 0.5 })).toBe(500);
+    expect(retryWithJitter(10, { random: () => 0.9999 })).toBeLessThanOrEqual(30_000);
+  });
+});

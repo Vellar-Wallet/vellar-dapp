@@ -5,8 +5,14 @@
  * before re-claiming, based on how many times it has already been attempted.
  */
 
+import { retryWithJitter } from "@vellar/service-kit";
+
 /**
  * Calculates exponential backoff delay with full jitter.
+ *
+ * Delegates to the shared `retryWithJitter` helper in
+ * packages/service-kit (issue #549) so the jittered-retry pattern is
+ * defined once rather than duplicated across services.
  *
  * Formula: random(0, min(cap, base * 2^attempt))
  *
@@ -29,12 +35,7 @@ export function calculateBackoffDelay(
   baseDelayMs = 1_000,
   maxDelayMs = 30_000,
 ): number {
-  // Exponential growth: base * 2^attempt
-  const exponential = baseDelayMs * Math.pow(2, attempt);
-  // Cap at maximum to prevent unbounded growth
-  const capped = Math.min(exponential, maxDelayMs);
-  // Full jitter: random integer in [0, capped]
-  return Math.floor(Math.random() * capped);
+  return retryWithJitter(attempt, { baseDelayMs, maxDelayMs });
 }
 
 /**

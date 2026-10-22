@@ -48,11 +48,27 @@ export class VerificationApiError extends Error {
   }
 }
 
+/** Client-side request timeout — the network-level request was aborted
+ * before any response arrived. Distinct from a server-reported
+ * build-timeout (which arrives as a `VerificationApiError`). */
+export class ClientTimeoutError extends Error {
+  readonly code = "client_timeout";
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(`Request timed out after ${timeoutMs}ms (no response from server)`);
+    this.name = "ClientTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export interface VerificationClientOptions {
   /** Gateway base URL (e.g. https://api.vellar.xyz). */
   apiUrl: string;
   /** Injected fetch; defaults to global fetch. */
   fetch?: typeof fetch;
+  /** Client-side request timeout in ms. When the network request hangs
+   * with no response, abort and throw `ClientTimeoutError`. Default: 30 000. */
+  timeoutMs?: number;
 }
 
 export interface VerificationClient {
@@ -67,21 +83,36 @@ export interface VerificationClient {
 export function createVerificationClient(options: VerificationClientOptions): VerificationClient {
   const base = options.apiUrl.replace(/\/+$/, "");
   const doFetch = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 30_000;
 
   async function req<T>(path: string, init?: RequestInit): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const onTimeout = () => {
+      timedOut = true;
+    };
+    controller.signal.addEventListener("abort", onTimeout);
+
     let res: Response;
     try {
       res = await doFetch(`${base}/verification${path}`, {
         headers: init?.body ? { "content-type": "application/json" } : undefined,
+        signal: controller.signal,
         ...init,
       });
     } catch (err) {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onTimeout);
+      if (timedOut) throw new ClientTimeoutError(timeoutMs);
       // Network/CORS failure — surface as a typed error, not a raw TypeError.
       throw new VerificationApiError(
         err instanceof Error ? err.message : "network request failed",
         0,
       );
     }
+    clearTimeout(timer);
+    controller.signal.removeEventListener("abort", onTimeout);
     const payload = (await res.json().catch(() => ({}))) as {
       error?: string;
       message?: string;
@@ -126,6 +157,14 @@ export function trustSignal(status: VerificationStatus): {
     case "verified":
       return { label: "Verified source", tone: "verified" };
     case "failed":
+      return { label: "Verification failed", tone: "warning" };
+    case "dead_letter":
+      // A job reclaimed and re-run VERIFY_MAX_ATTEMPTS times without
+      // reaching a terminal state (see VerificationStatus's doc comment).
+      // This attempt genuinely failed, repeatedly, not merely "never
+      // submitted." Previously fell through to the unverified/neutral
+      // default below, misrepresenting a confirmed failure as an unchecked
+      // contract (#587).
       return { label: "Verification failed", tone: "warning" };
     case "submitted":
     case "building":

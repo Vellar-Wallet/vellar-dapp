@@ -112,6 +112,7 @@ export const providerErrorCodeSchema = z.enum([
   "disconnected", // no wallet is paired/connected in the extension
   "invalid_request", // schema validation failed
   "internal", // unexpected failure
+  "paired_origin_limit_reached", // wallet already has the max paired dApp origins (#579)
 ]);
 
 export type ProviderErrorCode = z.infer<typeof providerErrorCodeSchema>;
@@ -180,10 +181,15 @@ export const providerErrorSchema = z.object({
 
 // --- Envelopes (correlation across postMessage / runtime messaging) ---
 
+// Schema version for protocol evolution. Increment when changing message
+// shapes. Receiver must reject or handle mismatches gracefully.
+export const PROTOCOL_VERSION = 1;
+
 export const requestEnvelopeSchema = z.object({
   channel: z.literal(PROVIDER_CHANNEL),
   kind: z.literal("request"),
   id: z.string().min(1),
+  version: z.number().int().default(PROTOCOL_VERSION),
   request: providerRequestSchema,
 });
 
@@ -191,6 +197,7 @@ export const responseEnvelopeSchema = z.object({
   channel: z.literal(PROVIDER_CHANNEL),
   kind: z.literal("response"),
   id: z.string().min(1),
+  version: z.number().int().default(PROTOCOL_VERSION),
   payload: z.union([providerResultSchema, providerErrorSchema]),
 });
 

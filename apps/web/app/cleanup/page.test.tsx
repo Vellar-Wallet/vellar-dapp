@@ -75,6 +75,11 @@ async function inspectWith(plan: typeof blockedPlan, { strict = false } = {}) {
   await screen.findByText(/cleanup plan/i);
 }
 
+/** Click through the itemized confirmation that now sits before any signature. */
+async function approveConfirm() {
+  fireEvent.click(await screen.findByRole("button", { name: /looks right/i }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   watchMock.mockReturnValue(new Promise(() => {})); // watching forever by default
@@ -92,6 +97,8 @@ describe("Cleanup wizard", () => {
     executeMock.mockResolvedValue({ steps: [cleanupStep], plan: blockedPlan });
     await inspectWith(blockedPlan);
     fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+    await screen.findByText(/confirm before signing/i);
+    await approveConfirm();
 
     expect(await screen.findByDisplayValue("CLEANUP_XDR")).toBeDefined();
     expect(screen.getByRole("link", { name: /stellar laboratory/i })).toBeDefined();
@@ -106,6 +113,7 @@ describe("Cleanup wizard", () => {
 
     await inspectWith(blockedPlan);
     fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+    await approveConfirm();
 
     await waitFor(() => expect(mergeMock).toHaveBeenCalledWith(G1, G2));
     expect(await screen.findByText(/account closed/i)).toBeDefined();
@@ -126,6 +134,7 @@ describe("Cleanup wizard", () => {
 
     await inspectWith(blockedPlan, { strict: true });
     fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+    await approveConfirm();
 
     await waitFor(() => expect(mergeMock).toHaveBeenCalledWith(G1, G2));
     expect(await screen.findByText(/account closed/i)).toBeDefined();
@@ -135,6 +144,7 @@ describe("Cleanup wizard", () => {
     mergeMock.mockResolvedValue({ step: mergeStep });
     await inspectWith({ ...blockedPlan, blockers: [], estimatedTransactions: 1, mergeReady: true });
     fireEvent.click(screen.getByRole("button", { name: /proceed to merge/i }));
+    await approveConfirm();
 
     expect(await screen.findByDisplayValue("MERGE_XDR")).toBeDefined();
     expect(screen.getByText(/permanently/i)).toBeDefined();
@@ -145,6 +155,7 @@ describe("Cleanup wizard", () => {
     watchMock.mockResolvedValueOnce(false); // times out
     await inspectWith(blockedPlan);
     fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+    await approveConfirm();
 
     expect(await screen.findByText(/not seen on the network yet/i)).toBeDefined();
     watchMock.mockReturnValue(new Promise(() => {}));
@@ -164,5 +175,81 @@ describe("Cleanup wizard", () => {
     fireEvent.change(screen.getByLabelText(/destination/i), { target: { value: G2 } });
     fireEvent.click(screen.getByRole("button", { name: /inspect account/i }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/account_not_found/);
+  });
+
+  describe("confirmation itemizes the executing plan", () => {
+    const trustlines = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        type: "trustline",
+        description: `Trustline to ASSET${i}:GISSUER${i}`,
+        actionRequired: `Remove the ASSET${i} trustline (requires zero balance)`,
+      }));
+
+    it("lists every asset and trustline from the plan that will actually execute", async () => {
+      // The inspected plan and the executing plan differ on purpose: the
+      // confirmation must itemize the EXECUTING one.
+      const executingPlan = {
+        ...blockedPlan,
+        blockers: [
+          ...trustlines(2),
+          {
+            type: "balance",
+            description: "Holds 100 USDC",
+            actionRequired: "Transfer or burn the USDC balance before removing its trustline",
+          },
+        ],
+      };
+      executeMock.mockResolvedValue({ steps: [cleanupStep], plan: executingPlan });
+      await inspectWith(blockedPlan);
+      fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+
+      const list = await screen.findByTestId("plan-item-list");
+      expect(list.textContent).toContain("Trustline to ASSET0:GISSUER0");
+      expect(list.textContent).toContain("Trustline to ASSET1:GISSUER1");
+      expect(list.textContent).toContain("Holds 100 USDC");
+    });
+
+    it("scrolls a long trustline list without cutting any item off", async () => {
+      const executingPlan = { ...blockedPlan, blockers: trustlines(20) };
+      executeMock.mockResolvedValue({ steps: [cleanupStep], plan: executingPlan });
+      await inspectWith(blockedPlan);
+      fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+
+      const list = await screen.findByTestId("plan-item-list");
+      // Scrollable container: bounded height with overflow.
+      expect(list.className).toMatch(/max-h-/);
+      expect(list.className).toMatch(/overflow-y-auto/);
+      // Every item is in the DOM — the scroll region never drops content.
+      const rows = list.querySelectorAll("li");
+      expect(rows).toHaveLength(20);
+      for (let i = 0; i < 20; i++) {
+        expect(list.textContent).toContain(`Trustline to ASSET${i}:GISSUER${i}`);
+      }
+    });
+
+    it("says so plainly when the plan affects no assets or trustlines", async () => {
+      executeMock.mockResolvedValue({
+        steps: [cleanupStep],
+        plan: { ...blockedPlan, blockers: [] },
+      });
+      await inspectWith(blockedPlan);
+      fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+
+      expect(await screen.findByText(/no assets or trustlines are affected/i)).toBeDefined();
+      expect(screen.queryByTestId("plan-item-list")).toBeNull();
+    });
+
+    it("does not open any signing step until the confirmation is approved", async () => {
+      executeMock.mockResolvedValue({ steps: [cleanupStep], plan: blockedPlan });
+      await inspectWith(blockedPlan);
+      fireEvent.click(screen.getByRole("button", { name: /start cleanup/i }));
+
+      await screen.findByText(/confirm before signing/i);
+      expect(screen.queryByDisplayValue("CLEANUP_XDR")).toBeNull();
+      expect(watchMock).not.toHaveBeenCalled();
+
+      await approveConfirm();
+      expect(await screen.findByDisplayValue("CLEANUP_XDR")).toBeDefined();
+    });
   });
 });

@@ -59,6 +59,8 @@ export interface SwapClientDeps {
   network: Network;
   signedToXdr: (signed: unknown) => string;
   now?: () => number;
+  /** How long a quote may be signed after it was fetched. Defaults to QUOTE_TTL_MS. */
+  maxQuoteAgeMs?: number;
 }
 
 /** Candidate routes: direct, then via XLM when neither side is XLM. */
@@ -126,7 +128,7 @@ export function createSwapClient(deps: SwapClientDeps) {
       resolve: (contractId: string) => RegisteredAsset | undefined;
     }): Promise<PreparedSwap> {
       const { quote, from } = input;
-      if (!isQuoteFresh(quote, now())) {
+      if (!isQuoteFresh(quote, now(), deps.maxQuoteAgeMs)) {
         throw new SwapQuoteError("This quote has expired. Get a fresh quote before approving.");
       }
       const bound = slippageBound(quote, input.slippageBps);
@@ -135,6 +137,7 @@ export function createSwapClient(deps: SwapClientDeps) {
       const built = await deps.venue.buildSwap({
         amountIn: quote.amountIn,
         minOut: bound.minOut,
+        slippageBps: bound.slippageBps,
         path: quote.path,
         to: from,
         deadline,

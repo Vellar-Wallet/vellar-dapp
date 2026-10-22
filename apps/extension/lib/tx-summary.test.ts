@@ -10,7 +10,12 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { formatStroops, summarizeTransaction } from "./tx-summary";
+import {
+  describeOperation,
+  formatStroops,
+  formatTransactionSummary,
+  summarizeTransaction,
+} from "./tx-summary";
 
 // Build real transaction XDRs and decode them through the summarizer, so the
 // decode path is exercised for real rather than against a hand-rolled mock.
@@ -124,5 +129,89 @@ describe("formatStroops", () => {
 
   it("returns the input unchanged when it is not a number", () => {
     expect(formatStroops("abc")).toBe("abc");
+  });
+});
+
+// #577: a readable summary for a Soroban multi-operation batch transaction —
+// each operation rendered distinctly, with a graceful per-operation fallback
+// rather than collapsing (or failing) the whole summary.
+describe("describeOperation", () => {
+  it("describes a transfer with its amount and destination", () => {
+    expect(describeOperation({ kind: "transfer", token: TOKEN, to: DEST, amount: "50000000" })).toBe(
+      `send 5 to ${DEST}`,
+    );
+  });
+
+  it("describes a contract call by its function name", () => {
+    expect(describeOperation({ kind: "contract-call", contract: TOKEN, fn: "swap" })).toBe(
+      "invoke swap",
+    );
+  });
+
+  it("falls back to the generic label for an unidentified operation", () => {
+    expect(describeOperation({ kind: "other", label: "an operation" })).toBe("an operation");
+  });
+});
+
+describe("formatTransactionSummary", () => {
+  it("summarizes a single operation as its own description, with no count prefix", () => {
+    const xdrStr = buildTx(transferOp("50000000"));
+    const summary = summarizeTransaction(xdrStr, "testnet", sdk);
+    expect(formatTransactionSummary(summary)).toBe(`send 5 to ${DEST}`);
+  });
+
+  it("summarizes a multi-operation batch with a count and each operation distinct", () => {
+    const approve = Operation.invokeContractFunction({
+      contract: TOKEN,
+      function: "approve",
+      args: [nativeToScVal(1, { type: "u32" })],
+    });
+    const account = new Account(SOURCE, "0");
+    const xdrStr = new TransactionBuilder(account, {
+      fee: "300",
+      networkPassphrase: PASSPHRASE,
+    })
+      .addOperation(approve)
+      .addOperation(transferOp("10000000"))
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: TOKEN,
+          function: "swap",
+          args: [nativeToScVal(1, { type: "u32" })],
+        }),
+      )
+      .setTimeout(30)
+      .build()
+      .toXDR();
+
+    const summary = summarizeTransaction(xdrStr, "testnet", sdk);
+    const text = formatTransactionSummary(summary);
+
+    expect(text).toBe(`3 operations: invoke approve, send 1 to ${DEST}, invoke swap`);
+    // Each operation must be individually identifiable, not collapsed into
+    // one generic description for the whole batch.
+    expect(text).toContain("invoke approve");
+    expect(text).toContain("invoke swap");
+  });
+
+  it("falls back gracefully for a batch operation that cannot be specifically identified, without failing the whole summary", () => {
+    // A contract-call whose host function could not be decoded into a
+    // specific contract/fn still degrades to the generic contract-call
+    // labels rather than throwing or dropping the operation.
+    const summary: ReturnType<typeof summarizeTransaction> = {
+      operations: [
+        { kind: "contract-call", fn: "swap", contract: TOKEN },
+        { kind: "contract-call", fn: "a function", contract: "a contract" },
+      ],
+      movesValue: false,
+    };
+    expect(formatTransactionSummary(summary)).toBe(
+      "2 operations: invoke swap, invoke a function",
+    );
+  });
+
+  it("summarizes an undecodable transaction with the generic fallback label", () => {
+    const summary = summarizeTransaction("not-valid-xdr", "testnet", sdk);
+    expect(formatTransactionSummary(summary)).toBe("a transaction");
   });
 });

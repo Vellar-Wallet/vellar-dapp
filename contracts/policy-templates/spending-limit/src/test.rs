@@ -409,6 +409,94 @@ fn boundary_does_not_allow_more_than_two_times_limit() {
     );
 }
 
+// DOCUMENTED BOUNDARY BEHAVIOR, exact instant (security-audit.md M3 / #589):
+// the reset condition is `now - window_start >= window_seconds`, so the
+// ledger-close exactly `window_seconds` after `window_start` is the FIRST
+// instant counted in the NEW window, not the last instant of the old one.
+// These three tests pin that exact instant against its immediate neighbors
+// (one ledger before, and the instant itself), so the off-by-one is explicit
+// and deliberate rather than incidental.
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn one_ledger_before_window_reset_is_still_old_window() {
+    // window_start anchored at t=0. At t = DAY - 1 (one ledger before the
+    // reset instant), `now - window_start == DAY - 1 < window_seconds`: still
+    // the OLD window, so having already spent the full cap leaves no headroom.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, TEN_XLM),
+    );
+    fx.env
+        .ledger()
+        .set_timestamp(fx.env.ledger().timestamp() + DAY - 1);
+    // Fails: still inside the window that already spent the full cap.
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+}
+
+#[test]
+fn exact_reset_instant_counts_as_new_window() {
+    // window_start anchored at t=0. At t = DAY EXACTLY,
+    // `now - window_start == DAY >= window_seconds`: the reset condition is
+    // satisfied at this exact instant, so a fresh full cap is available even
+    // though only `window_seconds` (not more) has elapsed. This is the
+    // deliberate choice this test pins: ">=" resets ON the boundary instant,
+    // not strictly after it.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, TEN_XLM),
+    );
+    fx.env
+        .ledger()
+        .set_timestamp(fx.env.ledger().timestamp() + DAY);
+    // Passes: the exact reset instant already belongs to the new window.
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, TEN_XLM),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn one_ledger_after_window_reset_is_new_window_with_its_own_cap() {
+    // window_start anchored at t=0. At t = DAY + 1 (one ledger after the reset
+    // instant), we're one ledger INTO the new window: still a fresh cap, but
+    // that fresh cap is itself a hard ceiling — spending it twice in the same
+    // new window still rejects. Contrasts with the exact-instant test above:
+    // the new window's cap is fresh exactly once, not unbounded.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, TEN_XLM),
+    );
+    fx.env
+        .ledger()
+        .set_timestamp(fx.env.ledger().timestamp() + DAY + 1);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, TEN_XLM),
+    );
+    // Second spend in the same (new) window, over its fresh cap → rejected.
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+}
+
 #[test]
 fn respects_custom_limit_and_window() {
     // 25 XLM over 1 hour — proves config actually drives enforcement.

@@ -209,4 +209,51 @@ describe("routeProviderRequest", () => {
       },
     });
   });
+
+  // #582: two different tabs/origins, both paired to the same wallet, issuing
+  // concurrent requests (e.g. both requesting a signature) must be handled
+  // correctly and independently — distinct approval decisions for each, with
+  // no cross-contamination of grants/state between them.
+  it("two concurrent sign_transaction requests from different tab/origin contexts are independent", () => {
+    const otherOrigin = "https://other-dapp.example";
+    const otherGrant: PermissionGrant = {
+      origin: otherOrigin,
+      accountId: "CABC",
+      network: "testnet",
+      capabilities: ["connect", "view_address", "sign"],
+      grantedAt: "2026-07-16T10:05:00.000Z",
+    };
+    const bothGranted: ExtensionState = { ...paired, grants: [grant, otherGrant] };
+
+    const signRequest: ProviderRequest = {
+      method: "sign_transaction",
+      params: { xdr: "AAAA", network: "testnet" },
+    };
+
+    const decisionA = routeProviderRequest(signRequest, ORIGIN, bothGranted);
+    const decisionB = routeProviderRequest(signRequest, otherOrigin, bothGranted);
+
+    expect(decisionA).toEqual({ kind: "needs-approval", origin: ORIGIN });
+    expect(decisionB).toEqual({ kind: "needs-approval", origin: otherOrigin });
+    // Each decision carries its OWN origin — neither was overwritten by the other.
+    expect(decisionA).not.toEqual(decisionB);
+  });
+
+  it("one concurrent origin lacking a grant is unauthorized while the other (granted) needs approval — no cross-contamination", () => {
+    const otherOrigin = "https://other-dapp.example"; // no grant for this one
+    const signRequest: ProviderRequest = {
+      method: "sign_transaction",
+      params: { xdr: "AAAA", network: "testnet" },
+    };
+
+    // `granted` only has a grant for ORIGIN; `otherOrigin` has none.
+    const decisionGranted = routeProviderRequest(signRequest, ORIGIN, granted);
+    const decisionUngranted = routeProviderRequest(signRequest, otherOrigin, granted);
+
+    expect(decisionGranted).toEqual({ kind: "needs-approval", origin: ORIGIN });
+    expect(decisionUngranted).toMatchObject({
+      kind: "respond",
+      payload: { error: { code: "unauthorized" } },
+    });
+  });
 });

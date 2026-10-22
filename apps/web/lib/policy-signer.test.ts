@@ -106,3 +106,123 @@ describe("createPolicySignerActions — attach/detach wiring (RA-6)", () => {
     expect(calls.submitted[0]).toMatchObject({ network: "testnet" });
   });
 });
+
+// Issue #559: a signature request issued while a detach transaction for the
+// same policy is still pending confirmation. The behaviour is deliberate —
+// the sign request is REJECTED with a clear reason rather than racing the
+// recovery path — and the guard clears as soon as the detach resolves.
+describe("requestSignature vs in-flight detach (issue #559)", () => {
+  function fakes(opts: { detachGate?: Promise<void> } = {}) {
+    const calls = {
+      remove: [] as unknown[],
+      signed: 0,
+      submitted: [] as { signedXdr: string; network: string }[],
+    };
+    const kit = {
+      addPolicy: vi.fn(async () => "attach-xdr"),
+      remove: vi.fn(async (signerKey: unknown) => {
+        calls.remove.push(signerKey);
+        // Hold the detach open until the test releases it, so the transaction
+        // is "pending confirmation" while the sign request arrives.
+        if (opts.detachGate) await opts.detachGate;
+        return "detach-xdr";
+      }),
+      sign: vi.fn(async (tx: string) => {
+        calls.signed++;
+        return `signed:${tx}`;
+      }),
+    };
+    const SignerKey = { Policy: (id: string) => ({ tag: "Policy", id }) };
+    const SignerStore = { Persistent: "PERSISTENT", Temporary: "TEMPORARY" };
+    const backend = {
+      submitTransaction: vi.fn(async (req: { signedXdr: string; network: string }) => {
+        calls.submitted.push(req);
+        return { hash: "txhash" };
+      }),
+    };
+    return { calls, kit, backend, SignerKey, SignerStore };
+  }
+
+  function actionsOf(f: ReturnType<typeof fakes>) {
+    return createPolicySignerActions({
+      kit: f.kit as never,
+      backend: f.backend as never,
+      network: "testnet",
+      SignerKey: f.SignerKey as never,
+      SignerStore: f.SignerStore as never,
+    });
+  }
+
+  it("rejects a sign request issued while the same policy is mid-detach, with a clear reason", async () => {
+    let releaseDetach!: () => void;
+    const detachGate = new Promise<void>((resolve) => {
+      releaseDetach = resolve;
+    });
+    const f = fakes({ detachGate });
+    const actions = actionsOf(f);
+
+    // Start the detach; it stays pending confirmation (gate held).
+    const detachPromise = actions.detachPolicy("CPOLICY");
+    await Promise.resolve(); // let detach reach the gate
+
+    // Sign request arrives while the detach is still pending → rejected.
+    await expect(actions.requestSignature("CPOLICY", "pending-tx")).rejects.toThrow(
+      /being detached/i,
+    );
+
+    releaseDetach();
+    await expect(detachPromise).resolves.toEqual({ hash: "txhash" });
+    // The rejection is a guard, not a sign: only the detach itself signed.
+    expect(f.calls.signed).toBe(1);
+  });
+
+  it("does not block a sign request for a different policy", async () => {
+    let releaseDetach!: () => void;
+    const detachGate = new Promise<void>((resolve) => {
+      releaseDetach = resolve;
+    });
+    const f = fakes({ detachGate });
+    const actions = actionsOf(f);
+
+    const detachPromise = actions.detachPolicy("CPOLICY");
+    await Promise.resolve();
+
+    await expect(actions.requestSignature("COTHER", "other-tx")).resolves.toBe("signed:other-tx");
+
+    releaseDetach();
+    await detachPromise;
+  });
+
+  it("allows a sign request after the detach has confirmed", async () => {
+    const f = fakes();
+    const actions = actionsOf(f);
+
+    await actions.detachPolicy("CPOLICY");
+    await expect(actions.requestSignature("CPOLICY", "tx-after")).resolves.toBe("signed:tx-after");
+  });
+
+  it("covers the detach completing successfully right after the sign request starts", async () => {
+    let releaseDetach!: () => void;
+    const detachGate = new Promise<void>((resolve) => {
+      releaseDetach = resolve;
+    });
+    const f = fakes({ detachGate });
+    const actions = actionsOf(f);
+
+    // Sign request starts FIRST (no detach in flight yet) — it is allowed
+    // and left in flight.
+    const signPromise = actions.requestSignature("CPOLICY", "early-tx");
+
+    // Detach for the same policy starts and completes right after.
+    const detachPromise = actions.detachPolicy("CPOLICY");
+    releaseDetach();
+    await expect(detachPromise).resolves.toEqual({ hash: "txhash" });
+
+    // The already-started sign request is not retroactively failed; it
+    // resolves normally (the guard is checked at initiation only).
+    await expect(signPromise).resolves.toBe("signed:early-tx");
+
+    // And the guard has cleared: a fresh sign request is allowed again.
+    await expect(actions.requestSignature("CPOLICY", "late-tx")).resolves.toBe("signed:late-tx");
+  });
+});

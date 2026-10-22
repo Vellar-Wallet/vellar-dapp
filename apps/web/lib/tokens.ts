@@ -4,6 +4,22 @@ import type { TokenInfo } from "vellar-sdk";
 export interface RegistryToken extends TokenInfo {
   name: string;
   isNative?: boolean;
+  /** On the curated TOKEN_REGISTRY right now. Arbitrary/custom assets are not. */
+  isAllowlisted: boolean;
+  /** Has a verification record (attestation provenance). Curated entries do. */
+  isVerified: boolean;
+}
+
+/**
+ * Send-flow trust signal for an asset. Derived from the CURRENT registry only —
+ * never cached — so an asset that was allowlisted and has since been removed
+ * immediately reads as untrusted.
+ */
+export interface TokenTrust {
+  allowlisted: boolean;
+  verified: boolean;
+  /** The send-flow UI should visually flag this asset as untrusted. */
+  shouldFlag: boolean;
 }
 
 /**
@@ -31,6 +47,8 @@ export const TOKEN_REGISTRY: Record<Network, RegistryToken[]> = {
       name: "Stellar Lumens",
       decimals: 7,
       isNative: true,
+      isAllowlisted: true,
+      isVerified: true,
     },
     {
       contractId: MAINNET_USDC_SAC,
@@ -38,6 +56,8 @@ export const TOKEN_REGISTRY: Record<Network, RegistryToken[]> = {
       name: "USD Coin",
       decimals: 7,
       isNative: false,
+      isAllowlisted: true,
+      isVerified: true,
     },
   ],
   testnet: [
@@ -47,6 +67,8 @@ export const TOKEN_REGISTRY: Record<Network, RegistryToken[]> = {
       name: "Stellar Lumens",
       decimals: 7,
       isNative: true,
+      isAllowlisted: true,
+      isVerified: true,
     },
     {
       contractId: TESTNET_USDC_SAC,
@@ -54,6 +76,8 @@ export const TOKEN_REGISTRY: Record<Network, RegistryToken[]> = {
       name: "USD Coin",
       decimals: 7,
       isNative: false,
+      isAllowlisted: true,
+      isVerified: true,
     },
   ],
 };
@@ -74,6 +98,21 @@ export function findToken(network: Network, identifier: string): RegistryToken |
   return tokens.find(
     (t) => t.contractId.toLowerCase() === normalized || t.symbol.toLowerCase() === normalized,
   );
+}
+
+/**
+ * Trust signal for the send flow. Registry membership is evaluated live, so an
+ * asset that was previously allowlisted and has since been removed is flagged
+ * again the moment it leaves TOKEN_REGISTRY.
+ */
+export function getTokenTrust(network: Network, identifier: string): TokenTrust {
+  const token = findToken(network, identifier);
+  if (!token) return { allowlisted: false, verified: false, shouldFlag: true };
+  return {
+    allowlisted: token.isAllowlisted,
+    verified: token.isVerified,
+    shouldFlag: !token.isAllowlisted,
+  };
 }
 
 /**

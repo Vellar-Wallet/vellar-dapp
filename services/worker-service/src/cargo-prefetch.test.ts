@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CRATES_IO_DOWNLOAD,
   CRATES_IO_INDEX,
+  DEFAULT_DISK_SAFETY_MARGIN_BYTES,
   DependencyPrefetchError,
+  estimateRequiredBytes,
   hermeticCargoConfig,
   hermeticGitConfig,
   indexPath,
@@ -479,5 +481,97 @@ describe("prefetchCargoDependencies", () => {
         assertUrl: publicPin,
       }),
     ).rejects.toMatchObject({ code: "dependencies_unresolved" });
+  });
+
+  describe("disk-space preflight", () => {
+    const diskSpace = { perCrateBytes: 100, perGitDependencyBytes: 1000, safetyMarginBytes: 50 };
+    // one crate => 100 + 50
+    const REQUIRED = 150;
+
+    const opts = async (getFreeBytes: (dir: string) => Promise<number>, lock = lockfile(localPkg, itoaPkg)) => {
+      await writeFile(join(repoDir, "Cargo.lock"), lock);
+      const crates = fakeCratesIo();
+      const git = fakeGit();
+      return {
+        crates,
+        git,
+        deps: {
+          run: git.run,
+          fetchHttps: crates.fetchHttps,
+          assertUrl: publicPin,
+          diskSpace,
+          getFreeBytes,
+        },
+      };
+    };
+
+    it("estimates per-package allowances plus the safety margin", () => {
+      const plan = planDependencies(parseCargoLock(lockfile(localPkg, itoaPkg, gitPkg())));
+      expect(estimateRequiredBytes(plan, diskSpace)).toBe(100 + 1000 + 50);
+      expect(estimateRequiredBytes({ registry: [], git: [] })).toBe(
+        DEFAULT_DISK_SAFETY_MARGIN_BYTES,
+      );
+    });
+
+    it("proceeds when free space exceeds the requirement", async () => {
+      const { deps } = await opts(async () => REQUIRED + 1);
+      const result = await prefetchCargoDependencies(repoDir, depsDir, deps);
+      expect(result.plan.registry).toHaveLength(1);
+    });
+
+    it("fails with insufficient_disk_space before any download", async () => {
+      const { deps, crates, git } = await opts(async () => REQUIRED - 1);
+      await expect(prefetchCargoDependencies(repoDir, depsDir, deps)).rejects.toMatchObject({
+        name: "DependencyPrefetchError",
+        code: "insufficient_disk_space",
+        message: expect.stringMatching(/Insufficient disk space/),
+      });
+      expect(crates.requests).toHaveLength(0);
+      expect(git.calls).toHaveLength(0);
+    });
+
+    it("treats free space exactly equal to the requirement as insufficient", async () => {
+      const { deps, crates } = await opts(async () => REQUIRED);
+      await expect(prefetchCargoDependencies(repoDir, depsDir, deps)).rejects.toMatchObject({
+        code: "insufficient_disk_space",
+      });
+      expect(crates.requests).toHaveLength(0);
+    });
+
+    it("counts git dependencies toward the requirement", async () => {
+      // 1150 fits the crate alone (150) but not crate + git dependency (1150).
+      const { deps } = await opts(async () => 1150, lockfile(localPkg, itoaPkg, gitPkg()));
+      await expect(prefetchCargoDependencies(repoDir, depsDir, deps)).rejects.toMatchObject({
+        code: "insufficient_disk_space",
+      });
+    });
+
+    it("skips the check, and notes it in the log, when capacity cannot be read", async () => {
+      const { deps } = await opts(async () => {
+        throw new Error("statfs unsupported");
+      });
+      const result = await prefetchCargoDependencies(repoDir, depsDir, deps);
+      expect(result.log).toMatch(/disk space check skipped: statfs unsupported/);
+    });
+
+    it("does not query disk space when there is nothing to fetch", async () => {
+      let queried = false;
+      const { deps } = await opts(async () => {
+        queried = true;
+        return 0;
+      }, lockfile(localPkg));
+      await prefetchCargoDependencies(repoDir, depsDir, deps);
+      expect(queried).toBe(false);
+    });
+
+    it("reads real capacity from the filesystem by default", async () => {
+      const { deps } = await opts(async () => 0);
+      const result = await prefetchCargoDependencies(repoDir, depsDir, {
+        ...deps,
+        getFreeBytes: undefined,
+        diskSpace: { perCrateBytes: 1, safetyMarginBytes: 1 },
+      });
+      expect(result.log).not.toMatch(/skipped/);
+    });
   });
 });

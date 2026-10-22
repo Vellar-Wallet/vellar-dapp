@@ -181,7 +181,13 @@ export function HomeScreen({
             {grants.length > 0 && <span className="count">{grants.length}</span>}
           </div>
           {grants.length === 0 ? (
-            <p className="empty">No sites connected. dApps you approve will appear here.</p>
+            <div className="empty-state">
+              <p className="empty">No dApps connected yet.</p>
+              <p className="empty-cta">
+                Visit a Stellar dApp and choose "Connect wallet" (or similar) to pair it with
+                Vellar. Once you approve the connection, it will appear here.
+              </p>
+            </div>
           ) : (
             grants.map((grant) => (
               <div key={`${grant.origin}-${grant.network}`} className="row">

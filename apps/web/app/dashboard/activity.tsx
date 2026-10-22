@@ -131,7 +131,7 @@ function ActivityRow({
       <div className="ti" aria-hidden="true" />
       <div className="tn">
         <b>
-          {dirLabel} · {row.asset.code}
+          {row.description ?? `${dirLabel} · ${row.asset.code}`}
         </b>
         <span className={MONO}>{counterpartyLabel}</span>
         <span className={MONO}>{formatTimestamp(row.timestamp)}</span>

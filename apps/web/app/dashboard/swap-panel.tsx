@@ -15,7 +15,7 @@ import {
   SwapQuoteError,
   type SwapQuote,
 } from "@/lib/swap/quote";
-import { SwapVenueError, toVenueError } from "@/lib/swap/soroswap";
+import { SwapVenueError, toVenueError, type SwapOutcome } from "@/lib/swap/soroswap";
 import { trackTransaction } from "@/lib/track";
 import { useSwapClient } from "@/lib/wallet-context";
 
@@ -30,8 +30,34 @@ type Flow =
   | { step: "tracking"; hash: string; prepared: PreparedSwap }
   | { step: "done"; hash: string; prepared: PreparedSwap; outcome: DoneOutcome };
 
+/**
+ * What the submission actually did. A swap can land partially filled, leaving a
+ * residual of the source asset unswapped — that is not the same as a full fill
+ * or a fully rejected (0%) one, and the UI has to say so.
+ */
 type DoneOutcome =
-  { kind: "success"; received: bigint | null } | { kind: "failed" } | { kind: "unconfirmed" };
+  | { kind: "success"; received: bigint | null }
+  | { kind: "partial"; filledIn: bigint; residualIn: bigint; received: bigint }
+  | { kind: "rejected" }
+  | { kind: "failed" }
+  | { kind: "unconfirmed" };
+
+/** Classify the on-chain result against what the user asked for. */
+export function classifySwapFill(result: SwapOutcome, amountIn: bigint): DoneOutcome {
+  if (result.status === "failed") return { kind: "failed" };
+  if (result.status !== "success") return { kind: "success", received: null };
+  const received = result.amounts[result.amounts.length - 1] ?? null;
+  if (received === null) return { kind: "success", received: null };
+  const filledIn = result.amounts[0] ?? amountIn;
+  if (received === 0n || filledIn === 0n) return { kind: "rejected" };
+  // A partial fill is defined by a residual of the SOURCE asset: less than
+  // amountIn was swapped. Receiving less than expectedOut with the full input
+  // sold is slippage, not a partial fill.
+  if (filledIn < amountIn) {
+    return { kind: "partial", filledIn, residualIn: amountIn - filledIn, received };
+  }
+  return { kind: "success", received };
+}
 
 function errorMessage(err: unknown): string {
   if (err instanceof SwapQuoteError || err instanceof SwapVenueError) return err.message;
@@ -118,16 +144,15 @@ export function SwapPanel({
       setFlow({ step: "done", hash, prepared, outcome: { kind: "failed" } });
       return;
     }
-    let received: bigint | null = null;
+    let outcome: DoneOutcome;
     try {
       const swaps = await getSwaps();
-      const outcome = await swaps.readOutcome(hash);
-      if (outcome.status === "success")
-        received = outcome.amounts[outcome.amounts.length - 1] ?? null;
+      const raw = await swaps.readOutcome(hash);
+      outcome = classifySwapFill(raw, prepared.review.amountIn);
     } catch {
-      received = null;
+      outcome = { kind: "success", received: null };
     }
-    setFlow({ step: "done", hash, prepared, outcome: { kind: "success", received } });
+    setFlow({ step: "done", hash, prepared, outcome });
     setAmount("");
     onSuccess();
   }
@@ -215,6 +240,51 @@ export function SwapPanel({
               {flow.outcome.received !== null
                 ? ` Received ${fmt(flow.outcome.received, flow.prepared.review.buy.decimals, flow.prepared.review.buy.symbol)}.`
                 : " Check your balance for the exact amount received."}
+            </p>
+          )}
+          {flow.outcome.kind === "partial" && (
+            <div className="lpa-well flex flex-col gap-1.5" role="status">
+              <p className="lpa-ok m-0! font-bold">Swap partially filled</p>
+              <p className="m-0!">
+                Sold{" "}
+                {fmt(
+                  flow.outcome.filledIn,
+                  flow.prepared.review.sell.decimals,
+                  flow.prepared.review.sell.symbol,
+                )}{" "}
+                of{" "}
+                {fmt(
+                  flow.prepared.review.amountIn,
+                  flow.prepared.review.sell.decimals,
+                  flow.prepared.review.sell.symbol,
+                )}{" "}
+                and received{" "}
+                {fmt(
+                  flow.outcome.received,
+                  flow.prepared.review.buy.decimals,
+                  flow.prepared.review.buy.symbol,
+                )}{" "}
+                (expected{" "}
+                {fmt(
+                  flow.prepared.review.expectedOut,
+                  flow.prepared.review.buy.decimals,
+                  flow.prepared.review.buy.symbol,
+                )}
+                ).
+              </p>
+              <p className="m-0!">
+                {fmt(
+                  flow.outcome.residualIn,
+                  flow.prepared.review.sell.decimals,
+                  flow.prepared.review.sell.symbol,
+                )}{" "}
+                remains unswapped in {flow.prepared.review.sell.symbol}.
+              </p>
+            </div>
+          )}
+          {flow.outcome.kind === "rejected" && (
+            <p className="lpa-bad">
+              This swap filled 0% and was fully rejected — no tokens were exchanged.
             </p>
           )}
           {flow.outcome.kind === "failed" && (

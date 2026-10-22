@@ -1,4 +1,5 @@
 import type { Network } from "@vellar/types";
+import { MAX_SLIPPAGE_BPS } from "./quote";
 
 // Soroswap venue adapter (docs/design-phase8-payments.md, "Swaps").
 //
@@ -23,6 +24,8 @@ export const SWAP_DEADLINE_SECONDS = 300;
 export interface BuildSwapInput {
   amountIn: bigint;
   minOut: bigint;
+  /** Effective slippage tolerance encoded as minOut, in basis points. */
+  slippageBps: number;
   path: string[];
   /** The wallet (C…) — both the payer of amountIn and the receiver of the output. */
   to: string;
@@ -59,6 +62,36 @@ const ROUTER_ERRORS: Record<number, string> = {
   514: "The venue rejected the route.",
 };
 
+/**
+ * Slippage tolerances outside `[1, maxSlippageBps]` are refused, not clamped.
+ * `maxSlippageBps` is configurable per venue — an operator can tighten the
+ * ceiling below the global default without touching the shared arithmetic.
+ */
+export function assertSlippageWithin(slippageBps: number, maxSlippageBps: number): void {
+  if (!Number.isInteger(slippageBps) || slippageBps < 1 || slippageBps > maxSlippageBps) {
+    throw new SwapVenueError(
+      `Slippage must be between 0.01% and ${maxSlippageBps / 100}%.`,
+      null,
+    );
+  }
+}
+
+/**
+ * Re-validate against the *live* simulation rather than the original quote:
+ * the quote may be stale by the time the transaction is assembled. Returns the
+ * simulated output on success so the caller does not re-index the array.
+ */
+export function assertMeetsMinOut(simulatedAmounts: bigint[], minOut: bigint): bigint {
+  const out = simulatedAmounts[simulatedAmounts.length - 1];
+  if (out === undefined || out < minOut) {
+    throw new SwapVenueError(
+      "The price moved past your slippage limit, so the swap was refused. Nothing was exchanged.",
+      507,
+    );
+  }
+  return out;
+}
+
 export class SwapVenueError extends Error {
   readonly code: number | null;
   constructor(message: string, code: number | null) {
@@ -94,8 +127,11 @@ export function createSoroswapVenue(config: {
    * (a contract cannot source an envelope).
    */
   simulationSource?: string;
+  /** Maximum slippage tolerance this venue will encode, in basis points. */
+  maxSlippageBps?: number;
 }): SwapVenue {
   const router = SOROSWAP_ROUTER[config.network];
+  const maxSlippageBps = config.maxSlippageBps ?? MAX_SLIPPAGE_BPS;
   const sdk = () => import("@stellar/stellar-sdk");
 
   async function build(method: string, args: unknown[]) {
@@ -143,7 +179,10 @@ export function createSoroswapVenue(config: {
       return resultOf(tx);
     },
 
-    async buildSwap({ amountIn, minOut, path, to, deadline }) {
+    async buildSwap({ amountIn, minOut, slippageBps, path, to, deadline }) {
+      // Refuse before a transaction is assembled, not after the user has
+      // already been shown a review for a rate nobody would accept.
+      assertSlippageWithin(slippageBps, maxSlippageBps);
       const { Address, nativeToScVal } = await sdk();
       const tx = await build("swap_exact_tokens_for_tokens", [
         nativeToScVal(amountIn, { type: "i128" }),
@@ -152,7 +191,11 @@ export function createSoroswapVenue(config: {
         new Address(to).toScVal(),
         nativeToScVal(deadline, { type: "u64" }),
       ]);
-      return { tx, simulatedAmounts: resultOf(tx) };
+      const simulatedAmounts = resultOf(tx);
+      // The quote is not evidence of what the pool will pay now — the
+      // simulation is. Re-validate against it before handing back a tx to sign.
+      assertMeetsMinOut(simulatedAmounts, minOut);
+      return { tx, simulatedAmounts };
     },
 
     async readOutcome(hash) {

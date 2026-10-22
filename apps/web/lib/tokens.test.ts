@@ -6,6 +6,7 @@ import {
   findToken,
   formatAmountWithDecimals,
   getSupportedTokens,
+  getTokenTrust,
   parseAmountWithDecimals,
 } from "./tokens";
 import { fetchBalances } from "./balances";
@@ -103,6 +104,55 @@ describe("Token Registry & Multi-Asset (#396)", () => {
       const usdcBalance = balances.find((b) => b.symbol === "USDC");
       expect(usdcBalance).toBeDefined();
       expect(usdcBalance?.contractId).toBe(TESTNET_USDC_SAC);
+    });
+  });
+
+  describe("Send-flow trust flag (#561)", () => {
+    it("marks registry assets as allowlisted and verified without a warning flag", () => {
+      for (const id of [TESTNET_USDC_SAC, "XLM", TESTNET_USDC_SAC.toLowerCase()]) {
+        expect(getTokenTrust("testnet", id)).toEqual({
+          allowlisted: true,
+          verified: true,
+          shouldFlag: false,
+        });
+      }
+      expect(getTokenTrust("mainnet", MAINNET_USDC_SAC)).toEqual({
+        allowlisted: true,
+        verified: true,
+        shouldFlag: false,
+      });
+    });
+
+    it("flags a custom asset that is on no allowlist and has no verification record", () => {
+      const custom = "CCUSTOM7NOTAREALCONTRACTID0000000000000000000000000000000";
+      expect(getTokenTrust("testnet", custom)).toEqual({
+        allowlisted: false,
+        verified: false,
+        shouldFlag: true,
+      });
+      // Lookup miss is the source of truth — findToken agrees.
+      expect(findToken("testnet", custom)).toBeUndefined();
+    });
+
+    it("re-flags an asset that was previously allowlisted and has since been removed", () => {
+      const registry = TOKEN_REGISTRY.testnet;
+      const index = registry.findIndex((t) => t.contractId === TESTNET_USDC_SAC);
+      expect(index).toBeGreaterThanOrEqual(0);
+      const [removed] = registry.splice(index, 1);
+      try {
+        // Trust is evaluated live against the current registry, not cached.
+        expect(getTokenTrust("testnet", TESTNET_USDC_SAC)).toEqual({
+          allowlisted: false,
+          verified: false,
+          shouldFlag: true,
+        });
+        // The other registry entries are unaffected.
+        expect(getTokenTrust("testnet", "XLM").shouldFlag).toBe(false);
+      } finally {
+        registry.splice(index, 0, removed!);
+      }
+      // Restored: the same asset is trusted again.
+      expect(getTokenTrust("testnet", TESTNET_USDC_SAC).shouldFlag).toBe(false);
     });
   });
 });

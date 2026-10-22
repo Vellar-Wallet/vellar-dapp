@@ -123,6 +123,7 @@ export {
 
 export {
   retryWithBackoff,
+  retryWithJitter,
   MaxRetriesExceededError,
   RetryAbortedError,
   type RetryOptions,

@@ -105,198 +105,265 @@ export const DEVICE_SIGNER_SESSION_SECONDS = 7 * 24 * 60 * 60;
 
 let runtimePromise: Promise<WalletRuntime> | undefined;
 
+export interface ConnectorInitError extends Error {
+  name: "ConnectorInitError";
+  code: "INIT_FAILED" | "OPERATION_FAILED" | "NO_FALLBACK";
+  preferredConnector: string;
+  fallbackConnector?: string;
+}
+
+function createConnectorError(
+  code: ConnectorInitError["code"],
+  preferredConnector: string,
+  message: string,
+  fallbackConnector?: string,
+): ConnectorInitError {
+  const err = new Error(message) as ConnectorInitError;
+  err.name = "ConnectorInitError";
+  err.code = code;
+  err.preferredConnector = preferredConnector;
+  if (fallbackConnector) err.fallbackConnector = fallbackConnector;
+  return err;
+}
+
 export function getWalletRuntime(): Promise<WalletRuntime> {
   runtimePromise ??= (async () => {
     const config = walletConfig();
-    const [{ PasskeyKit, SACClient }, { isValidStellarAddress }] = await Promise.all([
-      import("passkey-kit"),
-      import("vellar-sdk/rpc"),
-    ]);
-
-    const kit = new PasskeyKit({
-      rpcUrl: config.rpcUrl,
-      networkPassphrase: config.networkPassphrase,
-      walletWasmHash: config.walletWasmHash,
-    });
-    const backend = createHttpWalletBackend(config.apiUrl);
-
-    // Structural bridges to our seams; runtime shape verified against
-    // passkey-kit v0.13 (docs/decisions.md) and exercised by the testnet e2e flow.
-    const kitLike = kit as unknown as PasskeyKitLike;
-    const sac = new SACClient({
-      rpcUrl: config.rpcUrl,
-      networkPassphrase: config.networkPassphrase,
-    }) as unknown as SacClientLike;
-
-    const kitConnector = createPasskeyKitConnector({
-      kit: kitLike,
-      backend,
-      network: config.network,
-      appName: config.appName,
-    });
-
-    return {
-      connector: {
-        ...kitConnector,
-        // The kit skips /wallet/connect when it resolves the wallet by
-        // derivation (the normal case), so open the server session here.
-        connectWallet: async (network) =>
-          ensureServerSession(await kitConnector.connectWallet(network), backend),
-      },
-      payments: createPaymentClient({
-        kit: kitLike,
-        sac,
-        backend,
-        network: config.network,
-        isValidAddress: isValidStellarAddress,
-      }),
-      swaps: createSwapClient({
-        venue: createSoroswapVenue({
-          network: config.network,
-          rpcUrl: config.rpcUrl,
-          networkPassphrase: config.networkPassphrase,
-        }),
-        kit: kit as unknown as { sign(tx: unknown): Promise<unknown> },
-        backend,
-        network: config.network,
-        signedToXdr: defaultSignedToXdr,
-      }),
-      resume: (keyId) => resumeKitConnection(kitLike, keyId),
-      async addDeviceSigner(devicePublicKeyHex) {
-        const { SignerStore } = await import("passkey-kit");
-        const { StrKey } = await import("@stellar/stellar-sdk");
-        const publicKey = StrKey.encodeEd25519PublicKey(Buffer.from(devicePublicKeyHex, "hex"));
-        // Unix-seconds timestamp, per the contract's Option<u64> expiration.
-        const expirationSeconds = Math.floor(Date.now() / 1000) + DEVICE_SIGNER_SESSION_SECONDS;
-        // Unlimited within the session for MVP; Phase 5 policies add limits.
-        const tx = await kit.addEd25519(
-          publicKey,
-          undefined,
-          SignerStore.Temporary,
-          expirationSeconds,
-        );
-        const signed = (await kit.sign(tx)) ?? tx;
-        const { hash } = await backend.submitTransaction({
-          signedXdr: typeof signed === "string" ? signed : (signed as { toXDR(): string }).toXDR(),
-          network: config.network,
-        });
-        return { hash, expiresAt: new Date(expirationSeconds * 1000).toISOString() };
-      },
-      // Policy attach/detach is wired through createPolicySignerActions
-      // (policy-signer.ts) so the standalone-signer + recovery-key invariants
-      // are unit-tested at the WIRING layer (RA-6), not just at the pure
-      // policyAttachArgs. The browser-only passkey-kit enums are injected.
-      async attachPolicy(policyContractId) {
-        const { SignerKey, SignerStore } = await import("passkey-kit");
-        return policySignerActions({ SignerKey, SignerStore }).attachPolicy(policyContractId);
-      },
-      async detachPolicy(policyContractId) {
-        const { SignerKey, SignerStore } = await import("passkey-kit");
-        return policySignerActions({ SignerKey, SignerStore }).detachPolicy(policyContractId);
-      },
-      async listSigners(accountId) {
-        const { MercuryIndexer, SignerKey } = await import("passkey-kit");
-        const indexer = MercuryIndexer.forNetwork({ rpc: kit.rpc }, config.networkPassphrase);
-        if (!indexer) throw new Error("No signer indexer is available for this network.");
-        const indexed = await indexer.getSigners(accountId);
-        // Confirm against the ledger: the indexer says what WAS added; the
-        // ledger says what IS there now.
-        const confirmed: RawSigner[] = [];
-        for (const signer of indexed.slice(0, MAX_SIGNERS_CONFIRMED)) {
-          if (signer.status === "removed") continue;
-          const live = await kit.getSigner(signerKeyFrom(SignerKey, signer.key));
-          if (live === null) continue;
-          confirmed.push({
-            key: { key: signer.key.key, value: signer.key.value },
-            expiration: signer.expiration,
-            limits: signer.limits,
-            storage: signer.storage,
-            status: signer.status,
-          });
-        }
-        return confirmed;
-      },
-      async addPasskeySigner(label) {
-        const { SignerKey, SignerStore } = await import("passkey-kit");
-        return signerActions({ SignerKey, SignerStore }).addPasskeySigner(label);
-      },
-      async addAgentKey(input) {
-        const { SignerKey, SignerStore } = await import("passkey-kit");
-        return signerActions({ SignerKey, SignerStore }).addAgentKey(input);
-      },
-      async removeSigner(key) {
-        const { SignerKey, SignerStore } = await import("passkey-kit");
-        return signerActions({ SignerKey, SignerStore }).removeSigner(key);
-      },
-      walletVersion: (accountId) => upgradeActions().status(accountId),
-      upgradeWallet: (accountId) => upgradeActions().upgrade(accountId),
-    };
-
-    /** Bind the extracted upgrade actions (wallet-upgrade.ts) to this
-     * runtime's kit + backend, with a direct ledger read of the wallet
-     * contract instance for its current wasm hash. */
-    function upgradeActions() {
-      return createWalletUpgradeActions({
-        kit: {
-          upgrade: (newWasmHash) => kit.upgrade(Buffer.from(newWasmHash)),
-          sign: (tx) => kit.sign(tx as never),
-        },
-        backend,
-        network: config.network,
-        targetWasmHash: config.walletWasmHash,
-        readWalletWasmHash: (accountId) => readContractWasmHash(config.rpcUrl, accountId),
-      });
-    }
-
-    /** Bind the extracted signer actions (signer-actions.ts) to this
-     * runtime's kit + backend + network. Same RA-6 rationale as policy
-     * actions: the exact kit calls are unit-tested with a fake kit. */
-    function signerActions(enums: {
-      SignerKey: Parameters<typeof createSignerActions>[0]["SignerKey"];
-      SignerStore: { Persistent: unknown; Temporary: unknown };
-    }) {
-      return createSignerActions({
-        kit: {
-          createKey: async (appName, userName) => {
-            const created = await kit.createKey(appName, userName);
-            return { keyId: created.keyId, publicKey: created.publicKey };
-          },
-          addSecp256r1: (keyId, publicKey, limits, store, expiration) =>
-            kit.addSecp256r1(keyId, publicKey, limits, store as SignerStoreValue, expiration),
-          addEd25519: (publicKey, limits, store, expiration) =>
-            kit.addEd25519(
-              publicKey,
-              limits as SignerLimitsValue,
-              store as SignerStoreValue,
-              expiration,
-            ),
-          remove: (signerKey) => kit.remove(signerKey as SignerKeyValue),
-          sign: (tx) => kit.sign(tx as never),
-        },
-        backend,
-        network: config.network,
-        appName: config.appName,
-        SignerKey: enums.SignerKey,
-        SignerStore: enums.SignerStore,
-      });
-    }
-
-    /** Bind the extracted actions to this runtime's kit + backend + network,
-     * given the lazily-imported passkey-kit enums. */
-    function policySignerActions(enums: {
-      SignerKey: { Policy(id: string): unknown };
-      SignerStore: { Persistent: unknown; Temporary: unknown };
-    }) {
-      return createPolicySignerActions({
-        kit: kit as unknown as Parameters<typeof createPolicySignerActions>[0]["kit"],
-        backend,
-        network: config.network,
-        SignerKey: enums.SignerKey,
-        SignerStore: enums.SignerStore,
-      });
+    try {
+      return await initializePasskeyKitRuntime(config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw createConnectorError(
+        "INIT_FAILED",
+        "passkey-kit",
+        `Failed to initialize preferred connector (passkey-kit): ${message}. No fallback connector available.`,
+      );
     }
   })();
   return runtimePromise;
+}
+
+async function initializePasskeyKitRuntime(config: ReturnType<typeof walletConfig>) {
+  const [{ PasskeyKit, SACClient }, { isValidStellarAddress }] = await Promise.all([
+    import("passkey-kit"),
+    import("vellar-sdk/rpc"),
+  ]);
+
+  const kit = new PasskeyKit({
+    rpcUrl: config.rpcUrl,
+    networkPassphrase: config.networkPassphrase,
+    walletWasmHash: config.walletWasmHash,
+  });
+  const backend = createHttpWalletBackend(config.apiUrl);
+
+  // Structural bridges to our seams; runtime shape verified against
+  // passkey-kit v0.13 (docs/decisions.md) and exercised by the testnet e2e flow.
+  const kitLike = kit as unknown as PasskeyKitLike;
+  const sac = new SACClient({
+    rpcUrl: config.rpcUrl,
+    networkPassphrase: config.networkPassphrase,
+  }) as unknown as SacClientLike;
+
+  const kitConnector = createPasskeyKitConnector({
+    kit: kitLike,
+    backend,
+    network: config.network,
+    appName: config.appName,
+  });
+
+  return {
+    connector: {
+      ...kitConnector,
+      // The kit skips /wallet/connect when it resolves the wallet by
+      // derivation (the normal case), so open the server session here.
+      // Wrap to detect runtime failures distinct from init-time failures.
+      connectWallet: async (network) => {
+        try {
+          const result = await kitConnector.connectWallet(network);
+          return ensureServerSession(result, backend);
+        } catch (error) {
+          throw createConnectorError(
+            "NO_FALLBACK",
+            "passkey-kit",
+            `Connector failed during connectWallet: ${error instanceof Error ? error.message : String(error)}. No fallback connector available.`,
+          );
+        }
+      },
+      // Wrap createWallet to detect runtime failures
+      createWallet: async (input) => {
+        try {
+          return await kitConnector.createWallet(input);
+        } catch (error) {
+          throw createConnectorError(
+            "NO_FALLBACK",
+            "passkey-kit",
+            `Connector failed during createWallet: ${error instanceof Error ? error.message : String(error)}. No fallback connector available.`,
+          );
+        }
+      },
+    },
+    payments: createPaymentClient({
+      kit: kitLike,
+      sac,
+      backend,
+      network: config.network,
+      isValidAddress: isValidStellarAddress,
+    }),
+    swaps: createSwapClient({
+      venue: createSoroswapVenue({
+        network: config.network,
+        rpcUrl: config.rpcUrl,
+        networkPassphrase: config.networkPassphrase,
+      }),
+      kit: kit as unknown as { sign(tx: unknown): Promise<unknown> },
+      backend,
+      network: config.network,
+      signedToXdr: defaultSignedToXdr,
+    }),
+    resume: (keyId) => {
+      try {
+        return resumeKitConnection(kitLike, keyId);
+      } catch (error) {
+        throw createConnectorError(
+          "OPERATION_FAILED",
+          "passkey-kit",
+          `Failed to resume kit connection: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+    async addDeviceSigner(devicePublicKeyHex) {
+      const { SignerStore } = await import("passkey-kit");
+      const { StrKey } = await import("@stellar/stellar-sdk");
+      const publicKey = StrKey.encodeEd25519PublicKey(Buffer.from(devicePublicKeyHex, "hex"));
+      // Unix-seconds timestamp, per the contract's Option<u64> expiration.
+      const expirationSeconds = Math.floor(Date.now() / 1000) + DEVICE_SIGNER_SESSION_SECONDS;
+      // Unlimited within the session for MVP; Phase 5 policies add limits.
+      const tx = await kit.addEd25519(
+        publicKey,
+        undefined,
+        SignerStore.Temporary,
+        expirationSeconds,
+      );
+      const signed = (await kit.sign(tx)) ?? tx;
+      const { hash } = await backend.submitTransaction({
+        signedXdr: typeof signed === "string" ? signed : (signed as { toXDR(): string }).toXDR(),
+        network: config.network,
+      });
+      return { hash, expiresAt: new Date(expirationSeconds * 1000).toISOString() };
+    },
+    // Policy attach/detach is wired through createPolicySignerActions
+    // (policy-signer.ts) so the standalone-signer + recovery-key invariants
+    // are unit-tested at the WIRING layer (RA-6), not just at the pure
+    // policyAttachArgs. The browser-only passkey-kit enums are injected.
+    async attachPolicy(policyContractId) {
+      const { SignerKey, SignerStore } = await import("passkey-kit");
+      return policySignerActions({ SignerKey, SignerStore }).attachPolicy(policyContractId);
+    },
+    async detachPolicy(policyContractId) {
+      const { SignerKey, SignerStore } = await import("passkey-kit");
+      return policySignerActions({ SignerKey, SignerStore }).detachPolicy(policyContractId);
+    },
+    async listSigners(accountId) {
+      const { MercuryIndexer, SignerKey } = await import("passkey-kit");
+      const indexer = MercuryIndexer.forNetwork({ rpc: kit.rpc }, config.networkPassphrase);
+      if (!indexer) throw new Error("No signer indexer is available for this network.");
+      const indexed = await indexer.getSigners(accountId);
+      // Confirm against the ledger: the indexer says what WAS added; the
+      // ledger says what IS there now.
+      const confirmed: RawSigner[] = [];
+      for (const signer of indexed.slice(0, MAX_SIGNERS_CONFIRMED)) {
+        if (signer.status === "removed") continue;
+        const live = await kit.getSigner(signerKeyFrom(SignerKey, signer.key));
+        if (live === null) continue;
+        confirmed.push({
+          key: { key: signer.key.key, value: signer.key.value },
+          expiration: signer.expiration,
+          limits: signer.limits,
+          storage: signer.storage,
+          status: signer.status,
+        });
+      }
+      return confirmed;
+    },
+    async addPasskeySigner(label) {
+      const { SignerKey, SignerStore } = await import("passkey-kit");
+      return signerActions({ SignerKey, SignerStore }).addPasskeySigner(label);
+    },
+    async addAgentKey(input) {
+      const { SignerKey, SignerStore } = await import("passkey-kit");
+      return signerActions({ SignerKey, SignerStore }).addAgentKey(input);
+    },
+    async removeSigner(key) {
+      const { SignerKey, SignerStore } = await import("passkey-kit");
+      return signerActions({ SignerKey, SignerStore }).removeSigner(key);
+    },
+    walletVersion: (accountId) => upgradeActions().status(accountId),
+    upgradeWallet: (accountId) => upgradeActions().upgrade(accountId),
+  };
+
+  /** Bind the extracted upgrade actions (wallet-upgrade.ts) to this
+   * runtime's kit + backend, with a direct ledger read of the wallet
+   * contract instance for its current wasm hash. */
+  function upgradeActions() {
+    return createWalletUpgradeActions({
+      kit: {
+        upgrade: (newWasmHash) => kit.upgrade(Buffer.from(newWasmHash)),
+        sign: (tx) => kit.sign(tx as never),
+      },
+      backend,
+      network: config.network,
+      targetWasmHash: config.walletWasmHash,
+      readWalletWasmHash: (accountId) => readContractWasmHash(config.rpcUrl, accountId),
+    });
+  }
+
+  /** Bind the extracted signer actions (signer-actions.ts) to this
+   * runtime's kit + backend + network. Same RA-6 rationale as policy
+   * actions: the exact kit calls are unit-tested with a fake kit. */
+  function signerActions(enums: {
+    SignerKey: Parameters<typeof createSignerActions>[0]["SignerKey"];
+    SignerStore: { Persistent: unknown; Temporary: unknown };
+  }) {
+    return createSignerActions({
+      kit: {
+        createKey: async (appName, userName) => {
+          const created = await kit.createKey(appName, userName);
+          return { keyId: created.keyId, publicKey: created.publicKey };
+        },
+        addSecp256r1: (keyId, publicKey, limits, store, expiration) =>
+          kit.addSecp256r1(keyId, publicKey, limits, store as SignerStoreValue, expiration),
+        addEd25519: (publicKey, limits, store, expiration) =>
+          kit.addEd25519(
+            publicKey,
+            limits as SignerLimitsValue,
+            store as SignerStoreValue,
+            expiration,
+          ),
+        remove: (signerKey) => kit.remove(signerKey as SignerKeyValue),
+        sign: (tx) => kit.sign(tx as never),
+      },
+      backend,
+      network: config.network,
+      appName: config.appName,
+      SignerKey: enums.SignerKey,
+      SignerStore: enums.SignerStore,
+    });
+  }
+
+  /** Bind the extracted actions to this runtime's kit + backend + network,
+   * given the lazily-imported passkey-kit enums. */
+  function policySignerActions(enums: {
+    SignerKey: { Policy(id: string): unknown };
+    SignerStore: { Persistent: unknown; Temporary: unknown };
+  }) {
+    return createPolicySignerActions({
+      kit: kit as unknown as Parameters<typeof createPolicySignerActions>[0]["kit"],
+      backend,
+      network: config.network,
+      SignerKey: enums.SignerKey,
+      SignerStore: enums.SignerStore,
+    });
+  }
 }
 
 /** Upper bound on indexer rows confirmed per listing (one ledger read each). */
