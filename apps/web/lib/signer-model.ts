@@ -18,7 +18,7 @@ export interface SignerKeyRef {
   value: string;
 }
 
-export type SignerKind = "passkey" | "device-session" | "agent" | "policy";
+export type SignerKind = "passkey" | "device-session" | "agent" | "policy" | "unknown";
 
 export type SignerStatus = "live" | "expired" | "evicted" | "removed";
 
@@ -105,6 +105,15 @@ export function classifySigner(raw: RawSigner, opts: ClassifyOptions): SignerEnt
   };
 }
 
+/**
+ * Classify a raw signer's key kind into the user-facing `SignerKind`.
+ *
+ * `raw.key.key`'s declared type (`SignerKeyKind`) is a closed union, but this
+ * reads data from the chain indexer — a future signer key type, or malformed
+ * indexer output, is not something the type system can rule out at runtime.
+ * Falls back to `"unknown"` rather than throwing, so one unrecognized signer
+ * never takes down the whole settings page.
+ */
 function kindOf(raw: RawSigner, unlimited: boolean): SignerKind {
   switch (raw.key.key) {
     case "Secp256r1":
@@ -118,17 +127,21 @@ function kindOf(raw: RawSigner, unlimited: boolean): SignerKind {
       // full authority and is surfaced as an agent so it is never mistaken for
       // a bounded session.
       return unlimited && raw.storage === "temporary" ? "device-session" : "agent";
+    default:
+      return "unknown";
   }
 }
 
-/** Classify and order: passkeys, then device sessions, agents, policies;
- * removed tombstones are dropped (the chain no longer has them). */
+/** Classify and order: passkeys, then device sessions, agents, policies, then
+ * anything unrecognized last; removed tombstones are dropped (the chain no
+ * longer has them). */
 export function classifySigners(rows: RawSigner[], opts: ClassifyOptions): SignerEntry[] {
   const order: Record<SignerKind, number> = {
     passkey: 0,
     "device-session": 1,
     agent: 2,
     policy: 3,
+    unknown: 4,
   };
   return rows
     .filter((r) => r.status !== "removed")

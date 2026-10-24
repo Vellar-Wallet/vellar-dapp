@@ -11,6 +11,14 @@ import {
 import { MAX_EXPIRATION_LEDGERS } from "./signer-expiration";
 import type { PairedWallet } from "./state";
 
+// Spy on the device-key signing step (#698) so a test can assert whether the
+// client-side ceremony was even reached, independent of whether the kit
+// later accepts or rejects the result.
+const signWithDeviceKeyMock = vi.fn(async () => new Uint8Array(64));
+vi.mock("./device-key", () => ({
+  signWithDeviceKey: signWithDeviceKeyMock,
+}));
+
 const PASSPHRASE = "Test SDF Network ; September 2015";
 
 function contractId(): string {
@@ -25,14 +33,34 @@ const WALLET = contractId();
 // and returns the entry unchanged (we assert on the recorded expiration).
 const signAuthEntryCalls: Array<{ expiration?: number }> = [];
 
+// Test-controllable failure hooks (#698): default to the happy path; a given
+// test overrides one to simulate the kit itself rejecting at that seam.
+// Reset in beforeEach so one test's override never leaks into the next.
+const kitHooks: {
+  connectWallet: () => Promise<{ contractId: string }> | never;
+  signAuthEntry: () => void;
+} = {
+  connectWallet: async () => ({ contractId: WALLET }),
+  signAuthEntry: () => {},
+};
+
 vi.mock("passkey-kit", () => {
   class PasskeyKit {
     contractId = WALLET;
     constructor(_config: unknown) {}
     async connectWallet(_opts: unknown) {
-      return { contractId: WALLET };
+      return kitHooks.connectWallet();
     }
-    async signAuthEntry(entry: unknown, _signer: unknown, options?: { expiration?: number }) {
+    async signAuthEntry(
+      entry: unknown,
+      signer: { sign: (payload: Buffer) => Promise<unknown> },
+      options?: { expiration?: number },
+    ) {
+      // The real kit calls the signer to produce the signature BEFORE doing
+      // its own encoding/verification — mirror that ordering so a test can
+      // simulate "the ceremony itself succeeded, the kit rejected after."
+      await signer.sign(Buffer.from("payload"));
+      kitHooks.signAuthEntry();
       signAuthEntryCalls.push({ expiration: options?.expiration });
       return entry;
     }
@@ -121,6 +149,9 @@ const deviceRawPublicKey = new Uint8Array(32);
 describe("signTransactionXdr (L4 expiration binding)", () => {
   beforeEach(() => {
     signAuthEntryCalls.length = 0;
+    signWithDeviceKeyMock.mockClear();
+    kitHooks.connectWallet = async () => ({ contractId: WALLET });
+    kitHooks.signAuthEntry = () => {};
   });
 
   it("passes a capped expiration anchored on the TRUSTED ledger, not the caller rpcUrl", async () => {
@@ -195,4 +226,56 @@ describe("signTransactionXdr (L4 expiration binding)", () => {
       expect(signAuthEntryCalls).toHaveLength(1);
     },
   );
+
+  // #698: a device-key ceremony that completes successfully (the WebCrypto
+  // signature is produced) is a DISTINCT failure mode from the kit rejecting
+  // what comes after — e.g. a stale sequence number the kit's own encoding
+  // or on-chain-facing verification step catches. The user-facing error must
+  // make clear the signing step itself succeeded; this failed somewhere past
+  // it, not that nothing was ever signed.
+  it("surfaces a clear, distinct error when signing succeeds client-side but the kit rejects the result (e.g. a stale sequence number)", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    kitHooks.signAuthEntry = () => {
+      throw new Error("tx_bad_seq: stale sequence number");
+    };
+
+    await expect(
+      signTransactionXdr({
+        xdr: buildTxWithWalletAuth(),
+        wallet,
+        deviceKeyPair,
+        deviceRawPublicKey,
+        getTrustedLatestLedger: async () => 1_000_000,
+      }),
+    ).rejects.toThrow(/tx_bad_seq: stale sequence number/);
+
+    // The device key WAS asked to sign — the ceremony itself succeeded.
+    // The failure is distinctly the kit's rejection afterward, not a signing
+    // failure, and not a "cancelled before it started" case either.
+    expect(signWithDeviceKeyMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The closest analog to "the ceremony is cancelled before reaching
+  // submission" in this file's real architecture: connectWallet (resolving
+  // the paired wallet) fails before any signing is ever attempted. The
+  // device key must never be asked to sign in this case.
+  it("never asks the device key to sign when connecting to the paired wallet fails before signing starts", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    kitHooks.connectWallet = async () => {
+      throw new Error("ceremony aborted: wallet connection was cancelled");
+    };
+
+    await expect(
+      signTransactionXdr({
+        xdr: buildTxWithWalletAuth(),
+        wallet,
+        deviceKeyPair,
+        deviceRawPublicKey,
+        getTrustedLatestLedger: async () => 1_000_000,
+      }),
+    ).rejects.toThrow(/ceremony aborted/);
+
+    expect(signWithDeviceKeyMock).not.toHaveBeenCalled();
+    expect(signAuthEntryCalls).toHaveLength(0);
+  });
 });

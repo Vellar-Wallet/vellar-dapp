@@ -22,7 +22,7 @@ import {
   type WalletRepository,
 } from "./repository";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
-import { assertScopedToKnownWallets, ScopeError } from "./scope";
+import { assertScopedToKnownWallets, extractAddressAuthSubjects, ScopeError } from "./scope";
 import {
   createMemoryReplayGuard,
   extractReplayKeys,
@@ -32,10 +32,11 @@ import {
   type ReplayKey,
   type ReserveResult,
 } from "./replay";
-import { assertScopedToKnownWallets, extractAddressAuthSubjects, ScopeError } from "./scope";
 import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
 import { initCacheMetrics, type CacheOperation } from "./cache-metrics";
 import { NoOpCache } from "./cache";
+import { createMemoryInFlightTracker, type InFlightTracker } from "./in-flight";
+import { buildMergePlan, type MergeBalance } from "./merge-planner";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
 // passkeys by design (technical-doc.md §8 — no silent signing, no server key
@@ -76,6 +77,7 @@ const listTransactionsQuerySchema = z.object({
   network: networkSchema,
   after: z.string().min(1).optional(),
   limit: z.coerce.number().int().positive().optional(),
+  status: z.enum(["submitted", "failed", "policy-rejected"]).optional(),
 });
 
 const revokeSessionBodySchema = z.object({
@@ -156,6 +158,8 @@ export interface WalletServiceDeps {
   replayGuard?: ReplayGuard;
   passkeyRateLimitMax?: number;
   passkeyRateLimitWindowMs?: number;
+  /** In-flight tracker for active submissions (issue #510). */
+  inFlightTracker?: InFlightTracker;
   /** Optional job enqueuer for worker-service jobs (Issue #299). */
   jobQueue?: {
     enqueue(job: {
@@ -167,6 +171,14 @@ export interface WalletServiceDeps {
     get?(recordId: string): Promise<WalletJobRecord | undefined> | WalletJobRecord | undefined;
     updateStatus?(recordId: string, status: JobStatus): Promise<void> | void;
   };
+  /** Base URL for verification-service (defaults to process.env.VERIFICATION_SERVICE_URL ?? "http://localhost:4002"). */
+  verificationServiceUrl?: string;
+  /** Verification lookup client seam for testing or in-process verification. */
+  verificationClient?: {
+    getStatus(contractId: string): Promise<{ status: string }>;
+  };
+  /** In-memory or persistent store for signer set versions for OCC guard (Issue #509). */
+  signerVersions?: Map<string, number>;
 }
 
 export function buildServer(deps: WalletServiceDeps): FastifyInstance {
@@ -175,8 +187,10 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const audit = deps.audit ?? createMemoryAuditLog();
   const cache = deps.cache ?? new NoOpCache();
   const replayGuard = deps.replayGuard ?? createMemoryReplayGuard();
+  const inFlightTracker = deps.inFlightTracker ?? createMemoryInFlightTracker();
   const now = deps.now ?? (() => new Date());
   const { submitter } = deps;
+  const signerVersions = deps.signerVersions ?? new Map<string, number>();
 
   const memorySubmissionDedup = new Map<string, { hash: string }>();
   const submissionDedup: SubmissionDedupStore = deps.submissionDedup ?? {
@@ -402,128 +416,173 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       ? extractAddressAuthSubjects(signedXdr, deps.networkPassphrase)
       : [];
 
-    // Scope BOTH funding paths (sponsor + relayer) at the route, before the
-    // submitter picks a branch (security-audit.md C1/H1/V2): only sponsor/relay
-    // a tx whose address-credential auth subjects are all wallets we created.
-    // The passphrase comes from server config, never the request body (V5).
-    if (deps.networkPassphrase) {
-      try {
-        await assertScopedToKnownWallets(signedXdr, deps.networkPassphrase, (contractId) =>
-          wallets.existsByContractId(contractId, network),
-        );
-      } catch (err) {
-        if (err instanceof ScopeError) {
-          request.log.warn({ code: err.code }, "rejected unscoped submission");
-          recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
-          return reply.code(403).send({ error: err.code, message: err.message });
-        }
-        // A repository error here means we cannot verify the tx is scoped to a
-        // known wallet (e.g. Postgres dropped mid-run). Fail CLOSED — refuse to
-        // sponsor/relay rather than degrade to unmetered submission (FIX 7).
-        request.log.error(err, "scoping check failed; refusing submission");
-        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
-        return reply.code(503).send({
-          error: "persistence_unavailable",
-          message: "Cannot verify wallet scope right now; try again shortly.",
-        });
-      }
-    }
-
-    // Replay reservation (issue #416), AFTER scoping (so unknown-wallet junk
-    // cannot fill the table) and BEFORE the submitter — i.e. before simulation,
-    // budget consumption, signing, or send. Keyed on each address-credential
-    // auth entry's (address, nonce), which survives any re-wrapping of the
-    // envelope; see src/replay.ts. Fails CLOSED on a storage error.
-    let replayKeys: ReplayKey[] = [];
-    if (deps.networkPassphrase) {
-      replayKeys = extractReplayKeys(signedXdr, deps.networkPassphrase);
-      let reserved: ReserveResult;
-      try {
-        reserved = await replayGuard.reserve(replayKeys);
-      } catch (err) {
-        request.log.error(err, "replay reservation failed; refusing submission");
-        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
-        return reply.code(503).send({
-          error: "replay_store_unavailable",
-          message: "Cannot record this submission right now; try again shortly.",
-        });
-      }
-      if (!reserved.ok) {
-        const fingerprint = replayFingerprint(replayKeys);
-        request.log.warn({ fingerprint }, "rejected replayed submission");
-        // Audit the rejection with the credential subjects and a key-set
-        // fingerprint only — never the signed XDR or signatures. A failed audit
-        // write does not turn a rejection into an acceptance.
-        try {
-          await audit.record("tx.replay_rejected", {
-            network,
-            subjects: [...new Set(replayKeys.map((k) => k.address))],
-            fingerprint,
-            correlationId: request.correlationId,
-          });
-        } catch (err) {
-          request.log.error(err, "failed to audit replay rejection");
-        }
-        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
-        return reply.code(409).send({
-          error: "replayed_submission",
-          message: "This signed authorization has already been submitted.",
-        });
-      }
-    }
+    const releases = walletSubjects.map((subject) => inFlightTracker.start(subject));
 
     try {
-      const { hash } = await submitter.submit(signedXdr);
-      await submissionDedup.set(envelopeHash, { hash });
-
-      // Invalidate balance cache entry for affected wallets after confirmed submission (#520)
-      for (const contractId of walletSubjects) {
-        if (typeof cache.invalidateBalance === "function") {
-          await cache.invalidateBalance(contractId);
-        } else {
-          await cache.delete("balance", contractId);
+      // Scope BOTH funding paths (sponsor + relayer) at the route, before the
+      // submitter picks a branch (security-audit.md C1/H1/V2): only sponsor/relay
+      // a tx whose address-credential auth subjects are all wallets we created.
+      // The passphrase comes from server config, never the request body (V5).
+      if (deps.networkPassphrase) {
+        try {
+          await assertScopedToKnownWallets(signedXdr, deps.networkPassphrase, (contractId) =>
+            wallets.existsByContractId(contractId, network),
+          );
+        } catch (err) {
+          if (err instanceof ScopeError) {
+            request.log.warn({ code: err.code }, "rejected unscoped submission");
+            for (const contractId of walletSubjects) {
+              await audit.record(
+                "tx.policy_rejected",
+                {
+                  network,
+                  reason: err.message,
+                  code: err.code,
+                  correlationId: request.correlationId,
+                },
+                contractId,
+              );
+            }
+            recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+            return reply.code(403).send({ error: err.code, message: err.message });
+          }
+          // A repository error here means we cannot verify the tx is scoped to a
+          // known wallet (e.g. Postgres dropped mid-run). Fail CLOSED — refuse to
+          // sponsor/relay rather than degrade to unmetered submission (FIX 7).
+          request.log.error(err, "scoping check failed; refusing submission");
+          recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+          return reply.code(503).send({
+            error: "persistence_unavailable",
+            message: "Cannot verify wallet scope right now; try again shortly.",
+          });
         }
       }
-      // One audit row per wallet subject: a tx with two address-credential
-      // subjects (rare, but the type allows it) must show up in BOTH wallets'
-      // history, not just the first.
-      for (const contractId of walletSubjects) {
-        await audit.record(
-          "tx.submitted",
-          { network, txHash: hash, correlationId: request.correlationId },
-          contractId,
-        );
+
+      // Replay reservation (issue #416), AFTER scoping (so unknown-wallet junk
+      // cannot fill the table) and BEFORE the submitter — i.e. before simulation,
+      // budget consumption, signing, or send. Keyed on each address-credential
+      // auth entry's (address, nonce), which survives any re-wrapping of the
+      // envelope; see src/replay.ts. Fails CLOSED on a storage error.
+      let replayKeys: ReplayKey[] = [];
+      if (deps.networkPassphrase) {
+        replayKeys = extractReplayKeys(signedXdr, deps.networkPassphrase);
+        let reserved: ReserveResult;
+        try {
+          reserved = await replayGuard.reserve(replayKeys);
+        } catch (err) {
+          request.log.error(err, "replay reservation failed; refusing submission");
+          recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+          return reply.code(503).send({
+            error: "replay_store_unavailable",
+            message: "Cannot record this submission right now; try again shortly.",
+          });
+        }
+        if (!reserved.ok) {
+          const fingerprint = replayFingerprint(replayKeys);
+          request.log.warn({ fingerprint }, "rejected replayed submission");
+          // Audit the rejection with the credential subjects and a key-set
+          // fingerprint only — never the signed XDR or signatures. A failed audit
+          // write does not turn a rejection into an acceptance.
+          try {
+            await audit.record("tx.replay_rejected", {
+              network,
+              subjects: [...new Set(replayKeys.map((k) => k.address))],
+              fingerprint,
+              correlationId: request.correlationId,
+            });
+          } catch (err) {
+            request.log.error(err, "failed to audit replay rejection");
+          }
+          recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+          return reply.code(409).send({
+            error: "replayed_submission",
+            message: "This signed authorization has already been submitted.",
+          });
+        }
       }
-      if (walletSubjects.length === 0) {
-        // No address-credential subject (e.g. networkPassphrase unset) — still
-        // record the event, just without wallet attribution, matching prior
-        // behavior exactly.
-        await audit.record("tx.submitted", {
-          network,
-          txHash: hash,
-          correlationId: request.correlationId,
+
+      try {
+        const { hash } = await submitter.submit(signedXdr);
+        await submissionDedup.set(envelopeHash, { hash });
+
+        // Invalidate balance cache entry for affected wallets after confirmed submission (#520)
+        for (const contractId of walletSubjects) {
+          if (typeof cache.invalidateBalance === "function") {
+            await cache.invalidateBalance(contractId);
+          } else {
+            await cache.delete("balance", contractId);
+          }
+        }
+
+        // One audit row per wallet subject: a tx with two address-credential
+        // subjects (rare, but the type allows it) must show up in BOTH wallets'
+        // history, not just the first.
+        for (const contractId of walletSubjects) {
+          await audit.record(
+            "tx.submitted",
+            { network, txHash: hash, correlationId: request.correlationId },
+            contractId,
+          );
+        }
+        if (walletSubjects.length === 0) {
+          // No address-credential subject (e.g. networkPassphrase unset) — still
+          // record the event, just without wallet attribution, matching prior
+          // behavior exactly.
+          await audit.record("tx.submitted", {
+            network,
+            txHash: hash,
+            correlationId: request.correlationId,
+          });
+        }
+        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
+        return reply.send({ hash });
+      } catch (err) {
+        const sub = err instanceof SubmissionError ? err : undefined;
+        request.log.error(err, "transaction submission failed");
+        const eventType =
+          sub?.code === "policy_rejected" || sub?.code === "policy_violation"
+            ? "tx.policy_rejected"
+            : "tx.failed";
+        for (const contractId of walletSubjects) {
+          await audit.record(
+            eventType,
+            {
+              network,
+              error: sub?.code ?? "submission_failed",
+              message: sub?.message ?? "Transaction submission failed",
+              correlationId: request.correlationId,
+            },
+            contractId,
+          );
+        }
+        if (walletSubjects.length === 0) {
+          await audit.record(eventType, {
+            network,
+            error: sub?.code ?? "submission_failed",
+            message: sub?.message ?? "Transaction submission failed",
+            correlationId: request.correlationId,
+          });
+        }
+        // Release only when the failure provably preceded any send; otherwise the
+        // nonce may be spent on-chain and a retry must be a fresh signature.
+        if (replayKeys.length > 0 && sub && RELEASABLE_SUBMISSION_CODES.has(sub.code)) {
+          await replayGuard.release(replayKeys).catch((releaseErr: unknown) => {
+            request.log.error(releaseErr, "failed to release replay reservation");
+          });
+        }
+        recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
+        // Submission goes through the relayer/RPC path — a failure here is also an
+        // RPC-degradation signal (§13 alerting: tx submission spikes/failures).
+        domainMetrics.rpcErrors.inc({ service: "wallet-service", upstream: "relayer" });
+        return reply.code(502).send({
+          error: sub?.code ?? "submission_failed",
+          message: sub?.message ?? "Transaction submission failed",
         });
       }
-      recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "success", network);
-      return reply.send({ hash });
-    } catch (err) {
-      const sub = err instanceof SubmissionError ? err : undefined;
-      request.log.error(err, "transaction submission failed");
-      // Release only when the failure provably preceded any send; otherwise the
-      // nonce may be spent on-chain and a retry must be a fresh signature.
-      if (replayKeys.length > 0 && sub && RELEASABLE_SUBMISSION_CODES.has(sub.code)) {
-        await replayGuard.release(replayKeys).catch((releaseErr: unknown) => {
-          request.log.error(releaseErr, "failed to release replay reservation");
-        });
+    } finally {
+      for (const release of releases) {
+        release();
       }
-      recordOutcome(domainMetrics.walletTxSigned, "wallet-service", "failure", network);
-      // Submission goes through the relayer/RPC path — a failure here is also an
-      // RPC-degradation signal (§13 alerting: tx submission spikes/failures).
-      domainMetrics.rpcErrors.inc({ service: "wallet-service", upstream: "relayer" });
-      return reply.code(502).send({
-        error: sub?.code ?? "submission_failed",
-        message: sub?.message ?? "Transaction submission failed",
-      });
     }
   });
 
@@ -691,7 +750,6 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       return reply.code(401).send({ error: "unauthorized" });
     }
     return reply.send({ sessions: await sessions.listByContract(contractId, network, now()) });
-
   });
 
   // Cursor-paginated transaction history for an account (issue #256). Same
@@ -708,7 +766,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_query", details: parsed.error.issues });
     }
-    const { contractId, network, after } = parsed.data;
+    const { contractId, network, after, status } = parsed.data;
     const limit = Math.min(parsed.data.limit ?? DEFAULT_TX_HISTORY_LIMIT, MAX_TX_HISTORY_LIMIT);
 
     const session = await resolveSessionCapability(request);
@@ -718,14 +776,37 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
 
     let page;
     try {
-      page = await audit.listPage({ type: "tx.submitted", actor: contractId, limit, after });
+      const typeFilter =
+        status === "submitted"
+          ? { type: "tx.submitted" }
+          : status === "failed"
+            ? { type: "tx.failed" }
+            : status === "policy-rejected"
+              ? { type: "tx.policy_rejected" }
+              : { types: ["tx.submitted", "tx.failed", "tx.policy_rejected"] };
+
+      page = await audit.listPage({ ...typeFilter, actor: contractId, limit, after });
     } catch {
       return reply
         .code(400)
         .send({ error: "invalid_cursor", message: "cursor is not a valid pagination cursor" });
     }
     return reply.send({
-      transactions: page.events.map((e) => ({ at: e.at, ...e.data })),
+      transactions: page.events.map((e) => {
+        const derivedStatus =
+          e.type === "tx.submitted"
+            ? "submitted"
+            : e.type === "tx.failed"
+              ? "failed"
+              : e.type === "tx.policy_rejected"
+                ? "policy-rejected"
+                : "submitted";
+        return {
+          status: derivedStatus,
+          at: e.at,
+          ...e.data,
+        };
+      }),
       hasMore: page.hasMore,
       nextCursor: page.nextCursor ?? null,
     });
@@ -761,17 +842,73 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   });
 
   // Policy update sensitive action endpoint
+  // Issue #513: reject policy updates referencing an unverified contract ID
   app.post("/wallet/policy/update", async (request, reply) => {
     const session = await resolveSessionCapability(request);
     if (!session) return reply.code(401).send({ error: "unauthorized" });
 
     const schema = z.object({
       policyId: z.string().min(1),
+      contractId: z.string().min(1).optional(),
       rules: z.record(z.string(), z.unknown()).optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    const referencedContractId =
+      parsed.data.contractId ??
+      (typeof parsed.data.rules?.contractId === "string"
+        ? parsed.data.rules.contractId
+        : undefined) ??
+      (typeof parsed.data.rules?.targetContractId === "string"
+        ? parsed.data.rules.targetContractId
+        : undefined);
+
+    if (referencedContractId) {
+      let isVerified = false;
+      try {
+        if (deps.verificationClient) {
+          const res = await deps.verificationClient.getStatus(referencedContractId);
+          isVerified = res?.status === "verified";
+        } else {
+          const baseUrl =
+            deps.verificationServiceUrl ??
+            process.env.VERIFICATION_SERVICE_URL ??
+            "http://localhost:4002";
+          const res = await fetch(
+            `${baseUrl}/verification/${encodeURIComponent(referencedContractId)}/status`,
+          );
+          if (!res.ok) {
+            if (res.status === 404) {
+              isVerified = false;
+            } else {
+              return reply.code(503).send({
+                error: "verification_service_unavailable",
+                message: `Verification service returned ${res.status}`,
+              });
+            }
+          } else {
+            const data = (await res.json()) as { status?: string };
+            isVerified = data?.status === "verified";
+          }
+        }
+      } catch (err) {
+        request.log.error(err, "failed to reach verification service");
+        return reply.code(503).send({
+          error: "verification_service_unavailable",
+          message: `Verification service is unreachable while checking contract ${referencedContractId}`,
+        });
+      }
+
+      if (!isVerified) {
+        return reply.code(400).send({
+          error: "unverified_contract",
+          message: `Referenced contract ${referencedContractId} has no verification record or is unverified`,
+          contractId: referencedContractId,
+        });
+      }
     }
 
     await audit.record(
@@ -781,6 +918,8 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         network: session.network,
         policyId: parsed.data.policyId,
         rules: parsed.data.rules ?? {},
+        contractIdRef: referencedContractId,
+        actor: "policy",
       },
       session.contractId,
     );
@@ -793,12 +932,54 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     const session = await resolveSessionCapability(request);
     if (!session) return reply.code(401).send({ error: "unauthorized" });
 
+    const querySchema = z.object({
+      dryRun: z.coerce.boolean().optional(),
+    });
+    const parsedQuery = querySchema.safeParse(request.query);
+
     const schema = z.object({
       destinationContractId: z.string().min(1),
+      dryRun: z.boolean().optional(),
+      balances: z
+        .array(
+          z.object({
+            asset: z.string().min(1),
+            amount: z.string().min(1),
+            isNative: z.boolean().optional(),
+            hasTrustline: z.boolean().optional(),
+          }),
+        )
+        .optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+    }
+
+    const isDryRun =
+      Boolean(parsedQuery.success && parsedQuery.data.dryRun) || Boolean(parsed.data.dryRun);
+    const plan = buildMergePlan(
+      session.contractId,
+      parsed.data.destinationContractId,
+      parsed.data.balances ?? [],
+    );
+
+    if (isDryRun) {
+      return reply.send({
+        status: "preview",
+        dryRun: true,
+        plan,
+      });
+    }
+
+    if (!plan.canMerge) {
+      return reply.code(400).send({
+        error: "cannot_merge_with_open_trustlines",
+        message:
+          "Cannot merge account with active non-native balances or trustlines. These must be transferred or closed first.",
+        blockers: plan.blockers,
+        plan,
+      });
     }
 
     await audit.record(
@@ -807,17 +988,30 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         sourceContractId: session.contractId,
         destinationContractId: parsed.data.destinationContractId,
         network: session.network,
+        actor: "passkey",
+        plan,
       },
       session.contractId,
     );
 
-    return reply.send({ status: "merged", destination: parsed.data.destinationContractId });
+    return reply.send({
+      status: "merged",
+      destination: parsed.data.destinationContractId,
+      plan,
+    });
   });
 
   // Key rotation sensitive action endpoint
   app.post("/wallet/key/rotate", async (request, reply) => {
     const session = await resolveSessionCapability(request);
     if (!session) return reply.code(401).send({ error: "unauthorized" });
+
+    if (inFlightTracker.hasInFlight(session.contractId)) {
+      return reply.code(409).send({
+        error: "in_flight_submission_conflict",
+        message: "Cannot rotate key while a transaction submission is in flight for this wallet.",
+      });
+    }
 
     const schema = z.object({
       oldKeyId: z.string().min(1),
@@ -835,6 +1029,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         oldKeyId: parsed.data.oldKeyId,
         newKeyId: parsed.data.newKeyId,
         network: session.network,
+        actor: "passkey",
       },
       session.contractId,
     );
@@ -896,6 +1091,7 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         contractId: session.contractId,
         threshold,
         network: session.network,
+        actor: "passkey",
       },
       session.contractId,
     );
@@ -904,6 +1100,12 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   });
 
   // Signer add/remove sensitive action endpoint
+  // Issue #509: Concurrency guard against two simultaneous signer-set mutations racing
+  // Client retry contract:
+  // When receiving a 409 Conflict (code: "signer_version_conflict"):
+  // 1. Fetch the latest signer set and note the updated version/sequence.
+  // 2. Re-compute the planned mutation against the updated signer set.
+  // 3. Retry POST /wallet/signer/manage providing the latest version as `expectedVersion` or `version`.
   app.post("/wallet/signer/manage", async (request, reply) => {
     const session = await resolveSessionCapability(request);
     if (!session) return reply.code(401).send({ error: "unauthorized" });
@@ -912,11 +1114,31 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       action: z.enum(["add", "remove"]),
       signerKey: z.string().min(1),
       weight: z.number().optional(),
+      version: z.number().int().nonnegative().optional(),
+      expectedVersion: z.number().int().nonnegative().optional(),
+      sequence: z.number().int().nonnegative().optional(),
+      signerType: z.enum(["passkey", "device", "policy"]).optional(),
+      actor: z.enum(["passkey", "device", "policy"]).optional(),
     });
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
+
+    const currentVersion = signerVersions.get(session.contractId) ?? 0;
+    const expected = parsed.data.expectedVersion ?? parsed.data.version ?? parsed.data.sequence;
+
+    if (expected !== undefined && expected !== currentVersion) {
+      return reply.code(409).send({
+        error: "conflict",
+        code: "signer_version_conflict",
+        message: `Signer set has been modified concurrently. Expected version ${expected}, but current version is ${currentVersion}. Refresh the signer set and retry with updated version.`,
+        currentVersion,
+      });
+    }
+
+    const newVersion = currentVersion + 1;
+    signerVersions.set(session.contractId, newVersion);
 
     const eventType = parsed.data.action === "add" ? "signer.added" : "signer.removed";
     await audit.record(
@@ -926,20 +1148,68 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
         signerKey: parsed.data.signerKey,
         weight: parsed.data.weight,
         network: session.network,
+        version: newVersion,
+        actor: parsed.data.actor ?? parsed.data.signerType ?? "device",
       },
       session.contractId,
     );
 
-    return reply.send({ status: "signer_updated", action: parsed.data.action });
+    return reply.send({
+      status: "signer_updated",
+      action: parsed.data.action,
+      version: newVersion,
+    });
   });
 
   // Audit logs query endpoint
+  // Issue #512: actor-based filtering (passkey vs device vs policy)
   app.get("/wallet/audit-logs", async (request, reply) => {
     const session = await resolveSessionCapability(request);
     if (!session) return reply.code(401).send({ error: "unauthorized" });
 
+    const query = request.query as { actor?: string };
+    const actor = query.actor;
+
+    if (actor !== undefined) {
+      const validActors = ["passkey", "device", "policy"];
+      if (!validActors.includes(actor)) {
+        return reply.code(400).send({
+          error: "invalid_actor",
+          message: `Invalid actor filter: must be passkey, device, or policy. Received: ${actor}`,
+        });
+      }
+    }
+
     const logs = await audit.list({ actor: session.contractId });
-    return reply.send({ auditLogs: logs });
+    if (!actor) {
+      return reply.send({ auditLogs: logs });
+    }
+
+    const filtered = logs.filter((e) => {
+      // 1. Check explicit actor on data or record actor
+      const explicitActor = e.data?.actor ?? e.data?.signerType ?? e.data?.actorType;
+      if (explicitActor === actor) return true;
+      if (e.actor === actor) return true;
+
+      // 2. Inferred actor by action type if not explicitly set
+      if (!explicitActor || explicitActor === e.actor) {
+        if (actor === "policy" && e.type.startsWith("policy.")) return true;
+        if (actor === "device" && (e.type.startsWith("session.") || e.type.startsWith("signer.")))
+          return true;
+        if (
+          actor === "passkey" &&
+          (e.type.startsWith("wallet.") ||
+            e.type.startsWith("key.") ||
+            e.type.startsWith("threshold.") ||
+            e.type.startsWith("account."))
+        ) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    return reply.send({ auditLogs: filtered });
   });
 
   return app;

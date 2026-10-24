@@ -155,3 +155,30 @@ export async function retryWithBackoff<T>(
 
   throw new MaxRetriesExceededError(maxAttempts, lastErr);
 }
+
+/**
+ * Compute the jittered delay in milliseconds before retry `attempt` (0-based).
+ *
+ * Shared implementation of the retry-with-jitter pattern (issue #549) so
+ * worker-service, policy-service, and any future service share one
+ * calculation instead of evolving separate copies. Full jitter:
+ * `random(0, min(maxDelayMs, baseDelayMs * 2^attempt))`.
+ *
+ * @example
+ * ```ts
+ * import { retryWithJitter } from "@vellar/service-kit";
+ *
+ * const delay = retryWithJitter(0); // 0–1000 ms
+ * await sleep(delay);
+ * ```
+ */
+export function retryWithJitter(
+  attempt: number,
+  options: { baseDelayMs?: number; maxDelayMs?: number; random?: () => number } = {},
+): number {
+  const baseDelayMs = options.baseDelayMs ?? 1_000;
+  const maxDelayMs = options.maxDelayMs ?? 30_000;
+  const random = options.random ?? Math.random;
+  const cap = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, Math.max(0, attempt)));
+  return Math.floor(random() * cap);
+}

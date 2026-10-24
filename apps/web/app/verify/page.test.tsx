@@ -61,15 +61,48 @@ describe("Verify page — explorer", () => {
     expect(screen.getByText("1.81.0")).toBeDefined();
   });
 
-  it("shows 'unverified' + a hint when no records exist", async () => {
+  it("shows a distinct empty state (not an error) when no records exist", async () => {
     historyMock.mockResolvedValue([]);
     render(<Verify />);
     fireEvent.change(screen.getByLabelText("Contract address"), { target: { value: C1 } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
 
     await waitFor(() => expect(historyMock).toHaveBeenCalled());
-    expect(screen.getByText("Unverified")).toBeDefined();
-    expect(screen.getByText(/No verification has been submitted/i)).toBeDefined();
+    const empty = screen.getByTestId("verify-empty-state");
+    expect(empty).toBeDefined();
+    expect(empty.querySelector("svg")).not.toBeNull();
+    expect(screen.getByText("No verification history")).toBeDefined();
+    // Explicitly distinct from a failed verification.
+    expect(screen.getByText(/has not failed verification/i)).toBeDefined();
+    // The empty state replaces the attempt list entirely — no "Unverified"
+    // badge that could read as a failed check.
+    expect(screen.queryByText("Unverified")).toBeNull();
+  });
+
+  it("treats a failed attempt differently from zero history", async () => {
+    historyMock.mockResolvedValue([
+      {
+        id: "r-fail",
+        contractId: C1,
+        sourceType: "repo",
+        repoUrl: "https://github.com/x/y",
+        commitHash: "a1b2c3d",
+        toolchainVersion: "1.81.0",
+        status: "failed",
+        statusDetail: "Build failed (clone_failed).",
+        createdAt: "2026-07-18T00:00:00.000Z",
+        updatedAt: "2026-07-18T00:00:00.000Z",
+      },
+    ]);
+
+    render(<Verify />);
+    fireEvent.change(screen.getByLabelText("Contract address"), { target: { value: C1 } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+
+    await waitFor(() => expect(historyMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("verify-empty-state")).toBeNull();
+    expect(screen.getByText(/latest verification attempt failed/i)).toBeDefined();
+    expect(screen.getByText(/Build failed \(clone_failed\)/)).toBeDefined();
   });
 
   it("rejects an invalid contract id before calling the API", async () => {
@@ -78,6 +111,8 @@ describe("Verify page — explorer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByText(/valid contract address/i)).toBeDefined();
     expect(historyMock).not.toHaveBeenCalled();
+    // Invalid input never reaches the empty-state branch either.
+    expect(screen.queryByTestId("verify-empty-state")).toBeNull();
   });
 });
 

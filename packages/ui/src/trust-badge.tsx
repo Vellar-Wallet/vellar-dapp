@@ -9,18 +9,37 @@ import { trustSignal, type VerificationStatus } from "@vellar/verification-sdk";
 // looks the same in the web app and the sandboxed extension popup without
 // depending on either's stylesheet.
 
-const TONE_COLORS: Record<
-  ReturnType<typeof trustSignal>["tone"],
-  { fg: string; bg: string; dot: string }
-> = {
+type Tone = ReturnType<typeof trustSignal>["tone"] | "error";
+
+const TONE_COLORS: Record<Tone, { fg: string; bg: string; dot: string }> = {
   verified: { fg: "#0b7a3b", bg: "rgba(16,185,129,0.14)", dot: "#10b981" },
   warning: { fg: "#b42318", bg: "rgba(239,68,68,0.14)", dot: "#ef4444" },
   pending: { fg: "#8a6d1a", bg: "rgba(234,179,8,0.16)", dot: "#eab308" },
   neutral: { fg: "#5b6472", bg: "rgba(100,116,139,0.14)", dot: "#94a3b8" },
+  error: { fg: "#c2410c", bg: "rgba(249,115,22,0.16)", dot: "#f97316" },
 };
 
+/**
+ * A verification lookup is a network round-trip, so the badge needs states that
+ * are not verification outcomes: `loading` while the lookup is in flight, and
+ * `error` when the lookup itself fails. `error` is deliberately distinct from
+ * `unverified` — "couldn't check" is not the same claim as "checked and not
+ * verified". `no_record` is likewise distinct from `unverified`: it means the
+ * lookup succeeded and found no verification record at all for this contract,
+ * as opposed to a contract that was explicitly checked and flagged unverified
+ * (see classifyContractTrust in the extension's lib/verification.ts).
+ */
+export type TrustBadgeStatus = VerificationStatus | "loading" | "error" | "no_record";
+
+function signalFor(status: TrustBadgeStatus): { label: string; tone: Tone } {
+  if (status === "loading") return { label: "Checking verification…", tone: "pending" };
+  if (status === "error") return { label: "Couldn't check verification", tone: "error" };
+  if (status === "no_record") return { label: "No verification record", tone: "neutral" };
+  return trustSignal(status);
+}
+
 export interface TrustBadgeProps {
-  status: VerificationStatus;
+  status: TrustBadgeStatus;
   /** Compact rendering for tight spots (extension approval header). */
   size?: "sm" | "md";
   /** Optional override label (defaults to the trustSignal label). */
@@ -29,7 +48,7 @@ export interface TrustBadgeProps {
 }
 
 export function TrustBadge({ status, size = "md", label, style }: TrustBadgeProps) {
-  const signal = trustSignal(status);
+  const signal = signalFor(status);
   const colors = TONE_COLORS[signal.tone];
   const pad = size === "sm" ? "2px 8px" : "4px 10px";
   const font = size === "sm" ? 12 : 13;

@@ -83,6 +83,34 @@ describe("classifySigners", () => {
     expect(limitedAdmin!.isDurableAdmin).toBe(true);
     expect(limitedOther!.isDurableAdmin).toBe(false);
   });
+
+  it("classifies a signer key kind outside the known set as 'unknown' rather than throwing (#594)", () => {
+    // `RawSigner.key.key`'s declared type is a closed union, but this models
+    // data read from the on-chain indexer — malformed or future indexer
+    // output isn't something the type system can rule out at runtime. The
+    // `as RawSigner` cast simulates exactly that: a value TypeScript would
+    // never let through a normal construction.
+    const weird = {
+      key: { key: "Unrecognized", value: "X" },
+      storage: "persistent",
+      status: "live",
+    } as unknown as RawSigner;
+
+    expect(() => classifySigners([weird], opts)).not.toThrow();
+    const [entry] = classifySigners([weird], opts);
+    expect(entry!.kind).toBe("unknown");
+    expect(entry!.key.value).toBe("X");
+  });
+
+  it("sorts unknown-kind signers last, after policies", () => {
+    const weird = {
+      key: { key: "Unrecognized", value: "X" },
+      storage: "persistent",
+      status: "live",
+    } as unknown as RawSigner;
+    const entries = classifySigners([weird, policy("CPOLICY"), passkey("cred-1")], opts);
+    expect(entries.map((e) => e.kind)).toEqual(["passkey", "policy", "unknown"]);
+  });
 });
 
 describe("lockout protection", () => {

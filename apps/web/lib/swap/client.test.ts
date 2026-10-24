@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { assetsFor, findAssetByContractId, type RegisteredAsset } from "@/lib/assets";
 import { candidatePaths, createSwapClient } from "./client";
+import { SwapQuoteError } from "./quote";
 import { SwapVenueError, toVenueError, type SwapVenue } from "./soroswap";
 
 const [XLM, USDC] = assetsFor("testnet") as [RegisteredAsset, RegisteredAsset];
@@ -82,6 +83,7 @@ describe("swap client", () => {
     expect(v.buildSwap).toHaveBeenCalledWith({
       amountIn: 100_000_000n,
       minOut: 10_395_000n, // 10_500_000 × 0.99
+      slippageBps: 100,
       path: [XLM.contractId, USDC.contractId],
       to: WALLET,
       deadline: 310n, // floor(10_000 ms / 1000) + 300 s
@@ -155,6 +157,78 @@ describe("swap client", () => {
     await expect(swaps.prepare({ from: WALLET, quote, slippageBps: 50, resolve })).rejects.toThrow(
       /expired/,
     );
+  });
+
+  it("forces a re-quote when the quote exceeds the configured max age", async () => {
+    let t = 0;
+    const kit = { sign: vi.fn(async (tx: unknown) => ({ signed: tx })) };
+    const backend = { submitTransaction: vi.fn(async () => ({ hash: "swaphash" })) };
+    const swaps = createSwapClient({
+      venue: venue(),
+      kit,
+      backend,
+      network: "testnet",
+      signedToXdr: () => "SIGNED_XDR",
+      now: () => t,
+      maxQuoteAgeMs: 5_000,
+    });
+
+    const quote = await swaps.quote({ sell: XLM, buy: USDC, amountIn: 10_000_000n, resolve });
+
+    // Exactly at the boundary age: still signable.
+    t = 5_000;
+    const prepared = await swaps.prepare({ from: WALLET, quote, slippageBps: 50, resolve });
+    expect(prepared.review.minOut).toBeGreaterThan(0n);
+
+    // One millisecond past it: refused, and nothing is signed.
+    t = 5_001;
+    await expect(
+      swaps.prepare({ from: WALLET, quote, slippageBps: 50, resolve }),
+    ).rejects.toThrow(/expired/);
+    expect(kit.sign).not.toHaveBeenCalled();
+    expect(backend.submitTransaction).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a typed error when the quote response is missing the destination amount", async () => {
+    const v = venue({
+      // Destination asset amount absent: the response has no output to use.
+      getAmountsOut: vi.fn(async (amountIn: bigint) => [amountIn] as bigint[]),
+    });
+    const err = await client(v)
+      .swaps.quote({ sell: XLM, buy: USDC, amountIn: 100_000_000n, resolve })
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(SwapQuoteError);
+    expect((err as Error).message).toMatch(/inconsistent/i);
+  });
+
+  it("surfaces a typed error rather than undefined when a hop amount is not a bigint", async () => {
+    const v = venue({
+      // The destination amount slot is present but empty — what a partial
+      // decode of a malformed response looks like.
+      getAmountsOut: vi.fn(async (amountIn: bigint) => [amountIn, undefined] as unknown as bigint[]),
+    });
+    const err = await client(v)
+      .swaps.quote({ sell: XLM, buy: USDC, amountIn: 100_000_000n, resolve })
+      .then(() => null, (e: unknown) => e);
+    // Must be a typed quote error, not a TypeError from comparing a hole
+    // against a bigint — a downstream consumer catches SwapQuoteError.
+    expect(err).toBeInstanceOf(SwapQuoteError);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect((err as Error).message).toMatch(/unexpected response/i);
+  });
+
+  it("parses a quote response that carries an unexpected extra field", async () => {
+    const hopAmounts = [100_000_000n, 10_500_000n] as bigint[] & { extra?: string };
+    hopAmounts.extra = "not part of the schema";
+    const v = venue({ getAmountsOut: vi.fn(async () => hopAmounts) });
+    const q = await client(v).swaps.quote({
+      sell: XLM,
+      buy: USDC,
+      amountIn: 100_000_000n,
+      resolve,
+    });
+    expect(q.expectedOut).toBe(10_500_000n);
+    expect(q.hopAmounts).toEqual([100_000_000n, 10_500_000n]);
   });
 
   it("rejects routes through assets outside the registry", async () => {

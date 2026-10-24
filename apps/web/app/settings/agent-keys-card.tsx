@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import type { WalletSession } from "@vellar/types";
 import { formatTokenAmount, parseTokenAmount, type TokenInfo } from "vellar-sdk";
 import { isUserCancellation } from "@vellar/passkey";
@@ -13,6 +13,7 @@ import {
   runMint,
   type MintConfig,
   type MintEffects,
+  type MintSummary,
 } from "@/lib/agent-mint";
 import { useBalances } from "@/lib/balances";
 import { getWalletRuntime } from "@/lib/connector-factory";
@@ -65,6 +66,8 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
   const [windowIdx, setWindowIdx] = useState(1);
   const [formError, setFormError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pendingSummary, setPendingSummary] = useState<MintSummary | null>(null);
+  const confirmResolver = useRef<((ok: boolean) => void) | null>(null);
 
   const tokens: TokenInfo[] = balances.data ?? [];
   const token = tokens.find((t) => t.contractId === tokenId) ?? tokens[0];
@@ -112,6 +115,7 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
     return {
       token: token.contractId,
       tokenSymbol: token.symbol,
+      tokenDecimals: token.decimals,
       amountBaseUnits: base.toString(),
       windowSeconds: win.seconds,
       expiresAtSeconds: expiry.seconds ? Math.floor(Date.now() / 1000) + expiry.seconds : undefined,
@@ -150,6 +154,17 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
       },
       simulateDeploy: simulatePolicyDeploy,
       deployInstance: deployPolicyInstance,
+      async confirmDetails(summary) {
+        setPendingSummary(summary);
+        await new Promise<void>((resolve, reject) => {
+          confirmResolver.current = (ok) => {
+            confirmResolver.current = null;
+            setPendingSummary(null);
+            if (ok) resolve();
+            else reject(new Error("Mint cancelled: budget details were not confirmed."));
+          };
+        });
+      },
       async attachPolicy(policyContractId) {
         const runtime = await getWalletRuntime();
         if (session.keyId) await runtime.resume(session.keyId);
@@ -329,6 +344,41 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
           {"detail" in state && (
             <p className="m-0! animate-pulse text-xs text-[var(--lp-ink-soft)]">{state.detail}</p>
           )}
+          {state.step === "awaiting-confirmation" && pendingSummary && (
+            <div
+              className="lpa-well m-0! flex flex-col gap-2 text-xs"
+              data-testid="mint-confirm-summary"
+            >
+              <p className="m-0! font-bold">
+                Confirm the exact budget and expiry before signing
+              </p>
+              <dl className="m-0! flex flex-col gap-1">
+                <Row label="Asset" value={`${pendingSummary.tokenLabel} (${pendingSummary.tokenId})`} />
+                <Row label="Budget" value={`${pendingSummary.budgetLabel} ${pendingSummary.windowLabel}`} />
+                <Row label="Expires" value={pendingSummary.expiryLabel} />
+              </dl>
+              <p className="m-0! text-xs text-[var(--lp-ink-soft)]">
+                This is exactly what the mint transaction will encode. Nothing is signed until you
+                confirm.
+              </p>
+              <div className="flex gap-2.5">
+                <LpActionButton
+                  size="sm"
+                  onClick={() => confirmResolver.current?.(true)}
+                  data-testid="confirm-mint-details"
+                >
+                  Confirm and sign
+                </LpActionButton>
+                <LpActionButton
+                  variant="outline"
+                  size="sm"
+                  onClick={() => confirmResolver.current?.(false)}
+                >
+                  Cancel
+                </LpActionButton>
+              </div>
+            </div>
+          )}
           {state.step === "confirming" && (
             <p className="m-0! animate-pulse text-xs text-[var(--lp-ink-soft)]">
               Confirming on the network… policy {state.attachTxHash} · signer{" "}
@@ -438,6 +488,7 @@ export function AgentKeysCard({ session }: { session: WalletSession }) {
 const STAGE_LABEL = {
   "creating-key": "generating the agent key",
   "policy-creation": "deploying the budget policy",
+  "awaiting-confirmation": "waiting for your confirmation",
   "attaching-policy": "attaching the policy",
   "adding-signer": "adding the agent signer",
   confirming: "confirming on the network",
@@ -449,6 +500,8 @@ function stepLabel(step: string, prompt?: "attach-policy" | "add-signer"): strin
       return "Generating agent key…";
     case "policy-creation":
       return "Deploying budget policy…";
+    case "awaiting-confirmation":
+      return "Confirm the budget details…";
     case "awaiting-passkey-approval":
       return prompt === "add-signer"
         ? "Approve the agent signer with your passkey…"
@@ -470,5 +523,89 @@ function Row({ label, value }: { label: string; value: string }) {
       <dt className="text-[var(--lp-ink-faint)]">{label}</dt>
       <dd className="m-0 break-all text-right font-[family-name:var(--lp-mono)]">{value}</dd>
     </div>
+  );
+}
+
+// --- Key expiry countdown (#571) --------------------------------------------
+//
+// A key nearing its expiry is operationally important for anyone relying on an
+// autonomous agent: the budget silently stops working at expiry. The indicator
+// is deliberately pure (status + formatting) so it is unit-testable without a
+// clock, then rendered next to the key's expiry date in the agent-key list.
+
+/** How close to expiry counts as "nearing". Configurable per render/test. */
+export const DEFAULT_EXPIRY_WARNING_MS = 24 * 60 * 60 * 1000;
+
+export type ExpiryStatus = "none" | "ok" | "warning" | "expired";
+
+export function expiryStatus(
+  expiresAt: string | undefined | null,
+  nowMs: number,
+  thresholdMs: number = DEFAULT_EXPIRY_WARNING_MS,
+): ExpiryStatus {
+  if (!expiresAt) return "none";
+  const at = new Date(expiresAt).getTime();
+  if (Number.isNaN(at)) return "none";
+  const remaining = at - nowMs;
+  if (remaining <= 0) return "expired";
+  return remaining <= thresholdMs ? "warning" : "ok";
+}
+
+/** Compact human remaining time: "2d 3h", "5h 12m", "12m", "under 1m". */
+export function formatTimeRemaining(remainingMs: number): string {
+  const totalMinutes = Math.floor(remainingMs / 60_000);
+  if (totalMinutes < 1) return "under 1m";
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  return `${minutes}m`;
+}
+
+/** Visual expiry indicator: countdown + colour. Distinct for already-expired
+ * vs nearing expiry; renders "No expiry" (no countdown) when unset. */
+export function AgentKeyExpiry({
+  expiresAt,
+  nowMs = Date.now(),
+  thresholdMs = DEFAULT_EXPIRY_WARNING_MS,
+}: {
+  expiresAt?: string;
+  nowMs?: number;
+  thresholdMs?: number;
+}) {
+  const status = expiryStatus(expiresAt, nowMs, thresholdMs);
+  if (status === "none") {
+    return (
+      <span
+        data-testid="agent-key-expiry"
+        data-expiry-status="none"
+        className="text-[var(--lp-ink-faint)]"
+      >
+        No expiry
+      </span>
+    );
+  }
+  const at = new Date(expiresAt!).getTime();
+  if (status === "expired") {
+    return (
+      <span
+        data-testid="agent-key-expiry"
+        data-expiry-status="expired"
+        className="font-bold text-red-700"
+      >
+        Expired {formatTimeRemaining(nowMs - at)} ago
+      </span>
+    );
+  }
+  const remaining = formatTimeRemaining(at - nowMs);
+  return (
+    <span
+      data-testid="agent-key-expiry"
+      data-expiry-status={status}
+      className={status === "warning" ? "font-bold text-amber-700" : "text-[var(--lp-ink-soft)]"}
+    >
+      Expires in {remaining}
+    </span>
   );
 }

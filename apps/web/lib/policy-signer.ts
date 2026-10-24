@@ -86,6 +86,9 @@ function toXdr(signed: unknown, fallback: unknown): string {
  * tested at the WIRING layer (RA-6), not just at policyAttachArgs. */
 export function createPolicySignerActions(deps: PolicySignerDeps) {
   const { kit, backend, network, SignerKey, SignerStore } = deps;
+  /** Policies with an in-flight detach (submitted, not yet confirmed). */
+  const pendingDetaches = new Set<string>();
+
   return {
     async attachPolicy(policyContractId: string): Promise<{ hash: string }> {
       // Standalone policy signer (SignerLimits = None) — policyAttachArgs pins
@@ -102,9 +105,32 @@ export function createPolicySignerActions(deps: PolicySignerDeps) {
       // Recovery path (V3 / FIX 5): remove the policy signer WITHOUT the policy's
       // consent. Must target SignerKey.Policy so the wallet's
       // is_sole_self_removal exception applies.
-      const tx = await kit.remove(SignerKey.Policy(policyContractId));
-      const signed = await kit.sign(tx);
-      return backend.submitTransaction({ signedXdr: toXdr(signed, tx), network });
+      pendingDetaches.add(policyContractId);
+      try {
+        const tx = await kit.remove(SignerKey.Policy(policyContractId));
+        const signed = await kit.sign(tx);
+        return await backend.submitTransaction({ signedXdr: toXdr(signed, tx), network });
+      } finally {
+        pendingDetaches.delete(policyContractId);
+      }
+    },
+
+    /**
+     * Sign `tx` under `policyContractId`'s evaluation.
+     *
+     * Deliberately REJECTED while that policy's detach is still pending
+     * confirmation: the detach is the recovery path (V3 / FIX 5) and a
+     * concurrent signature would race it. A request that already started is
+     * not retroactively failed — the guard is checked at initiation. Once the
+     * detach resolves (success or failure) the guard clears.
+     */
+    async requestSignature(policyContractId: string, tx: unknown): Promise<unknown> {
+      if (pendingDetaches.has(policyContractId)) {
+        throw new Error(
+          "Policy is being detached — wait for the removal to confirm before requesting a signature.",
+        );
+      }
+      return kit.sign(tx);
     },
   };
 }

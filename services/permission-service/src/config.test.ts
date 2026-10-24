@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configFromEnv, DEFAULTS } from "./config";
+import { configFromEnv, DEFAULTS, OriginPatternError } from "./config";
 import { OriginPermissionCache } from "./origin-permission-cache";
 
 describe("permission-service cache configuration", () => {
@@ -29,5 +29,44 @@ describe("permission-service cache configuration", () => {
     expect(configFromEnv({ PERMISSION_CACHE_TTL_MS: "86400001" }).originPermissionCacheTtlMs).toBe(
       DEFAULTS.originPermissionCacheTtlMs,
     );
+  });
+});
+
+describe("origin pattern validation at boot", () => {
+  it("accepts well-formed glob patterns and returns them", () => {
+    const config = configFromEnv({
+      PERMISSION_ORIGIN_PATTERNS: "https://app.example.com, https://*.example.com",
+    });
+    expect(config.originPatterns).toEqual(["https://app.example.com", "https://*.example.com"]);
+    expect(config.warnings).toEqual([]);
+  });
+
+  it("fails boot with a clear error naming a malformed pattern", () => {
+    expect(() =>
+      configFromEnv({ PERMISSION_ORIGIN_PATTERNS: "https://app.example.com, https://[invalid" }),
+    ).toThrow(OriginPatternError);
+    try {
+      configFromEnv({ PERMISSION_ORIGIN_PATTERNS: "https://[invalid" });
+      expect.unreachable("malformed pattern should fail boot");
+    } catch (err) {
+      expect(err).toBeInstanceOf(OriginPatternError);
+      expect((err as OriginPatternError).pattern).toBe("https://[invalid");
+      expect((err as Error).message).toContain("https://[invalid");
+    }
+  });
+
+  it("warns rather than fails on a pattern that matches nothing", () => {
+    const config = configFromEnv({
+      PERMISSION_ORIGIN_PATTERNS: "https://app.example.com, , https://other.example.com",
+    });
+    expect(config.originPatterns).toEqual(["https://app.example.com", "https://other.example.com"]);
+    expect(config.warnings).toHaveLength(1);
+    expect(config.warnings[0]).toContain("matches nothing");
+  });
+
+  it("returns no patterns and no warnings when none are configured", () => {
+    const config = configFromEnv({});
+    expect(config.originPatterns).toEqual([]);
+    expect(config.warnings).toEqual([]);
   });
 });

@@ -88,6 +88,38 @@ describe("OnboardingActions", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("covers passkey creation cancellation followed immediately by a successful retry", async () => {
+    const cancel = new Error("dismissed");
+    cancel.name = "NotAllowedError";
+    const createWallet = vi
+      .fn()
+      .mockRejectedValueOnce(cancel)
+      .mockResolvedValueOnce(session);
+
+    const connector = fakeConnector({ createWallet });
+    renderActions(connector);
+
+    fireEvent.change(screen.getByLabelText(/wallet name/i), { target: { value: "retryuser" } });
+
+    // First attempt: user cancels
+    fireEvent.click(screen.getByRole("button", { name: "Create wallet" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", { name: "Create wallet" }).disabled,
+      ).toBe(false),
+    );
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByLabelText(/wallet name/i) as HTMLInputElement).value).toBe("retryuser");
+
+    // Second attempt: immediate successful retry
+    fireEvent.click(screen.getByRole("button", { name: "Create wallet" }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+    expect(createWallet).toHaveBeenCalledTimes(2);
+  });
+
   it("surfaces real failures as an error message", async () => {
     const connector = fakeConnector({
       createWallet: vi.fn().mockRejectedValue(new Error("relayer down")),

@@ -118,4 +118,26 @@ describe("normalizeQuote", () => {
     expect(isQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS)).toBe(true);
     expect(isQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS + 1)).toBe(false);
   });
+
+  it("is fresh exactly at the boundary age and stale one millisecond past it", () => {
+    const q = quote();
+    expect(isQuoteFresh(q, q.quotedAt + 5_000, 5_000)).toBe(true);
+    expect(isQuoteFresh(q, q.quotedAt + 5_001, 5_000)).toBe(false);
+  });
+
+  it("honours a configurable max age instead of the default TTL", () => {
+    const q = quote();
+    // Past the default TTL, but inside a longer allowance.
+    expect(isQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS + 1)).toBe(false);
+    expect(isQuoteFresh(q, q.quotedAt + QUOTE_TTL_MS + 1, QUOTE_TTL_MS * 2)).toBe(true);
+    // Inside the default TTL, but past a tighter allowance.
+    expect(isQuoteFresh(q, q.quotedAt + 1_000)).toBe(true);
+    expect(isQuoteFresh(q, q.quotedAt + 1_000, 500)).toBe(false);
+  });
+
+  it("rejects a quote aged past a zero max age", () => {
+    const q = quote();
+    expect(isQuoteFresh(q, q.quotedAt, 0)).toBe(true);
+    expect(isQuoteFresh(q, q.quotedAt + 1, 0)).toBe(false);
+  });
 });

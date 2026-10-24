@@ -22,6 +22,14 @@ import {
 type Wizard =
   | { stage: "input" }
   | { stage: "plan"; plan: CleanupPlan }
+  // Explicit confirmation before any signature: the itemized list of every
+  // asset and trustline the plan affects, taken from the plan that will
+  // actually execute (not a separately computed summary).
+  | {
+      stage: "confirm";
+      plan: CleanupPlan;
+      next: { kind: "cleanup"; steps: CleanupStep[] } | { kind: "merge" };
+    }
   // Cleanup may be SPLIT into multiple transactions (>100 ops); `steps` holds
   // all of them and `index` is the one the user is signing now. The wizard walks
   // every step in order before it advances to the merge.
@@ -72,13 +80,39 @@ export default function Cleanup() {
       setWizard({ stage: "plan", plan });
     });
 
+  // Execute first so the confirmation can itemize the plan that will actually
+  // run, then hold at the confirm stage until the user approves.
   const startCleanup = () =>
     run(async () => {
-      const { steps } = await executeCleanup(accountId.trim(), destination.trim());
-      if (steps.length === 0) return startMerge();
+      const { steps, plan } = await executeCleanup(accountId.trim(), destination.trim());
+      if (steps.length === 0) {
+        setWizard({ stage: "confirm", plan, next: { kind: "merge" } });
+        return;
+      }
+      setWizard({ stage: "confirm", plan, next: { kind: "cleanup", steps } });
+    });
+
+  // From the plan stage: merge-ready plans skip execution and go to the same
+  // confirmation (with the inspected plan) before any signature.
+  const proceedFromPlan = () => {
+    if (wizard.stage !== "plan") return;
+    if (wizard.plan.mergeReady) {
+      setWizard({ stage: "confirm", plan: wizard.plan, next: { kind: "merge" } });
+    } else {
+      void startCleanup();
+    }
+  };
+
+  const confirmPlan = () => {
+    if (wizard.stage !== "confirm") return;
+    if (wizard.next.kind === "cleanup") {
+      const { steps } = wizard.next;
       setWizard({ stage: "cleanup", steps, index: 0, watching: true, timedOut: false });
       void watchCleanup(steps, 0);
-    });
+    } else {
+      void startMerge();
+    }
+  };
 
   const startMerge = () =>
     run(async () => {
@@ -184,15 +218,35 @@ export default function Cleanup() {
               Estimated transactions: {wizard.plan.estimatedTransactions}
             </p>
             <div className="flex gap-3">
-              <LpActionButton
-                onClick={() => void (wizard.plan.mergeReady ? startMerge() : startCleanup())}
-                disabled={busy}
-              >
+              <LpActionButton onClick={() => void proceedFromPlan()} disabled={busy}>
                 {wizard.plan.mergeReady ? "Proceed to merge" : "Start cleanup"}
               </LpActionButton>
               <LpActionButton
                 variant="outline"
                 onClick={() => setWizard({ stage: "input" })}
+                disabled={busy}
+              >
+                Back
+              </LpActionButton>
+            </div>
+          </section>
+        )}
+
+        {wizard.stage === "confirm" && (
+          <section className="lpa-panel flex flex-col gap-4">
+            <Eyebrow>Confirm before signing</Eyebrow>
+            <p className="text-sm text-[var(--lp-ink-soft)]">
+              Every asset and trustline this plan affects is listed below. Check it carefully — this
+              is the last review before you are asked to sign.
+            </p>
+            <PlanItemList plan={wizard.plan} />
+            <div className="flex gap-3">
+              <LpActionButton onClick={() => void confirmPlan()} disabled={busy}>
+                Looks right — continue to signing
+              </LpActionButton>
+              <LpActionButton
+                variant="outline"
+                onClick={() => setWizard({ stage: "plan", plan: wizard.plan })}
                 disabled={busy}
               >
                 Back
@@ -257,6 +311,40 @@ export default function Cleanup() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * Itemized list of every asset/trustline (and other blocker) the plan affects.
+ * Rendered from the plan object that will actually execute — never a separate
+ * summary — so the user reviews exactly what the signatures will do. The list
+ * scrolls when it outgrows the panel, so long trustline sets stay readable
+ * without cutting items off.
+ */
+function PlanItemList({ plan }: { plan: CleanupPlan }) {
+  const items = plan.blockers;
+  if (items.length === 0) {
+    return (
+      <p className="lpa-well text-sm">
+        No assets or trustlines are affected — this account is clear apart from the merge itself.
+      </p>
+    );
+  }
+  return (
+    <ul
+      data-testid="plan-item-list"
+      className="lpa-well m-0 flex max-h-[240px] list-none flex-col gap-2 overflow-y-auto p-3"
+    >
+      {items.map((item, i) => (
+        <li key={i} className="text-sm">
+          <span className="mr-2 bg-[var(--lp-sun-soft)] px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide">
+            {item.type}
+          </span>
+          {item.description}
+          <p className="mt-1! text-xs text-[var(--lp-ink-faint)]">{item.actionRequired}</p>
+        </li>
+      ))}
+    </ul>
   );
 }
 

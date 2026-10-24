@@ -12,6 +12,7 @@ import { walletErrorMessage } from "@/lib/messages";
 import { trackTransaction } from "@/lib/track";
 import { usePaymentClient } from "@/lib/wallet-context";
 import { getSupportedTokens, parseAmountWithDecimals, TESTNET_NATIVE_SAC } from "@/lib/tokens";
+import { isMemoRequiredDestination } from "@/lib/memo-destinations";
 
 // Send flow (technical-doc.md §7.4): build -> explicit review -> passkey sign
 // -> submit -> track until final. Signing only ever happens from the review
@@ -29,9 +30,25 @@ export interface PaymentRequestContext {
   msg?: string;
 }
 
+/** A token as the dashboard knows it: `amount` is present when the balance has
+ * been loaded locally (TokenBalance), absent for a plain registry token. */
+type SendableToken = TokenInfo & { amount?: bigint };
+
+/**
+ * Locally known balance for a token, or null when we don't have one. This is a
+ * UX check only — the server-side balance guard at prepare/submit stays the
+ * authoritative one.
+ */
+export function knownBalance(token: SendableToken, tokens: SendableToken[]): bigint | null {
+  const match = tokens.find((t) => t.contractId === token.contractId);
+  const amount = match?.amount ?? token.amount;
+  return typeof amount === "bigint" ? amount : null;
+}
+
 const formSchema = z.object({
   to: z.string().trim().min(1, "Recipient is required"),
   amount: z.string().trim().min(1, "Amount is required"),
+  memo: z.string().trim().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -54,7 +71,7 @@ export function SendPayment({
 }: {
   from: string;
   token?: TokenInfo;
-  availableTokens?: TokenInfo[];
+  availableTokens?: SendableToken[];
   network: Network;
   onSuccess: () => void;
   prefill?: { to: string; amount?: string };
@@ -64,10 +81,10 @@ export function SendPayment({
   const [flow, setFlow] = useState<FlowState>({ step: "form" });
   const [error, setError] = useState<string | null>(null);
 
-  const supported =
+  const supported: SendableToken[] =
     availableTokens && availableTokens.length > 0 ? availableTokens : getSupportedTokens(network);
 
-  const [selectedToken, setSelectedToken] = useState<TokenInfo>(
+  const [selectedToken, setSelectedToken] = useState<SendableToken>(
     initialToken ??
       supported[0] ?? {
         symbol: "XLM",
@@ -78,13 +95,30 @@ export function SendPayment({
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { to: prefill?.to ?? "", amount: prefill?.amount ?? "" },
+    defaultValues: { to: prefill?.to ?? "", amount: prefill?.amount ?? "", memo: "" },
   });
+
+  /** Inline pre-signing check against the locally known balance. Returns true
+   * when the amount is fine (or we have no balance to check against). */
+  function checkLocalBalance(amount: bigint): boolean {
+    const balance = knownBalance(selectedToken, supported);
+    if (balance !== null && amount > balance) {
+      setError(
+        `Insufficient ${selectedToken.symbol} balance: you have ${formatTokenAmount(
+          balance,
+          selectedToken.decimals,
+        )} ${selectedToken.symbol}.`,
+      );
+      return false;
+    }
+    return true;
+  }
 
   async function prepare(values: FormValues) {
     setError(null);
     try {
       const amount = parseAmountWithDecimals(values.amount, selectedToken.decimals);
+      if (!checkLocalBalance(amount)) return;
       const payments = await getPayments();
       const prepared = await payments.preparePayment({
         from,
@@ -99,6 +133,9 @@ export function SendPayment({
   }
 
   async function confirm(prepared: PreparedPayment) {
+    // Re-check at signing time: the balance may have dropped since the form
+    // loaded. The server-side check remains authoritative either way.
+    if (!checkLocalBalance(prepared.review.amount)) return;
     setFlow({ step: "submitting", prepared });
     setError(null);
     let hash: string;
@@ -186,6 +223,18 @@ export function SendPayment({
               <span className="ferror">{form.formState.errors.amount.message}</span>
             )}
           </label>
+          <label className="lpa-field">
+            <span className="flabel">Memo (optional)</span>
+            <input
+              {...form.register("memo")}
+              placeholder="Memo or destination tag"
+            />
+          </label>
+          {showMemoWarning && (
+            <p role="alert" className="lpa-bad text-xs" data-testid="memo-warning">
+              Warning: This destination requires a memo (destination tag). Sending without a memo may result in lost funds.
+            </p>
+          )}
           <LpActionButton
             type="submit"
             disabled={form.formState.isSubmitting}
@@ -201,6 +250,11 @@ export function SendPayment({
           <span className="lpa-ok self-start text-[13px] font-bold">
             ✓ Review before signing — this cannot be undone
           </span>
+          {isMemoRequiredDestination(flow.prepared.review.to) && (!memoValue || memoValue.trim() === "") && (
+            <p role="alert" className="lpa-bad text-xs" data-testid="review-memo-warning">
+              Warning: This destination requires a memo (destination tag). Sending without a memo may result in lost funds.
+            </p>
+          )}
           <dl className="lpa-well flex flex-col gap-2.5 text-sm">
             {(
               [
@@ -210,6 +264,7 @@ export function SendPayment({
                 ["From", flow.prepared.review.from],
                 ["To", flow.prepared.review.to],
                 ["Token contract", flow.prepared.review.token.contractId],
+                ...(memoValue && memoValue.trim() ? ([["Memo", memoValue.trim()]] as const) : []),
                 ...(request?.msg ? ([["Message", request.msg]] as const) : []),
               ] as const
             ).map(([label, value]) => (

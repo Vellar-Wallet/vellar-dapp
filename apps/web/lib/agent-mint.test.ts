@@ -4,6 +4,7 @@ import {
   isMintBusy,
   mintReducer,
   runMint,
+  summarizeMintConfig,
   type MintConfig,
   type MintEffects,
   type MintEvent,
@@ -28,6 +29,7 @@ const happyPath: MintEvent[] = [
   { type: "START", config },
   { type: "KEY_CREATED", key },
   { type: "POLICY_DEPLOYED", policyContractId: "CPOLICY" },
+  { type: "DETAILS_CONFIRMED" },
   { type: "PASSKEY_APPROVED", for: "attach-policy" },
   { type: "POLICY_ATTACHED", hash: "attachtx" },
   { type: "SIGNER_ADDED", hash: "addtx" },
@@ -40,6 +42,7 @@ describe("mintReducer", () => {
     expect(steps).toEqual([
       "creating-key",
       "policy-creation",
+      "awaiting-confirmation",
       "awaiting-passkey-approval",
       "attaching-policy",
       "adding-signer",
@@ -78,21 +81,33 @@ describe("mintReducer", () => {
       ]).step,
     ).toBe("creating-key");
     // Approval for the wrong prompt is not an approval.
-    const awaiting = play(happyPath.slice(0, 3));
+    const awaiting = play(happyPath.slice(0, 4));
     expect(mintReducer(awaiting, { type: "PASSKEY_APPROVED", for: "add-signer" })).toBe(awaiting);
   });
 
   it("the passkey prompt cannot be skipped: no path from policy-creation to attaching-policy without approval", () => {
     const deployed = play(happyPath.slice(0, 3));
-    expect(deployed.step).toBe("awaiting-passkey-approval");
+    expect(deployed.step).toBe("awaiting-confirmation");
+    // Policy attached without confirmation or approval is ignored.
     expect(mintReducer(deployed, { type: "POLICY_ATTACHED", hash: "h" })).toBe(deployed);
+    const confirmed = play(happyPath.slice(0, 4));
+    expect(confirmed.step).toBe("awaiting-passkey-approval");
+    expect(mintReducer(confirmed, { type: "POLICY_ATTACHED", hash: "h" })).toBe(confirmed);
+  });
+
+  it("confirmation cannot be skipped: policy-approval is ignored until DETAILS_CONFIRMED", () => {
+    const deployed = play(happyPath.slice(0, 3));
+    expect(mintReducer(deployed, { type: "PASSKEY_APPROVED", for: "attach-policy" })).toBe(
+      deployed,
+    );
   });
 
   it.each([
     ["creating-key", 1],
     ["policy-creation", 2],
-    ["attaching-policy", 4],
-    ["adding-signer", 5],
+    ["awaiting-confirmation", 3],
+    ["attaching-policy", 5],
+    ["adding-signer", 6],
   ] as const)(
     "FAIL at %s records the stage; the signer is not reported as existing",
     (stage, n) => {
@@ -102,7 +117,7 @@ describe("mintReducer", () => {
   );
 
   it("FAIL while confirming reports that the agent signer may already exist on-chain", () => {
-    const s = mintReducer(play(happyPath.slice(0, 6)), {
+    const s = mintReducer(play(happyPath.slice(0, 7)), {
       type: "FAIL",
       stage: "confirming",
       message: "timeout",
@@ -127,6 +142,57 @@ describe("mintReducer", () => {
     expect(isMintBusy(play(happyPath.slice(0, 3)))).toBe(true);
     expect(isMintBusy(play(happyPath))).toBe(false);
   });
+
+  it("lands on awaiting-confirmation with a summary of the exact budget/token/expiry", () => {
+    const s = play(happyPath.slice(0, 3));
+    expect(s).toMatchObject({
+      step: "awaiting-confirmation",
+      policyContractId: "CPOLICY",
+      summary: {
+        tokenLabel: "XLM",
+        tokenId: "CTOKEN",
+        budgetLabel: "10 XLM",
+        budgetBaseUnits: "100000000",
+      },
+    });
+  });
+});
+
+describe("summarizeMintConfig (#563)", () => {
+  it("shows a human-readable asset name, not just the contract id", () => {
+    const summary = summarizeMintConfig({
+      ...config,
+      token: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      tokenSymbol: "USDC",
+      tokenDecimals: 7,
+      amountBaseUnits: "2500000",
+    });
+    // The label leads with the symbol; the id is secondary.
+    expect(summary.tokenLabel).toBe("USDC");
+    expect(summary.budgetLabel).toBe("0.25 USDC");
+    expect(summary.tokenId).toBe("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75");
+  });
+
+  it("restates the expiry and window in human-readable form", () => {
+    const summary = summarizeMintConfig(config);
+    expect(summary.expiryLabel).toBe(new Date(1_800_000_000 * 1000).toLocaleString());
+    expect(summary.windowLabel).toBe("per 1 day(s)");
+    expect(summarizeMintConfig({ ...config, expiresAtSeconds: undefined }).expiryLabel).toMatch(
+      /No expiry/,
+    );
+    expect(summarizeMintConfig({ ...config, windowSeconds: 3_600 }).windowLabel).toBe(
+      "per 1 hour(s)",
+    );
+  });
+
+  it("cannot drift from what the mint transaction encodes", () => {
+    // The summary is derived from the SAME MintConfig fields that feed
+    // generatePolicy's tokenBudget and addAgentKey's grant.
+    const summary = summarizeMintConfig(config);
+    expect(summary.budgetBaseUnits).toBe(config.amountBaseUnits);
+    expect(summary.tokenId).toBe(config.token);
+    expect(summary.tokenLabel).toBe(config.tokenSymbol);
+  });
 });
 
 function effects(over: Partial<MintEffects> = {}) {
@@ -148,6 +214,9 @@ function effects(over: Partial<MintEffects> = {}) {
       order.push("deploy");
       return { contractId: "CPOLICY" };
     }),
+    confirmDetails: vi.fn(async () => {
+      order.push("confirmDetails");
+    }),
     attachPolicy: vi.fn(async () => {
       order.push("attach");
       return { hash: "attachtx" };
@@ -168,7 +237,7 @@ function effects(over: Partial<MintEffects> = {}) {
 }
 
 describe("runMint", () => {
-  it("runs deploy → attach (passkey) → add signer (passkey) → confirm and ends in success", async () => {
+  it("runs deploy → confirm details → attach (passkey) → add signer (passkey) → confirm and ends in success", async () => {
     const { e, order } = effects();
     const events: MintEvent[] = [];
     await runMint(config, { effects: e, wallet: "CWALLET", dispatch: (ev) => events.push(ev) });
@@ -177,6 +246,7 @@ describe("runMint", () => {
       "generatePolicy",
       "simulate",
       "deploy",
+      "confirmDetails",
       "attach",
       "record",
       "addAgentKey",
@@ -192,9 +262,78 @@ describe("runMint", () => {
     expect(final.step).toBe("success");
   });
 
+  it("shows the exact budget/token/expiry summary before any passkey prompt", async () => {
+    const { e, order } = effects();
+    const events: MintEvent[] = [];
+    await runMint(config, { effects: e, wallet: "CWALLET", dispatch: (ev) => events.push(ev) });
+
+    // Confirmation runs BEFORE the first passkey call (attachPolicy).
+    expect(order.indexOf("confirmDetails")).toBeLessThan(order.indexOf("attach"));
+    expect(e.confirmDetails).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenLabel: "XLM",
+        tokenId: "CTOKEN",
+        budgetBaseUnits: "100000000",
+        budgetLabel: "10 XLM",
+      }),
+    );
+
+    // The summary in the awaiting-confirmation state is the same copy.
+    const atConfirm = events
+      .slice(0, events.findIndex((ev) => ev.type === "DETAILS_CONFIRMED"))
+      .reduce(mintReducer, initialMintState);
+    expect(atConfirm).toMatchObject({
+      step: "awaiting-confirmation",
+      summary: summarizeMintConfig(config),
+    });
+  });
+
+  it("the summary passed to confirmDetails matches what generatePolicy and addAgentKey encode", async () => {
+    const { e } = effects();
+    const events: MintEvent[] = [];
+    await runMint(config, { effects: e, wallet: "CWALLET", dispatch: (ev) => events.push(ev) });
+
+    const summary = (e.confirmDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
+      budgetBaseUnits: string;
+      tokenId: string;
+      tokenLabel: string;
+    };
+    // generatePolicy receives the same config (its tokenBudget encodes these).
+    expect(e.generatePolicy).toHaveBeenCalledWith(config, "CWALLET");
+    // addAgentKey receives the same token and config-derived expiry.
+    expect(e.addAgentKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: config.token,
+        expiresAtSeconds: config.expiresAtSeconds,
+      }),
+    );
+    // And the summary restates those exact values — no drift.
+    expect(summary.budgetBaseUnits).toBe(config.amountBaseUnits);
+    expect(summary.tokenId).toBe(config.token);
+    expect(summary.tokenLabel).toBe(config.tokenSymbol);
+  });
+
   it("stops before any passkey prompt when the deploy simulation fails", async () => {
     const { e } = effects({
       simulateDeploy: vi.fn(async () => ({ ok: false, error: "bad budget" })),
+    });
+    const events: MintEvent[] = [];
+    await runMint(config, { effects: e, wallet: "CWALLET", dispatch: (ev) => events.push(ev) });
+    expect(e.confirmDetails).not.toHaveBeenCalled();
+    expect(e.attachPolicy).not.toHaveBeenCalled();
+    expect(e.addAgentKey).not.toHaveBeenCalled();
+    expect(events.reduce(mintReducer, initialMintState)).toMatchObject({
+      step: "error",
+      stage: "policy-creation",
+      message: "bad budget",
+    });
+  });
+
+  it("a refused confirmation fails before any passkey prompt and never adds the signer", async () => {
+    const { e } = effects({
+      confirmDetails: vi.fn(async () => {
+        throw new Error("Mint cancelled: budget details were not confirmed.");
+      }),
     });
     const events: MintEvent[] = [];
     await runMint(config, { effects: e, wallet: "CWALLET", dispatch: (ev) => events.push(ev) });
@@ -202,8 +341,9 @@ describe("runMint", () => {
     expect(e.addAgentKey).not.toHaveBeenCalled();
     expect(events.reduce(mintReducer, initialMintState)).toMatchObject({
       step: "error",
-      stage: "policy-creation",
-      message: "bad budget",
+      stage: "awaiting-confirmation",
+      message: "Mint cancelled: budget details were not confirmed.",
+      signerMayExist: false,
     });
   });
 

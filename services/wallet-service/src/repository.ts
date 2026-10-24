@@ -71,6 +71,8 @@ export const SENSITIVE_WALLET_ACTIONS = [
   "wallet.connected",
   "session.revoked",
   "tx.submitted",
+  "tx.failed",
+  "tx.policy_rejected",
   "policy.updated",
   "account.merged",
   "key.rotated",
@@ -108,11 +110,17 @@ export interface AuditLog {
   record(type: string, data: Record<string, unknown>, actor?: string): Promise<void>;
   /** Unpaginated: every matching event, oldest first. Existing callers (e.g.
    * GET /wallet/audit-logs) that want "everything" keep working unchanged. */
-  list(filter?: { type?: string; actor?: string }): Promise<AuditEvent[]>;
+  list(filter?: { type?: string; types?: string[]; actor?: string }): Promise<AuditEvent[]>;
   /** Paginated: newest first (issue #256's cursor-based history view). `limit`
    * is capped and defaulted by the caller (see DEFAULT_TX_HISTORY_LIMIT /
    * MAX_TX_HISTORY_LIMIT in server.ts) — this method trusts it as given. */
-  listPage(filter: { type?: string; actor?: string; limit: number; after?: AuditCursor }): Promise<AuditPage>;
+  listPage(filter: {
+    type?: string;
+    types?: string[];
+    actor?: string;
+    limit: number;
+    after?: AuditCursor;
+  }): Promise<AuditPage>;
 }
 
 export function createMemoryWalletRepository(): WalletRepository {
@@ -177,6 +185,9 @@ export function createMemoryAuditLog(): AuditLog {
       if (filter?.type) {
         filtered = filtered.filter((e) => e.type === filter.type);
       }
+      if (filter?.types) {
+        filtered = filtered.filter((e) => filter.types!.includes(e.type));
+      }
       if (filter?.actor) {
         filtered = filtered.filter((e) => e.actor === filter.actor);
       }
@@ -197,10 +208,11 @@ export function createMemoryAuditLog(): AuditLog {
  * global order on its own) is the required tiebreaker. */
 export function paginateAuditEvents(
   events: readonly AuditEvent[],
-  filter: { type?: string; actor?: string; limit: number; after?: AuditCursor },
+  filter: { type?: string; types?: string[]; actor?: string; limit: number; after?: AuditCursor },
 ): AuditPage {
   let filtered = events.filter((e) => {
     if (filter.type && e.type !== filter.type) return false;
+    if (filter.types && !filter.types.includes(e.type)) return false;
     if (filter.actor && e.actor !== filter.actor) return false;
     return true;
   });

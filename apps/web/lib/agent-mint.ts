@@ -1,18 +1,24 @@
 import type { GeneratedPolicy } from "vellar-sdk";
+import { formatAmountWithDecimals } from "./tokens";
 
 // Agent key mint flow (#394) as an explicit state machine (technical-doc.md
 // §17.3). The reducer is pure so every transition and failure path is unit
 // tested; `runMint` drives it against injected effects so the UI only renders
 // state. Sequence:
 //
-//   idle → creating-key → policy-creation → awaiting-passkey-approval(attach)
-//        → attaching-policy → awaiting-passkey-approval(add-signer)
-//        → adding-signer → confirming → success
+//   idle → creating-key → policy-creation → awaiting-confirmation
+//        → awaiting-passkey-approval(attach) → attaching-policy
+//        → awaiting-passkey-approval(add-signer) → adding-signer
+//        → confirming → success
 //
 // Security properties the machine encodes:
 //   - The budget is the deployed token-scoped policy contract — the ONLY thing
 //     the state carries about the budget is the policy instance id the chain
 //     returned. Nothing here computes or enforces an amount.
+//   - Explicit confirmation of the exact budget, token, and expiry BEFORE any
+//     passkey prompt (no silent signing). The summary is derived from the same
+//     MintConfig that feeds `generatePolicy` and `addAgentKey`, so it cannot
+//     drift from what is encoded in the mint transaction being signed.
 //   - Two explicit passkey prompts (attach policy, add signer). Neither can be
 //     skipped: the transitions that reach `attaching-policy` / `adding-signer`
 //     are only produced by the effects that ran `kit.sign`.
@@ -24,19 +30,67 @@ import type { GeneratedPolicy } from "vellar-sdk";
 //     operator knows an agent key exists on-chain (and can revoke it).
 
 export type MintStage =
-  "creating-key" | "policy-creation" | "attaching-policy" | "adding-signer" | "confirming";
+  | "creating-key"
+  | "policy-creation"
+  | "awaiting-confirmation"
+  | "attaching-policy"
+  | "adding-signer"
+  | "confirming";
 
 export interface MintConfig {
   /** SEP-41 token contract (C…) the budget is denominated in. */
   token: string;
   /** Human label for the token (display only). */
   tokenSymbol: string;
+  /** Display decimals for the token; used only to format the confirmation copy. */
+  tokenDecimals?: number;
   /** Budget in the token's base units, as the policy contract stores it. */
   amountBaseUnits: string;
   windowSeconds: number;
   /** Unix seconds; `undefined` = no expiry (allowed but discouraged). */
   expiresAtSeconds?: number;
   network: "testnet" | "mainnet";
+}
+
+/** Human-readable restatement of what the mint transaction will encode.
+ * Built from MintConfig — the same object that feeds generatePolicy and
+ * addAgentKey — so the copy can never describe a different budget than the
+ * one being signed. */
+export interface MintSummary {
+  /** Human-readable asset name (symbol), never the bare contract id alone. */
+  tokenLabel: string;
+  /** Contract id, shown as a secondary identifier. */
+  tokenId: string;
+  /** Budget in the token's display units, with the symbol. */
+  budgetLabel: string;
+  /** Budget exactly as the policy contract stores it. */
+  budgetBaseUnits: string;
+  /** Human-readable expiry, or an explicit "no expiry" label. */
+  expiryLabel: string;
+  /** Spending window in human-readable form. */
+  windowLabel: string;
+}
+
+function windowLabel(windowSeconds: number): string {
+  if (windowSeconds % 604_800 === 0) return `per ${windowSeconds / 604_800} week(s)`;
+  if (windowSeconds % 86_400 === 0) return `per ${windowSeconds / 86_400} day(s)`;
+  if (windowSeconds % 3_600 === 0) return `per ${windowSeconds / 3_600} hour(s)`;
+  return `per ${windowSeconds}s`;
+}
+
+/** The exact confirmation copy for a mint, derived from `config`. */
+export function summarizeMintConfig(config: MintConfig): MintSummary {
+  const decimals = config.tokenDecimals ?? 7;
+  return {
+    tokenLabel: config.tokenSymbol,
+    tokenId: config.token,
+    budgetLabel: `${formatAmountWithDecimals(BigInt(config.amountBaseUnits), decimals)} ${config.tokenSymbol}`,
+    budgetBaseUnits: config.amountBaseUnits,
+    expiryLabel: config.expiresAtSeconds
+      ? new Date(config.expiresAtSeconds * 1000).toLocaleString()
+      : "No expiry (not recommended)",
+    windowLabel: windowLabel(config.windowSeconds),
+  };
 }
 
 export interface AgentKeyMaterial {
@@ -49,6 +103,14 @@ export type MintState =
   | { step: "idle" }
   | { step: "creating-key"; config: MintConfig }
   | { step: "policy-creation"; config: MintConfig; key: AgentKeyMaterial; detail: string }
+  | {
+      step: "awaiting-confirmation";
+      config: MintConfig;
+      key: AgentKeyMaterial;
+      policyContractId: string;
+      /** Human-readable restatement of the mint, before any passkey prompt. */
+      summary: MintSummary;
+    }
   | {
       step: "awaiting-passkey-approval";
       for: "attach-policy" | "add-signer";
@@ -102,6 +164,7 @@ export type MintEvent =
   | { type: "KEY_CREATED"; key: AgentKeyMaterial }
   | { type: "POLICY_PROGRESS"; detail: string }
   | { type: "POLICY_DEPLOYED"; policyContractId: string }
+  | { type: "DETAILS_CONFIRMED" }
   | { type: "PASSKEY_APPROVED"; for: "attach-policy" | "add-signer" }
   | { type: "POLICY_ATTACHED"; hash: string }
   | { type: "SIGNER_ADDED"; hash: string }
@@ -142,15 +205,27 @@ export function mintReducer(state: MintState, event: MintEvent): MintState {
     case "policy-creation":
       if (event.type === "POLICY_PROGRESS") return { ...state, detail: event.detail };
       if (event.type === "POLICY_DEPLOYED") {
+        // Land on the confirmation step, not the passkey prompt: the human
+        // must see the exact budget/token/expiry before any signing begins.
         return {
-          step: "awaiting-passkey-approval",
-          for: "attach-policy",
+          step: "awaiting-confirmation",
           config: state.config,
           key: state.key,
           policyContractId: event.policyContractId,
+          summary: summarizeMintConfig(state.config),
         };
       }
       return state;
+    case "awaiting-confirmation":
+      return event.type === "DETAILS_CONFIRMED"
+        ? {
+            step: "awaiting-passkey-approval",
+            for: "attach-policy",
+            config: state.config,
+            key: state.key,
+            policyContractId: state.policyContractId,
+          }
+        : state;
     case "awaiting-passkey-approval":
       if (event.type === "PASSKEY_APPROVED" && event.for === state.for) {
         return state.for === "attach-policy"
@@ -234,6 +309,9 @@ export interface MintEffects {
   simulateDeploy(policyId: string, wallet: string): Promise<{ ok: boolean; error?: string }>;
   /** policy-service: sponsor-funded instance deploy bound to this wallet. */
   deployInstance(policyId: string, wallet: string): Promise<{ contractId: string }>;
+  /** Explicit confirmation of the budget/token/expiry summary, BEFORE any
+   * passkey prompt. Resolves only when the human approves the exact copy. */
+  confirmDetails(summary: MintSummary): Promise<void>;
   /** Passkey prompt #1: kit.addPolicy (standalone signer) → submit. */
   attachPolicy(policyContractId: string): Promise<{ hash: string }>;
   /** policy-service: record the attach against the policy record. */
@@ -281,6 +359,13 @@ export async function runMint(config: MintConfig, opts: MintRunnerOptions): Prom
     dispatch({ type: "POLICY_PROGRESS", detail: "Deploying the budget policy to testnet…" });
     const { contractId } = await effects.deployInstance(policy.id, wallet);
     dispatch({ type: "POLICY_DEPLOYED", policyContractId: contractId });
+
+    // Explicit, no-silent-signing confirmation BEFORE the first passkey prompt.
+    // The summary is derived from `config` — the same object the effects above
+    // and below actually encode — so the copy cannot drift from the mint.
+    stage = "awaiting-confirmation";
+    await effects.confirmDetails(summarizeMintConfig(config));
+    dispatch({ type: "DETAILS_CONFIRMED" });
 
     stage = "attaching-policy";
     dispatch({ type: "PASSKEY_APPROVED", for: "attach-policy" });

@@ -24,7 +24,7 @@ export function LpFooter() {
             <div className="lp-foot-col">
               <h4>Developers</h4>
               <a href="https://docs.vellar.xyz/">Documentation</a>
-              <a href="https://docs.vellar.xyz/docs/quickstart">Quickstart</a>
+              <a href="https://docs.vellar.xyz/docs/getting-started/quickstart">Quickstart</a>
               <a href="https://docs.vellar.xyz/docs/api-reference">SDK reference</a>
               <a href="https://github.com/Vellar-Wallet/vellar-sdk">GitHub</a>
             </div>

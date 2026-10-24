@@ -15,7 +15,7 @@ import { useRevokeSession, useSessions } from "@/lib/sessions";
 import { useWalletActions, useWalletSession } from "@/lib/wallet-context";
 import { useAgentKeys, useRevokeAgentKey } from "@/lib/agent-keys";
 import { AddPasskeyCard } from "./add-passkey-card";
-import { AgentKeysCard } from "./agent-keys-card";
+import { AgentKeyExpiry, AgentKeysCard } from "./agent-keys-card";
 import { ProvenanceCard } from "./provenance-card";
 import { SignersCard } from "./signers-card";
 import { WalletUpgradeCard } from "./wallet-upgrade-card";
@@ -200,9 +200,7 @@ export default function Settings() {
                       </div>
                       <div>
                         <span className="block text-[var(--lp-ink-faint)]">Expires:</span>
-                        <span>
-                          {key.expiresAt ? new Date(key.expiresAt).toLocaleDateString() : "Never"}
-                        </span>
+                        <AgentKeyExpiry expiresAt={key.expiresAt} />
                       </div>
                     </div>
 

@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { validateImportedRecord, toClaimedJob } from "./import-validation";
+import { randomUUID } from "node:crypto";
+import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  validateImportedRecord,
+  toClaimedJob,
+  resolveImportPathWithinCrate,
+  ImportPathError,
+} from "./import-validation";
 
 // Canonical valid contract addresses for tests (Soroban C…, 56 chars total).
 const C1 = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
@@ -417,5 +426,81 @@ describe("validateImportedRecord — mixed batch simulation", () => {
     expect(find("bad-2").reason).toContain("toolchainVersion");
     expect(find("bad-3").reason).toContain("status");
     expect(find("bad-4").reason).toContain("commitHash");
+  });
+});
+
+// ── Import path safety (hermetic build hardening) ────────────────────────────
+
+describe("resolveImportPathWithinCrate", () => {
+  const crateDir = join(tmpdir(), `vellar-crate-${randomUUID()}`);
+  const outsideDir = join(tmpdir(), `vellar-outside-${randomUUID()}`);
+
+  beforeAll(async () => {
+    await mkdir(join(crateDir, "src"), { recursive: true });
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(join(crateDir, "src", "lib.rs"), "fn main() {}");
+    await writeFile(join(outsideDir, "secret.rs"), "// outside");
+  });
+
+  afterAll(async () => {
+    await rm(crateDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
+  });
+
+  it("accepts a path that stays inside the crate directory", async () => {
+    const resolved = resolveImportPathWithinCrate(crateDir, "src/lib.rs");
+    expect(resolved).toBe(join(await realpath(crateDir), "src", "lib.rs"));
+  });
+
+  it("rejects an import path containing relative traversal segments", () => {
+    expect(() => resolveImportPathWithinCrate(crateDir, "../../etc/passwd")).toThrow(ImportPathError);
+    try {
+      resolveImportPathWithinCrate(crateDir, "../../etc/passwd");
+    } catch (err) {
+      expect((err as ImportPathError).importPath).toBe("../../etc/passwd");
+      expect((err as Error).message).toContain("outside the crate directory");
+    }
+  });
+
+  it("rejects a nested traversal that still escapes the crate directory", () => {
+    expect(() => resolveImportPathWithinCrate(crateDir, "src/../../outside")).toThrow(ImportPathError);
+  });
+
+  it("rejects an absolute import path", () => {
+    expect(() => resolveImportPathWithinCrate(crateDir, "/etc/passwd")).toThrow(ImportPathError);
+  });
+
+  it("rejects an empty import path", () => {
+    expect(() => resolveImportPathWithinCrate(crateDir, "")).toThrow(ImportPathError);
+    expect(() => resolveImportPathWithinCrate(crateDir, "   ")).toThrow(ImportPathError);
+  });
+
+  it("rejects a path that looks safe lexically but resolves outside via a symlink", async () => {
+    // Lexically "escape/secret.rs" has no `..` segments — it is inside the
+    // crate tree — but `escape` is a symlink pointing outside the crate.
+    await symlink(outsideDir, join(crateDir, "escape"));
+    try {
+      resolveImportPathWithinCrate(crateDir, "escape/secret.rs");
+      expect.unreachable("symlink escape should have been rejected");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImportPathError);
+      expect((err as Error).message).toContain("symlink");
+    }
+  });
+
+  it("rejects a symlink escape whose leaf does not exist yet", async () => {
+    await symlink(outsideDir, join(crateDir, "escape2"));
+    try {
+      resolveImportPathWithinCrate(crateDir, "escape2/not-yet-written.rs");
+      expect.unreachable("symlink escape should have been rejected");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ImportPathError);
+    }
+  });
+
+  it("accepts a symlink that stays inside the crate directory", async () => {
+    await symlink(join(crateDir, "src"), join(crateDir, "src-link"));
+    const resolved = resolveImportPathWithinCrate(crateDir, "src-link/lib.rs");
+    expect(resolved).toBe(join(await realpath(crateDir), "src", "lib.rs"));
   });
 });

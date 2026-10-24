@@ -43,7 +43,10 @@ impl MockWallet {
             .get(&symbol_short!("SIGNER"))
             .unwrap_or(false);
         if still {
-            Some(SignerVal::Policy(SignerExpiration(None), SignerLimits(None)))
+            Some(SignerVal::Policy(
+                SignerExpiration(None),
+                SignerLimits(None),
+            ))
         } else {
             None
         }
@@ -54,6 +57,9 @@ impl MockWallet {
 
 const DAY: u64 = 60 * 60 * 24;
 const TEN_XLM: i128 = 100_000_000; // 10 units in the token's base units (7dp)
+/// $10.00 in base units for a 2-decimal-place token (e.g. a fiat-pegged
+/// stablecoin quoted in cents) — the low-decimal contrast case for #590.
+const LOW_DECIMAL_LIMIT: i128 = 1_000;
 
 struct Fixture {
     env: Env,
@@ -204,8 +210,11 @@ fn allows_spend_up_to_limit() {
 fn rejects_single_spend_over_limit() {
     let fx = setup(TEN_XLM, DAY, false);
     install(&fx);
-    fx.policy
-        .policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, TEN_XLM + 1));
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, TEN_XLM + 1),
+    );
 }
 
 #[test]
@@ -367,13 +376,29 @@ fn two_instances_bind_distinct_tokens() {
         )
     };
     // policy A authorizes token_a, rejects token_b; policy B the reverse.
-    pa.policy__(&wallet, &SignerKey::Policy(pa.address.clone()), &mk(&token_a, 1));
+    pa.policy__(
+        &wallet,
+        &SignerKey::Policy(pa.address.clone()),
+        &mk(&token_a, 1),
+    );
     assert!(pa
-        .try_policy__(&wallet, &SignerKey::Policy(pa.address.clone()), &mk(&token_b, 1))
+        .try_policy__(
+            &wallet,
+            &SignerKey::Policy(pa.address.clone()),
+            &mk(&token_b, 1)
+        )
         .is_err());
-    pb.policy__(&wallet, &SignerKey::Policy(pb.address.clone()), &mk(&token_b, 1));
+    pb.policy__(
+        &wallet,
+        &SignerKey::Policy(pb.address.clone()),
+        &mk(&token_b, 1),
+    );
     assert!(pb
-        .try_policy__(&wallet, &SignerKey::Policy(pb.address.clone()), &mk(&token_a, 1))
+        .try_policy__(
+            &wallet,
+            &SignerKey::Policy(pb.address.clone()),
+            &mk(&token_a, 1)
+        )
         .is_err());
 }
 
@@ -479,6 +504,96 @@ fn rejects_batch_of_transfers_over_limit() {
     };
     let ctx = Vec::from_array(&fx.env, [mk(60_000_000), mk(60_000_000)]);
     fx.policy.policy__(&fx.wallet, &signer_key(&fx), &ctx);
+}
+
+// ----- Token decimal places (#590) -----
+//
+// The policy's `daily_limit`/`Allowance.spent` arithmetic operates purely on
+// the raw i128 base-unit amount the `transfer` context carries — it never
+// reads or assumes the bound token's `decimals()`. So a token reporting more
+// (or fewer) decimal places than XLM's native 7 cannot desync the
+// comparison: the limit is simply set, at deploy time, in THAT token's own
+// base units, whatever they are. These tests pin that: the cumulative
+// window math must not silently truncate or misscale for an usually-decimaled
+// token, matched against a lower-decimal token as the contrasting case.
+
+#[test]
+fn enforces_limit_correctly_for_a_token_with_more_than_7_decimal_places() {
+    // A token with 18 decimals (e.g. an ERC-20-style bridged asset): limit of
+    // "10 units" is 10 * 10^18 base units, far larger than any XLM (7dp)
+    // amount, and must still be enforced as an exact cumulative cap with no
+    // truncation.
+    const EIGHTEEN_DP_UNIT: i128 = 1_000_000_000_000_000_000;
+    let limit = 10 * EIGHTEEN_DP_UNIT;
+    let fx = setup(limit, DAY, false);
+    install(&fx);
+
+    // Spending exactly up to the limit succeeds.
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, limit));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")] // NotAllowed
+fn rejects_one_base_unit_over_limit_for_a_high_decimal_token() {
+    // The highest-precision case: a single base unit (the smallest possible
+    // increment for an 18dp token) over the limit must still be rejected —
+    // proving the comparison is exact at full precision, not rounded/truncated
+    // to something coarser (e.g. as if it assumed 7dp amounts).
+    const EIGHTEEN_DP_UNIT: i128 = 1_000_000_000_000_000_000;
+    let limit = 10 * EIGHTEEN_DP_UNIT;
+    let fx = setup(limit, DAY, false);
+    install(&fx);
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &transfer_ctx(&fx, limit + 1));
+}
+
+#[test]
+fn accumulates_correctly_across_transfers_for_a_high_decimal_token() {
+    // Cumulative-window accounting must sum correctly at 18dp scale too, not
+    // just in the 7dp fixtures used elsewhere in this file.
+    const EIGHTEEN_DP_UNIT: i128 = 1_000_000_000_000_000_000;
+    let limit = 10 * EIGHTEEN_DP_UNIT;
+    let fx = setup(limit, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, 6 * EIGHTEEN_DP_UNIT),
+    );
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, 4 * EIGHTEEN_DP_UNIT),
+    );
+}
+
+#[test]
+fn enforces_limit_correctly_for_a_token_with_fewer_than_7_decimal_places() {
+    // Contrasting case: a low-precision token (e.g. 2 decimals, like a
+    // fiat-pegged stablecoin quoted in cents). The limit is set in that
+    // token's own base units (cents) and must be enforced exactly, the same
+    // as for the high-decimal case above — the policy does not assume 7dp
+    // anywhere, so fewer decimals is just as unaffected as more.
+    let fx = setup(LOW_DECIMAL_LIMIT, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, LOW_DECIMAL_LIMIT),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn rejects_one_base_unit_over_limit_for_a_low_decimal_token() {
+    let fx = setup(LOW_DECIMAL_LIMIT, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx, LOW_DECIMAL_LIMIT + 1),
+    );
 }
 
 // ----- uninstall self-clean -----

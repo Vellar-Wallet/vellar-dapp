@@ -276,6 +276,82 @@ fn rejects_empty_contexts() {
         .policy__(&fx.wallet, &signer_key(&fx), &Vec::new(&fx.env));
 }
 
+// #591: a recipient contract verified at the moment `policy__` evaluates it,
+// with its verification revoked by ANOTHER transaction landing in the same
+// ledger, is a same-ledger-ordering edge case worth pinning explicitly.
+//
+// DOCUMENTED BEHAVIOR: `policy__` makes exactly ONE synchronous
+// `is_verified` read at the instant it executes (see `check_provenance` in
+// lib.rs). Soroban applies transactions within a ledger sequentially, not
+// concurrently — there is no interleaving of two transactions' storage
+// writes mid-execution of a third. So "revoked earlier in the same ledger"
+// and "revoked in an earlier ledger" are not actually different cases from
+// this contract's point of view: whichever of `revoke` or `policy__` the
+// ledger applies LAST sees the other's effect, deterministically, never a
+// stale snapshot. This is NOT dependent on incidental same-ledger
+// sub-second timestamp granularity — it falls out of Soroban's sequential
+// transaction-apply model. These two tests pin both orderings within one
+// ledger sequence number, so a change that made ordering nondeterministic
+// (e.g. introducing a cached/batched registry read) would break one of them.
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")] // NotAllowed
+fn revoke_before_policy_check_in_the_same_ledger_is_seen() {
+    // Both the revoke and the policy check are modeled as landing in the same
+    // ledger sequence number (no `set_timestamp`/`sequence_number` bump
+    // between them) — only their RELATIVE ORDER differs from the companion
+    // test below. revoke-then-check must reject: the check sees the
+    // already-revoked state.
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+    attest(&fx, &token);
+    let ledger_seq = fx.env.ledger().sequence();
+
+    fx.registry.revoke(&token);
+    assert_eq!(
+        fx.env.ledger().sequence(),
+        ledger_seq,
+        "still the same ledger"
+    );
+
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+}
+
+#[test]
+fn policy_check_before_revoke_in_the_same_ledger_still_passes() {
+    // Companion to the test above, same ledger sequence number, OPPOSITE
+    // order: check-then-revoke must pass — the check ran while the
+    // attestation was still live, and a revocation that lands afterwards
+    // (even in the same ledger) cannot retroactively undo an authorization
+    // that already completed. Proves the outcome tracks actual apply order,
+    // not "anything revoked this ledger is treated as never having been
+    // verified."
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+    attest(&fx, &token);
+    let ledger_seq = fx.env.ledger().sequence();
+
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+
+    fx.registry.revoke(&token);
+    assert_eq!(
+        fx.env.ledger().sequence(),
+        ledger_seq,
+        "still the same ledger"
+    );
+
+    // A SUBSEQUENT check in that same (now-revoked) ledger correctly fails —
+    // confirming the revoke really did take effect and the prior pass wasn't
+    // a fluke of test setup.
+    assert!(fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token))
+        .is_err());
+}
+
 #[test]
 fn reattestation_restores_authorization() {
     let fx = setup(false);

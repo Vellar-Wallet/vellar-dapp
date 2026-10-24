@@ -122,13 +122,15 @@ function Explorer() {
 
       {error && <p className="lpa-bad">{error}</p>}
 
-      {records && (
+      {records && records.length === 0 && <EmptyHistory />}
+
+      {records && records.length > 0 && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2.5">
-            <TrustBadge status={latest?.status ?? "unverified"} />
+            <TrustBadge status={latest!.status} />
             <span className="text-sm text-[var(--lp-ink-soft)]">
-              {records.length === 0
-                ? "No verification has been submitted for this contract yet."
+              {latest!.status === "failed"
+                ? "The latest verification attempt failed — see the record below for the reason."
                 : `${records.length} verification attempt${records.length > 1 ? "s" : ""}`}
             </span>
           </div>
@@ -138,6 +140,53 @@ function Explorer() {
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+// Zero verification history is a distinct state from a failed verification:
+// nothing has ever been submitted for this contract id. A failed record means
+// a rebuild was attempted and did not match. The empty state must not read as
+// an error (#569).
+function EmptyHistory() {
+  return (
+    <section
+      className="lpa-panel flex flex-col items-center gap-3 py-8 text-center"
+      data-testid="verify-empty-state"
+    >
+      <svg
+        width="72"
+        height="72"
+        viewBox="0 0 72 72"
+        fill="none"
+        aria-hidden="true"
+        className="opacity-70"
+      >
+        <rect
+          x="18"
+          y="10"
+          width="30"
+          height="40"
+          rx="3"
+          stroke="var(--lp-ink-faint)"
+          strokeWidth="2"
+        />
+        <path
+          d="M25 22h16M25 30h16M25 38h10"
+          stroke="var(--lp-ink-faint)"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <circle cx="48" cy="48" r="12" stroke="var(--lp-ink-faint)" strokeWidth="2" />
+        <path d="M57 57l7 7" stroke="var(--lp-ink-faint)" strokeWidth="2" strokeLinecap="round" />
+        <path d="M44 48h8" stroke="var(--lp-ink-faint)" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+      <h2 className="m-0! text-lg">No verification history</h2>
+      <p className="m-0! max-w-[420px] text-sm leading-relaxed text-[var(--lp-ink-soft)]">
+        Nothing has been submitted for this contract yet — it has not failed verification, it has
+        simply never been checked. Submit its source on the &quot;Submit for verification&quot; tab
+        to start a deterministic rebuild.
+      </p>
     </section>
   );
 }

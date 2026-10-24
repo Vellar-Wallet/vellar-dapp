@@ -45,8 +45,14 @@ export function sanitizeUrl(url: string | undefined): string {
 export function sanitizeString(input: unknown, maxLength: number = MAX_DESCRIPTION_LENGTH): string {
   if (input === null || input === undefined) return "";
   const str = String(input);
-  // Remove control characters (except space, tab, newline)
-  const cleaned = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  // Remove control characters (except space, tab, newline), plus the
+  // Unicode bidirectional-text override/isolate characters (U+202A-U+202E,
+  // U+2066-U+2069). The latter are printable, so the C0/C1 control-character
+  // range above does not catch them, but they can reorder how the rest of
+  // the string renders on the approval screen — a known UI-spoofing vector
+  // for a dApp-supplied memo/name/description (e.g. disguising a malicious
+  // destination as a trusted-looking one).
+  const cleaned = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F‪-‮⁦-⁩]/g, "");
   // Strip tags and escape remaining HTML
   const stripped = cleaned.replace(/<[^>]*>?/gm, "");
   const escaped = escapeHtml(stripped.trim());

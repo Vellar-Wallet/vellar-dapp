@@ -27,6 +27,7 @@ const KIND_LABEL: Record<SignerKind, string> = {
   "device-session": "Device session",
   agent: "Agent key",
   policy: "Policy",
+  unknown: "Unrecognized signer",
 };
 
 const KIND_BLURB: Record<SignerKind, string> = {
@@ -38,6 +39,8 @@ const KIND_BLURB: Record<SignerKind, string> = {
     "A delegated ed25519 key. Its authority is bounded on-chain by the policies listed as required co-signers.",
   policy:
     "A policy contract attached as a standalone signer. It authorizes only what its rules allow; your passkey can detach it at any time without the policy's consent.",
+  unknown:
+    "This signer's key type isn't recognized by this version of the app. Its effect on the account cannot be determined here — check the account on-chain before revoking it.",
 };
 
 type RevokeState =
@@ -272,6 +275,8 @@ function confirmCopy(entry: SignerEntry): string {
       return "Revoke this agent key? This is the remote kill switch: the key stops signing immediately, including any payment a facilitator is still verifying.";
     case "policy":
       return "Detach this policy? Its rules stop applying to this account. This is the recovery path if a policy is blocking transactions you need — your passkey removes it directly, no policy approval required.";
+    case "unknown":
+      return "Revoke this signer? Its key type isn't recognized by this version of the app, so its exact effect on the account can't be confirmed here. The chain is still the authority on what this removes.";
   }
 }
 

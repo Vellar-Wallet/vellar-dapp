@@ -315,6 +315,10 @@ export function parsePayUri(input: unknown, ctx: Sep7Context): Sep7ParseResult {
     if (!signature) {
       return fail("invalid_origin", "The request claims an origin but isn't signed.");
     }
+  } else if (signature !== undefined) {
+    // A signature with no declared origin cannot be checked against any
+    // domain's signing key — it is a malformed signed request, not a trust signal.
+    return fail("invalid_origin", "The request is signed but names no origin domain.");
   }
 
   return {

@@ -46,6 +46,13 @@ export interface HistoryTx {
   status: HistoryStatus;
   /** Hex transaction hash, linked to an explorer. */
   txHash: string;
+  /**
+   * Human-readable operation description (Soroban contract invocations).
+   * Present when the row is an invokeHostFunction rather than a transfer;
+   * distinct from a bare unknown-operation fallback so a recognised call
+   * reads as e.g. "Contract call: swap" instead of a generic label.
+   */
+  description?: string;
 }
 
 export interface HistoryPage {

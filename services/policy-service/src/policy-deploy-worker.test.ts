@@ -41,12 +41,23 @@ describe("Policy Deployment Worker", () => {
   });
 
   describe("computeBackoff", () => {
-    it("returns exponential backoff delays", () => {
-      expect(computeBackoff(0)).toBe(1000); // base 1s
-      expect(computeBackoff(1)).toBe(1000); // 2^0 * 1000
-      expect(computeBackoff(2)).toBe(2000); // 2^1 * 1000
-      expect(computeBackoff(3)).toBe(4000); // 2^2 * 1000
-      expect(computeBackoff(4)).toBe(8000); // 2^3 * 1000
+    it("returns jittered exponential backoff delays within bounds", () => {
+      // Full jitter: delay = random(0, min(cap, base * 2^attempt))
+      for (let i = 0; i < 20; i++) {
+        expect(computeBackoff(0)).toBeLessThanOrEqual(1000);
+        expect(computeBackoff(1)).toBeLessThanOrEqual(1000);
+        expect(computeBackoff(2)).toBeLessThanOrEqual(2000);
+        expect(computeBackoff(3)).toBeLessThanOrEqual(4000);
+        expect(computeBackoff(4)).toBeLessThanOrEqual(8000);
+      }
+    });
+
+    it("retries are not perfectly periodic (jitter produces varied delays)", () => {
+      const delays = new Set<number>();
+      for (let i = 0; i < 50; i++) {
+        delays.add(computeBackoff(3));
+      }
+      expect(delays.size).toBeGreaterThan(1);
     });
 
     it("caps delay at 1 hour", () => {

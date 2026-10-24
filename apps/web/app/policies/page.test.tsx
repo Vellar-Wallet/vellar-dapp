@@ -33,6 +33,12 @@ vi.mock("@/lib/connector-factory", async (importOriginal) => {
   return { ...actual, getWalletRuntime: runtimeMock };
 });
 
+const { useSignersMock } = vi.hoisted(() => ({ useSignersMock: vi.fn() }));
+vi.mock("@/lib/signers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/signers")>();
+  return { ...actual, useSigners: useSignersMock };
+});
+
 // #335: the policy builder is gated behind a gradual-rollout feature flag,
 // which defaults OFF for any session with no rollout configured. This suite
 // tests the builder's own behavior (templates, validation, deploy), not the
@@ -82,6 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   listMock.mockResolvedValue(templates);
+  useSignersMock.mockReturnValue({ data: [], isPending: false, isError: false });
 });
 
 describe("Policy builder", () => {
@@ -171,6 +178,91 @@ describe("Policy builder", () => {
 
     expect((await screen.findByRole("alert")).textContent).toMatch(/insufficient sponsor/i);
     expect(deployMock).not.toHaveBeenCalled();
+  });
+
+  it("warns before the passkey step when the new policy overlaps an attached one (#570)", async () => {
+    const existingContract = "CEXISTINGPOLICY234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ2345AB";
+    window.localStorage.setItem(
+      `vellar.policy-deployments:${SESSION.accountId}`,
+      JSON.stringify([
+        {
+          contractId: existingContract,
+          definition: generatedSpending.definition,
+          deployedAt: "2026-10-01T00:00:00.000Z",
+        },
+      ]),
+    );
+    useSignersMock.mockReturnValue({
+      data: [
+        {
+          id: `Policy:${existingContract}`,
+          kind: "policy",
+          key: { kind: "Policy", value: existingContract },
+          status: "live",
+          storage: "persistent",
+          isCurrent: false,
+          isDurableAdmin: false,
+        },
+      ],
+      isPending: false,
+      isError: false,
+    });
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(generatedSpending);
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+
+    const warning = await screen.findByTestId("policy-scope-warning");
+    expect(warning.textContent).toMatch(/overlaps/i);
+    // Warns but does not block: the deploy button is still available.
+    expect(screen.getByRole("button", { name: /deploy to my account/i })).toBeDefined();
+  });
+
+  it("shows no scope warning for two policies that do not overlap (#570)", async () => {
+    const existingContract = "CEXISTINGPOLICY234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ2345AB";
+    window.localStorage.setItem(
+      `vellar.policy-deployments:${SESSION.accountId}`,
+      JSON.stringify([
+        {
+          contractId: existingContract,
+          definition: {
+            version: "1",
+            type: "verified_only",
+            owners: [SESSION.accountId],
+            provenance: { mode: "strict" },
+          },
+          deployedAt: "2026-10-01T00:00:00.000Z",
+        },
+      ]),
+    );
+    useSignersMock.mockReturnValue({
+      data: [
+        {
+          id: `Policy:${existingContract}`,
+          kind: "policy",
+          key: { kind: "Policy", value: existingContract },
+          status: "live",
+          storage: "persistent",
+          isCurrent: false,
+          isDurableAdmin: false,
+        },
+      ],
+      isPending: false,
+      isError: false,
+    });
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(generatedSpending);
+
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+
+    expect(await screen.findByText(/policy generated/i)).toBeDefined();
+    expect(screen.queryByTestId("policy-scope-warning")).toBeNull();
   });
 
   it("surfaces validation errors without generating", async () => {

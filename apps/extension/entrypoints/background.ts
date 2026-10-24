@@ -15,12 +15,19 @@ import type {
   ProviderRequestMessage,
 } from "../lib/messages";
 import { routeProviderRequest } from "../lib/router";
+import { supersededEntries, supersededPayload } from "../lib/pending-approvals";
 import {
   pairOriginPolicy,
   PairOriginsMisconfiguredError,
   type PairOriginPolicy,
 } from "../lib/pair-origins";
-import { addGrant, loadState, revokeGrant, setPairedWallet } from "../lib/state";
+import {
+  addGrant,
+  loadState,
+  PairedOriginLimitError,
+  revokeGrant,
+  setPairedWallet,
+} from "../lib/state";
 import { backgroundErrorReporter } from "../lib/error-reporter";
 
 import { PairedTabManager, type PendingApprovalEntry } from "../lib/paired-tab-manager";
@@ -108,11 +115,13 @@ export default defineBackground(() => {
     // Explicit approval required (§7.3). A newer request from the same
     // origin+method supersedes any earlier still-pending one (e.g. re-clicking
     // "Pair") — settle the old promise so the caller isn't left hanging, and
-    // never stack duplicate cards.
-    requestManager.supersedePending(decision.origin, message.envelope.request.method);
-
-    const senderTab = sender.tab as { id?: number } | undefined;
-    const tabId = senderTab?.id;
+    // never stack duplicate cards. A request from a DIFFERENT origin (e.g. a
+    // second tab paired to the same wallet) is always independent (#582): it
+    // never supersedes, and gets its own approval card.
+    for (const stale of supersededEntries(pending, decision.origin, message.envelope.request)) {
+      pending.get(stale.id)?.resolve(supersededPayload());
+      pending.delete(stale.id);
+    }
 
     return new Promise<ResponsePayload>((resolve) => {
       const id = message.envelope.id;
@@ -176,14 +185,24 @@ export default defineBackground(() => {
     }
 
     if (entry.request.method === "connect") {
-      await addGrant(browserKv, {
-        origin: entry.origin,
-        accountId: wallet.address,
-        network: wallet.network,
-        capabilities: [...CONNECT_GRANT_CAPABILITIES],
-        grantedAt: new Date().toISOString(),
-      });
-      requestManager.finishResolving(id, {
+      try {
+        await addGrant(browserKv, {
+          origin: entry.origin,
+          accountId: wallet.address,
+          network: wallet.network,
+          capabilities: [...CONNECT_GRANT_CAPABILITIES],
+          grantedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        // #579: the paired-origin limit was hit — surface it as a clear error
+        // rather than letting the popup crash on an unhandled rejection.
+        if (err instanceof PairedOriginLimitError) {
+          entry.resolve(errorPayload("paired_origin_limit_reached", err.message));
+          return true;
+        }
+        throw err;
+      }
+      entry.resolve({
         method: "connect",
         result: { address: wallet.address, network: wallet.network },
       });

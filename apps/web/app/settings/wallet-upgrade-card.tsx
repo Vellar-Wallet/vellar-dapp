@@ -7,6 +7,7 @@ import { Eyebrow, LpActionButton } from "@/app/landing/ui";
 import { walletErrorMessage } from "@/lib/messages";
 import { signerMutationErrorMessage } from "@/lib/signer-model";
 import { trackTransaction } from "@/lib/track";
+import { getWalletChangelogEntry } from "@/lib/wallet-changelog";
 import { walletUpgradeErrorMessage } from "@/lib/wallet-upgrade";
 import { useUpgradeWallet, useWalletVersion } from "@/lib/wallet-version";
 
@@ -91,6 +92,7 @@ export function WalletUpgradeCard({ session }: { session: WalletSession }) {
             A newer wallet version is available on{" "}
             <strong className="uppercase">{session.network}</strong>.
           </p>
+          <WalletChangelogNote wasmHash={status.targetHash} />
           <LpActionButton className="self-start" onClick={() => void run()} disabled={busy}>
             {state.step === "approving"
               ? "Approve with your passkey…"
@@ -128,4 +130,42 @@ export function WalletUpgradeCard({ session }: { session: WalletSession }) {
 function describe(err: unknown): string {
   if (isUserCancellation(err)) return "The passkey prompt was dismissed. Nothing was changed.";
   return walletUpgradeErrorMessage(err, signerMutationErrorMessage(err, walletErrorMessage(err)));
+}
+
+/** What changed in the target wallet wasm, sourced from the maintained
+ * changelog (lib/wallet-changelog.ts). Falls back to a plain summary when the
+ * pinned hash has no entry yet — never a broken link. */
+export function WalletChangelogNote({ wasmHash }: { wasmHash: string }) {
+  const entry = getWalletChangelogEntry(wasmHash);
+  return (
+    <div
+      className="lpa-well text-[13px] leading-relaxed text-[var(--lp-ink-soft)]"
+      data-testid="wallet-changelog"
+    >
+      <strong>What&apos;s changing.</strong>{" "}
+      {entry ? (
+        <>
+          <span data-testid="wallet-changelog-summary">{entry.summary}</span>{" "}
+          {entry.url ? (
+            <a
+              href={entry.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+              data-testid="wallet-changelog-link"
+            >
+              Changelog for {entry.version}
+            </a>
+          ) : (
+            <span className="text-[var(--lp-ink-faint)]">({entry.version})</span>
+          )}
+        </>
+      ) : (
+        <span data-testid="wallet-changelog-fallback">
+          No changelog entry is published for this version yet. Review the target hash above before
+          approving.
+        </span>
+      )}
+    </div>
+  );
 }

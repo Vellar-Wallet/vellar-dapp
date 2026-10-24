@@ -145,6 +145,38 @@ function scvalToStringSafe(val: unknown, sdk: StellarSdkLike): string | undefine
   }
 }
 
+/** A short human-readable label for one operation, e.g. "invoke swap",
+ * "send 5 to GABC…XYZ", or "an operation" for an unrecognized shape. Never
+ * throws: an operation this cannot specifically describe still gets a safe
+ * generic label rather than failing the whole summary. */
+export function describeOperation(op: OperationSummary): string {
+  switch (op.kind) {
+    case "transfer":
+      return `send ${formatStroops(op.amount)} to ${op.to}`;
+    case "contract-call":
+      return `invoke ${op.fn}`;
+    case "other":
+      return op.label;
+  }
+}
+
+/** Human-readable one-line summary of a whole transaction, suitable for a
+ * notification, log line, or any surface that cannot render the full
+ * per-operation UI. A single operation reads as its own description (e.g.
+ * "invoke swap"); a batch of more than one reads as a count followed by each
+ * operation's description (e.g. "3 operations: invoke swap, invoke transfer,
+ * invoke approve"), so no operation in the batch is collapsed into a single
+ * generic description. An undecodable transaction falls back to its generic
+ * "a transaction" label like the structured summary does. */
+export function formatTransactionSummary(summary: TransactionSummary): string {
+  const { operations } = summary;
+  if (operations.length === 1) {
+    return describeOperation(operations[0]!);
+  }
+  const descriptions = operations.map((op) => describeOperation(op));
+  return `${operations.length} operations: ${descriptions.join(", ")}`;
+}
+
 /** Format a stroop amount string as XLM for display. */
 export function formatStroops(stroops: string): string {
   try {

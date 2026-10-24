@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { VerificationRecordInternal } from "@vellar/verification-service/server";
 import type { ClaimedJob } from "./job-store";
@@ -200,4 +202,87 @@ export function toClaimedJob(record: ImportedRecord, submittedAtMs?: number): Cl
     traceId: record.traceId,
     traceParentSpanId: record.traceParentSpanId,
   };
+}
+
+// ── Import path safety (hermetic build hardening) ────────────────────────────
+//
+// A crafted import path using relative traversal (e.g. ../../) must be
+// rejected rather than silently resolved outside the expected crate
+// directory. Lexical `..` checks alone are not enough: a path can look safe
+// lexically and still escape via a symlinked component, so the resolved
+// location is compared against the crate directory on the real filesystem.
+
+export class ImportPathError extends Error {
+  constructor(
+    message: string,
+    readonly importPath: string,
+  ) {
+    super(message);
+    this.name = "ImportPathError";
+  }
+}
+
+/** Realpath of the deepest existing ancestor of `target`, with the remaining
+ * non-existent suffix re-appended — so a symlinked parent directory is still
+ * caught even when the leaf itself does not exist yet. */
+function resolveThroughSymlinks(target: string): string {
+  const suffix: string[] = [];
+  let current = target;
+  for (;;) {
+    try {
+      return resolve(realpathSync(current), ...suffix.reverse());
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolve(current, ...suffix.reverse());
+      suffix.push(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/**
+ * Resolves `importPath` (relative to `crateDir`) and returns the absolute
+ * path, throwing `ImportPathError` if the path would resolve outside the
+ * crate directory — whether by relative traversal or by a symlink that
+ * points out of the crate.
+ *
+ * Never returns a path outside `crateDir`; safe paths resolve to their
+ * absolute location inside it.
+ */
+export function resolveImportPathWithinCrate(crateDir: string, importPath: string): string {
+  if (typeof importPath !== "string" || importPath.trim() === "") {
+    throw new ImportPathError("import path must be a non-empty string", String(importPath));
+  }
+  if (isAbsolute(importPath)) {
+    throw new ImportPathError(
+      `import path must be relative to the crate directory, got an absolute path: ${importPath}`,
+      importPath,
+    );
+  }
+
+  const crateRoot = resolve(crateDir);
+  const resolved = resolve(crateRoot, importPath);
+
+  // Lexical containment: catch `..` segments before touching the filesystem.
+  const lexicalRel = relative(crateRoot, resolved);
+  if (lexicalRel === "" || lexicalRel.startsWith("..") || isAbsolute(lexicalRel)) {
+    throw new ImportPathError(
+      `import path resolves outside the crate directory: ${importPath}`,
+      importPath,
+    );
+  }
+
+  // Symlink containment: a lexically safe path can still leave the crate
+  // through a symlinked component. Compare real paths.
+  const realCrate = resolveThroughSymlinks(crateRoot);
+  const realImport = resolveThroughSymlinks(resolved);
+  const realRel = relative(realCrate, realImport);
+  if (realRel === "" || realRel.startsWith("..") || isAbsolute(realRel)) {
+    throw new ImportPathError(
+      `import path resolves outside the crate directory via symlink: ${importPath}`,
+      importPath,
+    );
+  }
+
+  return realImport;
 }
