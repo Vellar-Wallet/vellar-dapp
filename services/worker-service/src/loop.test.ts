@@ -282,4 +282,140 @@ describe("startWorkerLoop & drain", () => {
     expect(loop.getInFlightCount()).toBe(0);
     expect(store.get("r1")?.status).toBe("verified");
   });
+
+  it("handles termination signal arriving mid-job, allowing in-flight job to finish cleanly without ambiguous state", async () => {
+    const store = createMemoryJobStore();
+    const built = await stubBuildExecutor().build(job(C1));
+    const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
+    store.submit("r-term-mid", job(C1));
+
+    let buildStarted!: () => void;
+    const started = new Promise<void>((r) => (buildStarted = r));
+    let releaseBuild!: () => void;
+    const release = new Promise<void>((r) => (releaseBuild = r));
+    const executor: BuildExecutor = {
+      async build(input) {
+        buildStarted();
+        await release;
+        return stubBuildExecutor().build(input);
+      },
+    };
+
+    const { startWorkerLoop } = await import("./loop");
+    const loop = startWorkerLoop({
+      store,
+      executor,
+      resolver,
+      idleDelayMs: 100,
+      busyDelayMs: 10,
+    });
+
+    await started;
+    expect(loop.getInFlightCount()).toBe(1);
+
+    // Simulate process receiving SIGTERM and initiating graceful drain
+    let drainedCleanly: boolean | null = null;
+    const shutdownPromise = (async () => {
+      drainedCleanly = await loop.drain(5000);
+    })();
+
+    // Verify drain does not preemptively abandon the job while processing
+    const earlyCheck = await Promise.race([
+      shutdownPromise.then(() => "finished"),
+      new Promise((r) => setTimeout(() => r("waiting"), 50)),
+    ]);
+    expect(earlyCheck).toBe("waiting");
+    expect(drainedCleanly).toBe(null);
+
+    // Finish processing
+    releaseBuild();
+    await shutdownPromise;
+
+    expect(drainedCleanly).toBe(true);
+    expect(loop.getInFlightCount()).toBe(0);
+
+    // Confirm the in-flight job was allowed to complete cleanly, not left in ambiguous state
+    const completedJob = store.get("r-term-mid");
+    expect(completedJob?.status).toBe("verified");
+
+    // Confirm loop is completely stopped: new jobs submitted post-shutdown are ignored
+    store.submit("r-post-shutdown", job(C2));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(store.get("r-post-shutdown")?.status).toBe("submitted");
+  });
+
+  it("shuts down immediately and cleanly when a termination signal arrives while loop is idle", async () => {
+    const store = createMemoryJobStore();
+    const executor = stubBuildExecutor();
+    const built = await stubBuildExecutor().build(job(C1));
+    const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
+
+    const { startWorkerLoop } = await import("./loop");
+    const loop = startWorkerLoop({
+      store,
+      executor,
+      resolver,
+      idleDelayMs: 500,
+      busyDelayMs: 10,
+    });
+
+    expect(loop.getInFlightCount()).toBe(0);
+
+    // Simulate termination signal arriving when idle (no active in-flight jobs)
+    const drainStart = Date.now();
+    const drained = await loop.drain(5000);
+    const drainDuration = Date.now() - drainStart;
+
+    // Must resolve immediately without waiting for timeout
+    expect(drained).toBe(true);
+    expect(drainDuration).toBeLessThan(100);
+    expect(loop.getInFlightCount()).toBe(0);
+
+    // Confirm no work will be processed after idle shutdown
+    store.submit("r-idle-after", job(C1));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(store.get("r-idle-after")?.status).toBe("submitted");
+  });
+
+  it("reports uncompleted drain when in-flight job exceeds shutdown timeout", async () => {
+    const store = createMemoryJobStore();
+    const built = await stubBuildExecutor().build(job(C1));
+    const resolver = createStaticArtifactResolver({ [C1]: built.wasmHash });
+    store.submit("r-timeout", job(C1));
+
+    let buildStarted!: () => void;
+    const started = new Promise<void>((r) => (buildStarted = r));
+    let releaseBuild!: () => void;
+    const release = new Promise<void>((r) => (releaseBuild = r));
+
+    const executor: BuildExecutor = {
+      async build(input) {
+        buildStarted();
+        await release;
+        return stubBuildExecutor().build(input);
+      },
+    };
+
+    const { startWorkerLoop } = await import("./loop");
+    const loop = startWorkerLoop({
+      store,
+      executor,
+      resolver,
+      idleDelayMs: 100,
+      busyDelayMs: 10,
+    });
+
+    // Ensure the build has actively started and is in-flight before initiating drain
+    await started;
+    expect(loop.getInFlightCount()).toBe(1);
+
+    // Timeout duration shorter than the build
+    const drained = await loop.drain(50);
+    expect(drained).toBe(false);
+
+    // Cleanup: release hanging build so loop finishes cleanly
+    releaseBuild();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(loop.getInFlightCount()).toBe(0);
+  });
 });
