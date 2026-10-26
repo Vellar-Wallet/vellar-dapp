@@ -1716,6 +1716,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vela-rule-spending-limit-policy"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "smart-wallet-interface",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "vela-spending-limit-policy"
 version = "0.1.0"
 dependencies = [
