@@ -330,6 +330,20 @@
                                       "val": {
                                         "symbol": "commit"
                                       }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
+                                      }
                                     }
                                   ]
                                 },
@@ -364,6 +378,20 @@
                                       },
                                       "val": {
                                         "symbol": "transfer"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
                                       }
                                     }
                                   ]

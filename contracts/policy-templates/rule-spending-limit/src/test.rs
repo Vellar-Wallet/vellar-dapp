@@ -26,7 +26,7 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, String as SorobanString, Symbol, Val, Vec,
 };
 
-use crate::{AmountSource, Config, Contract, ContractClient, SpendRule};
+use crate::{AmountSource, Config, Contract, ContractClient, SpendRule, TextGuard};
 
 // ----- Mock wallet: implements only the view uninstall reads. -----
 
@@ -79,6 +79,8 @@ fn rule(env: &Env, contract: &Address, fn_name: &str, index: u32) -> SpendRule {
         contract: contract.clone(),
         fn_name: Symbol::new(env, fn_name),
         amount: AmountSource::I128Arg(index),
+        payer_arg: None,
+        text_guards: Vec::new(env),
     }
 }
 
@@ -619,8 +621,8 @@ fn uninstall_clears_state_once_removed() {
 // the amount is NOT a typed argument; it is the `amount:` line of a signed
 // commitment text (format built by the gateway's `commitment_message`). The
 // verifier only checks the payer's authorization and moves nothing; the debit
-// happens off-chain at /settle, so the on-chain spend rule is the buyer's only
-// consent-time cap.
+// happens at /settle. Fermah's vault enforces its own cumulative daily cap per
+// buyer; this rule is a secondary per-call ceiling plus shape checks.
 
 fn commitment_text(env: &Env, amount: &str) -> SorobanString {
     let text = std::format!(
@@ -644,6 +646,8 @@ fn fermah_fx(limit: i128) -> Fixture {
                 contract: verifier.clone(),
                 fn_name: Symbol::new(env, "commit"),
                 amount: AmountSource::TextLineArg(1, SorobanString::from_str(env, "amount: ")),
+                payer_arg: None,
+                text_guards: Vec::new(env),
             }],
         )
     })
@@ -768,6 +772,8 @@ fn constructor_rejects_bad_text_rules() {
                 contract: Address::generate(&env),
                 fn_name: Symbol::new(&env, "commit"),
                 amount: AmountSource::TextLineArg(index, SorobanString::from_str(&env, prefix)),
+                payer_arg: None,
+                text_guards: Vec::new(&env),
             }],
         );
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -775,4 +781,504 @@ fn constructor_rejects_bad_text_rules() {
         }));
         assert!(res.is_err(), "index {index} prefix {prefix:?} must be rejected");
     }
+}
+
+// ----- Tightened commit rule: payer arg + text guards -----
+//
+// The full guarded shape for the Fermah verifier, from the spec: the verifier
+// contract and `commit` (the rule pin), the payer argument equal to the wallet,
+// the exact format header on line 1, the network line, a payTo allowlist, and
+// an amount under the cap. Every guard is exercised on its own: the text under
+// test is otherwise valid, so a rejection can only come from the guard named.
+
+const HEADER: &str = "x402 batch-settlement commitment";
+const NETWORK: &str = "stellar:testnet";
+const VAULT: &str = "CC2M46SYPBN3KYOI32JZBOUKIH7WVDILA5V4HDCCYWIZ6CUA7FFHYXXG";
+const VAULT_2: &str = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const EVIL: &str = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+/// The eight-line commitment text with each guarded field overridable.
+fn guarded_text(env: &Env, header: &str, network: &str, pay_to: &str, amount: &str) -> SorobanString {
+    let text = std::format!(
+        "{header}\n\
+         network: {network}\n\
+         asset: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA\n\
+         payTo: {pay_to}\n\
+         amount: {amount}\n\
+         payer: CCPYR3RZF5FLEHMY65JO47XVVAW4OPNFC65AOFUJ3QSBTM2VOVY2UMNY\n\
+         commitment: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n\
+         validUntil: 1790000000"
+    );
+    SorobanString::from_str(env, &text)
+}
+
+fn s(env: &Env, text: &str) -> SorobanString {
+    SorobanString::from_str(env, text)
+}
+
+/// `guards` for the Fermah shape: header, network, and a two-vault allowlist.
+fn fermah_guards(env: &Env) -> Vec<TextGuard> {
+    Vec::from_array(
+        env,
+        [
+            TextGuard::FirstLine(s(env, HEADER)),
+            TextGuard::LineOneOf(s(env, "network: "), Vec::from_array(env, [s(env, NETWORK)])),
+            TextGuard::LineOneOf(
+                s(env, "payTo: "),
+                Vec::from_array(env, [s(env, VAULT), s(env, VAULT_2)]),
+            ),
+        ],
+    )
+}
+
+fn guarded_rule(env: &Env, verifier: &Address, guards: Vec<TextGuard>) -> SpendRule {
+    SpendRule {
+        contract: verifier.clone(),
+        fn_name: Symbol::new(env, "commit"),
+        amount: AmountSource::TextLineArg(1, s(env, "amount: ")),
+        payer_arg: Some(0),
+        text_guards: guards,
+    }
+}
+
+fn guarded_fx(limit: i128) -> Fixture {
+    setup_with_rules(limit, DAY, false, |env, verifier, _| {
+        Vec::from_array(env, [guarded_rule(env, verifier, fermah_guards(env))])
+    })
+}
+
+fn good_text(fx: &Fixture, amount: &str) -> SorobanString {
+    guarded_text(&fx.env, HEADER, NETWORK, VAULT, amount)
+}
+
+fn assert_rejected(fx: &Fixture, text: SorobanString, why: &str) {
+    assert!(!try_run(fx, &verifier_commit(fx, text)), "{why}");
+}
+
+#[test]
+fn guarded_commit_happy_path_is_allowed() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    run(&fx, &verifier_commit(&fx, good_text(&fx, "50000")));
+}
+
+#[test]
+fn guarded_commit_allows_every_listed_pay_to() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    for vault in [VAULT, VAULT_2] {
+        let text = guarded_text(&fx.env, HEADER, NETWORK, vault, "1");
+        run(&fx, &verifier_commit(&fx, text));
+    }
+}
+
+#[test]
+fn guarded_commit_still_enforces_the_cap() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    run(&fx, &verifier_commit(&fx, good_text(&fx, "1000000")));
+    assert_rejected(&fx, good_text(&fx, "1"), "cumulative cap still applies when guards pass");
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    assert_rejected(&fx, good_text(&fx, "1000001"), "over-cap amount");
+}
+
+#[test]
+fn guard_rejection_does_not_consume_allowance() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let evil = guarded_text(&fx.env, HEADER, NETWORK, EVIL, "900000");
+    assert_rejected(&fx, evil, "payTo outside allowlist");
+    run(&fx, &verifier_commit(&fx, good_text(&fx, "1000000")));
+}
+
+// -- payer argument --
+
+#[test]
+fn payer_arg_must_equal_the_wallet() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let other = Address::generate(&fx.env);
+    let args: Vec<Val> = (other, good_text(&fx, "1")).into_val(&fx.env);
+    let ctx = Vec::from_array(&fx.env, [call(&fx, &fx.verifier, "commit", args)]);
+    assert!(!try_run(&fx, &ctx), "another account as payer must be rejected");
+}
+
+#[test]
+fn payer_arg_missing_or_wrong_type_is_rejected() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    // Not an Address at index 0.
+    let args: Vec<Val> = (5_i128, good_text(&fx, "1")).into_val(&fx.env);
+    let ctx = Vec::from_array(&fx.env, [call(&fx, &fx.verifier, "commit", args)]);
+    assert!(!try_run(&fx, &ctx), "non-address payer");
+    // No arguments at all.
+    let ctx = Vec::from_array(&fx.env, [call(&fx, &fx.verifier, "commit", Vec::new(&fx.env))]);
+    assert!(!try_run(&fx, &ctx), "missing payer");
+}
+
+#[test]
+fn payer_arg_is_checked_on_i128_rules_too() {
+    // A transfer rule with `from` (index 0) pinned to the wallet.
+    let fx = setup_with_rules(CAP, DAY, false, |env, _, token| {
+        Vec::from_array(
+            env,
+            [SpendRule {
+                payer_arg: Some(0),
+                ..rule(env, token, "transfer", 2)
+            }],
+        )
+    });
+    install(&fx);
+    run(&fx, &transfer_ctx(&fx, 1));
+    let other = Address::generate(&fx.env);
+    let dest = Address::generate(&fx.env);
+    let args: Vec<Val> = (other, dest, 1_i128).into_val(&fx.env);
+    let ctx = Vec::from_array(&fx.env, [call(&fx, &fx.token, "transfer", args)]);
+    assert!(!try_run(&fx, &ctx), "transfer from another account");
+}
+
+// -- FirstLine --
+
+#[test]
+fn first_line_must_match_exactly() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    for bad in [
+        "x402 batch-settlement commitment ",
+        " x402 batch-settlement commitment",
+        "X402 batch-settlement commitment",
+        "x402 batch-settlement commitment v2",
+        "x402 batch-settlement",
+        "",
+    ] {
+        let text = guarded_text(&fx.env, bad, NETWORK, VAULT, "1");
+        assert_rejected(&fx, text, "wrong first line");
+    }
+}
+
+#[test]
+fn header_that_is_not_the_first_line_is_rejected() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    // Valid header present, but on line 2.
+    let text = std::format!(
+        "preamble\n{HEADER}\nnetwork: {NETWORK}\npayTo: {VAULT}\namount: 1"
+    );
+    assert_rejected(&fx, s(&fx.env, &text), "header on line 2");
+}
+
+// -- LineOneOf: network --
+
+#[test]
+fn network_must_match_exactly() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    for bad in [
+        "stellar:pubnet",
+        "stellar:testnet2",
+        "stellar:testnet ",
+        " stellar:testnet",
+        "Stellar:testnet",
+        "",
+    ] {
+        let text = guarded_text(&fx.env, HEADER, bad, VAULT, "1");
+        assert_rejected(&fx, text, "wrong network");
+    }
+}
+
+#[test]
+fn missing_network_line_is_rejected() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let text = std::format!("{HEADER}\npayTo: {VAULT}\namount: 1");
+    assert_rejected(&fx, s(&fx.env, &text), "no network line");
+}
+
+#[test]
+fn lookalike_network_line_does_not_count() {
+    // `xnetwork: stellar:testnet` does not start with the guard prefix.
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let text = std::format!("{HEADER}\nxnetwork: {NETWORK}\npayTo: {VAULT}\namount: 1");
+    assert_rejected(&fx, s(&fx.env, &text), "lookalike network line");
+}
+
+#[test]
+fn duplicate_network_line_is_rejected_in_either_order() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let a = std::format!("{HEADER}\nnetwork: {NETWORK}\nnetwork: stellar:pubnet\npayTo: {VAULT}\namount: 1");
+    let b = std::format!("{HEADER}\nnetwork: stellar:pubnet\nnetwork: {NETWORK}\npayTo: {VAULT}\namount: 1");
+    assert_rejected(&fx, s(&fx.env, &a), "good then bad network");
+    assert_rejected(&fx, s(&fx.env, &b), "bad then good network");
+}
+
+// -- LineOneOf: payTo allowlist --
+
+#[test]
+fn pay_to_outside_allowlist_is_rejected() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    for bad in [EVIL, "", "cc2m46sypbn3kyoi32jzbouKih7wvdila5v4hdccywiz6cua7ffhyxxg"] {
+        let text = guarded_text(&fx.env, HEADER, NETWORK, bad, "1");
+        assert_rejected(&fx, text, "payTo not allowlisted");
+    }
+}
+
+#[test]
+fn pay_to_prefix_match_alone_is_not_enough() {
+    // An allowlisted address followed by more characters is a different value.
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let text = guarded_text(&fx.env, HEADER, NETWORK, &std::format!("{VAULT}X"), "1");
+    assert_rejected(&fx, text, "allowlisted address with a suffix");
+}
+
+#[test]
+fn missing_pay_to_line_is_rejected() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let text = std::format!("{HEADER}\nnetwork: {NETWORK}\namount: 1");
+    assert_rejected(&fx, s(&fx.env, &text), "no payTo line");
+}
+
+#[test]
+fn duplicate_pay_to_line_is_rejected_in_either_order() {
+    let fx = guarded_fx(CAP);
+    install(&fx);
+    let a = std::format!("{HEADER}\nnetwork: {NETWORK}\npayTo: {VAULT}\npayTo: {EVIL}\namount: 1");
+    let b = std::format!("{HEADER}\nnetwork: {NETWORK}\npayTo: {EVIL}\npayTo: {VAULT}\namount: 1");
+    assert_rejected(&fx, s(&fx.env, &a), "good then evil payTo");
+    assert_rejected(&fx, s(&fx.env, &b), "evil then good payTo");
+}
+
+#[test]
+fn guards_and_amount_read_the_same_text() {
+    // Valid guarded lines plus a second amount line: ambiguous, rejected.
+    let fx = guarded_fx(i128::MAX);
+    install(&fx);
+    let text = std::format!(
+        "{HEADER}\nnetwork: {NETWORK}\npayTo: {VAULT}\namount: 1\namount: 99999999"
+    );
+    assert_rejected(&fx, s(&fx.env, &text), "two amount lines");
+}
+
+#[test]
+fn payer_text_line_can_be_pinned_to_the_wallet() {
+    // No new code path: `payer: ` is just another LineOneOf, configured with
+    // the wallet's strkey so the signed text and the typed argument agree. The
+    // wallet address only exists after setup, so the wallet is created first
+    // and the policy deployed against it.
+    let env = Env::default();
+    env.mock_all_auths();
+    let wallet = env.register(MockWallet, (false,));
+    let mut buf = [0u8; 56];
+    wallet.to_string().copy_into_slice(&mut buf);
+    let wallet_strkey = std::string::String::from_utf8(buf.to_vec()).unwrap();
+
+    let verifier = Address::generate(&env);
+    let mut guards = fermah_guards(&env);
+    guards.push_back(TextGuard::LineOneOf(
+        s(&env, "payer: "),
+        Vec::from_array(&env, [s(&env, &wallet_strkey)]),
+    ));
+    let rules = Vec::from_array(&env, [guarded_rule(&env, &verifier, guards)]);
+    let policy_id = env.register(Contract, (wallet.clone(), rules, CAP, DAY));
+    let fx = Fixture {
+        env: env.clone(),
+        policy: ContractClient::new(&env, &policy_id),
+        wallet,
+        verifier,
+        token: Address::generate(&env),
+    };
+    install(&fx);
+
+    let line = |payer: &str| {
+        s(&env, &std::format!(
+            "{HEADER}\nnetwork: {NETWORK}\npayTo: {VAULT}\namount: 1\npayer: {payer}"
+        ))
+    };
+    run(&fx, &verifier_commit(&fx, line(&wallet_strkey)));
+    assert_rejected(&fx, line(EVIL), "payer line is another account");
+}
+
+// -- Constructor validation of the new fields --
+
+/// Assert that deploying with the rule built by `build` is rejected.
+fn assert_ctor_rejects(why: &str, build: impl FnOnce(&Env, &Address) -> SpendRule) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let wallet = env.register(MockWallet, (false,));
+    let rules = Vec::from_array(&env, [build(&env, &Address::generate(&env))]);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.register(Contract, (wallet, rules, CAP, DAY))
+    }));
+    assert!(res.is_err(), "{why}");
+}
+
+fn assert_ctor_accepts(why: &str, build: impl FnOnce(&Env, &Address) -> SpendRule) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let wallet = env.register(MockWallet, (false,));
+    let rules = Vec::from_array(&env, [build(&env, &Address::generate(&env))]);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.register(Contract, (wallet, rules, CAP, DAY))
+    }));
+    assert!(res.is_ok(), "{why}");
+}
+
+fn with_guards(env: &Env, verifier: &Address, guards: &[TextGuard]) -> SpendRule {
+    guarded_rule(env, verifier, Vec::from_slice(env, guards))
+}
+
+#[test]
+fn constructor_stores_guards_and_payer_arg() {
+    let fx = guarded_fx(CAP);
+    let rules = fx.policy.config().rules;
+    let stored = rules.get(0).unwrap();
+    assert_eq!(stored.payer_arg, Some(0));
+    assert_eq!(stored.text_guards, fermah_guards(&fx.env));
+}
+
+#[test]
+fn constructor_rejects_guards_on_an_i128_rule() {
+    assert_ctor_rejects("guards need a text amount", |env, c| SpendRule {
+        text_guards: fermah_guards(env),
+        ..rule(env, c, "commit", 2)
+    });
+}
+
+#[test]
+fn constructor_rejects_payer_arg_over_max() {
+    assert_ctor_rejects("payer index 16", |env, c| SpendRule {
+        payer_arg: Some(16),
+        ..rule(env, c, "commit", 2)
+    });
+    assert_ctor_accepts("payer index 15", |env, c| SpendRule {
+        payer_arg: Some(15),
+        ..rule(env, c, "commit", 2)
+    });
+}
+
+#[test]
+fn constructor_rejects_malformed_guards() {
+    assert_ctor_rejects("empty FirstLine", |env, c| {
+        with_guards(env, c, &[TextGuard::FirstLine(s(env, ""))])
+    });
+    assert_ctor_rejects("FirstLine with a line break", |env, c| {
+        with_guards(env, c, &[TextGuard::FirstLine(s(env, "a\nb"))])
+    });
+    assert_ctor_rejects("FirstLine over 128 bytes", |env, c| {
+        with_guards(env, c, &[TextGuard::FirstLine(s(env, &"h".repeat(129)))])
+    });
+    assert_ctor_rejects("two FirstLine guards", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::FirstLine(s(env, "a")), TextGuard::FirstLine(s(env, "b"))],
+        )
+    });
+    assert_ctor_rejects("empty prefix", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::LineOneOf(s(env, ""), Vec::from_array(env, [s(env, "v")]))],
+        )
+    });
+    assert_ctor_rejects("prefix with a line break", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::LineOneOf(s(env, "a\nb"), Vec::from_array(env, [s(env, "v")]))],
+        )
+    });
+    assert_ctor_rejects("prefix over 32 bytes", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::LineOneOf(s(env, &"p".repeat(33)), Vec::from_array(env, [s(env, "v")]))],
+        )
+    });
+    assert_ctor_rejects("no allowed values", |env, c| {
+        with_guards(env, c, &[TextGuard::LineOneOf(s(env, "k: "), Vec::new(env))])
+    });
+    assert_ctor_rejects("empty allowed value", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::LineOneOf(s(env, "k: "), Vec::from_array(env, [s(env, "")]))],
+        )
+    });
+    assert_ctor_rejects("allowed value with a line break", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::LineOneOf(s(env, "k: "), Vec::from_array(env, [s(env, "a\nb")]))],
+        )
+    });
+    assert_ctor_rejects("allowed value over 128 bytes", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[TextGuard::LineOneOf(
+                s(env, "k: "),
+                Vec::from_array(env, [s(env, &"v".repeat(129))]),
+            )],
+        )
+    });
+    assert_ctor_rejects("repeated prefix", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[
+                TextGuard::LineOneOf(s(env, "k: "), Vec::from_array(env, [s(env, "a")])),
+                TextGuard::LineOneOf(s(env, "k: "), Vec::from_array(env, [s(env, "b")])),
+            ],
+        )
+    });
+}
+
+#[test]
+fn constructor_enforces_guard_count_and_value_count_bounds() {
+    // 8 guards (one FirstLine + 7 distinct prefixes) is the maximum.
+    let build = |env: &Env, c: &Address, n: u32| {
+        let mut guards = Vec::from_array(env, [TextGuard::FirstLine(s(env, "h"))]);
+        for i in 0..n - 1 {
+            guards.push_back(TextGuard::LineOneOf(
+                s(env, &std::format!("k{i}: ")),
+                Vec::from_array(env, [s(env, "v")]),
+            ));
+        }
+        guarded_rule(env, c, guards)
+    };
+    assert_ctor_accepts("8 guards", |env, c| build(env, c, 8));
+    assert_ctor_rejects("9 guards", |env, c| build(env, c, 9));
+
+    let values = |env: &Env, c: &Address, n: u32| {
+        let mut vals = Vec::new(env);
+        for i in 0..n {
+            vals.push_back(s(env, &std::format!("v{i}")));
+        }
+        with_guards(env, c, &[TextGuard::LineOneOf(s(env, "k: "), vals)])
+    };
+    assert_ctor_accepts("8 values", |env, c| values(env, c, 8));
+    assert_ctor_rejects("9 values", |env, c| values(env, c, 9));
+}
+
+#[test]
+fn constructor_accepts_max_length_guard_strings() {
+    assert_ctor_accepts("128-byte first line and value, 32-byte prefix", |env, c| {
+        with_guards(
+            env,
+            c,
+            &[
+                TextGuard::FirstLine(s(env, &"h".repeat(128))),
+                TextGuard::LineOneOf(
+                    s(env, &"p".repeat(32)),
+                    Vec::from_array(env, [s(env, &"v".repeat(128))]),
+                ),
+            ],
+        )
+    });
 }

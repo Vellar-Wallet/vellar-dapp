@@ -39,14 +39,37 @@
 //! and the verifier `commit`). Mixed-unit rules would make the cap meaningless;
 //! deploy a separate instance per unit instead.
 //!
-//! ## What a rule cannot see
+//! ## Amount sources
 //!
-//! A rule trusts the amount it extracts and does not inspect `payTo` or any
-//! other argument. `I128Arg` reads a typed i128 argument. `TextLineArg` reads a
-//! decimal integer out of one line of a String argument, for calls (such as an
-//! x402 verifier's `commit(payer, commitment_text)`) that carry the amount only
-//! inside a signed text. Any other encoding needs a new `AmountSource` variant
-//! (a new wasm), which is why the enum is the extension point.
+//! `I128Arg` reads a typed i128 argument. `TextLineArg` reads a decimal integer
+//! out of one line of a String argument, for calls (such as an x402 verifier's
+//! `commit(payer, commitment_text)`) that carry the amount only inside a signed
+//! text. Any other encoding needs a new `AmountSource` variant (a new wasm),
+//! which is why the enum is the extension point.
+//!
+//! ## Tightening a rule (all optional, all fail closed)
+//!
+//! A bare amount rule trusts whatever else the call carries. Two optional
+//! fields narrow what a rule accepts, so the cap only covers the exact spend
+//! shape the deployer intended:
+//!
+//!   * `payer_arg`: the argument at this index must be an Address equal to the
+//!     wallet itself (the `payer` of `commit`, the `from` of `transfer`).
+//!   * `text_guards` (only on `TextLineArg` rules), checked against the same
+//!     text the amount is read from:
+//!       - `FirstLine(s)`: the first line must equal `s` exactly (the format
+//!         header, for example `x402 batch-settlement commitment`);
+//!       - `LineOneOf(prefix, values)`: exactly one line may start with
+//!         `prefix`, and the rest of that line must equal one of `values`
+//!         (for example `network: ` -> `stellar:testnet`, or `payTo: ` -> an
+//!         allowlist of vault addresses).
+//!
+//! The guards read the SAME text the amount is read from, so a signed text
+//! cannot pass the guards with one set of lines and the amount with another:
+//! a duplicated guarded line fails the whole call.
+//!
+//! What a rule still cannot see: any argument or text line that no guard
+//! names. Guard every line whose value matters.
 //!
 //! ## Authorizations that are never submitted
 //!
@@ -55,6 +78,12 @@
 //! policy but its storage writes are discarded, so the cumulative window cannot
 //! accumulate across such calls: for them the cap acts as a PER-CALL ceiling.
 //! The cumulative guarantee holds only for spends that actually land on-chain.
+//!
+//! For Fermah specifically this is a secondary layer, not the only cap: the
+//! Fermah vault enforces a real cumulative daily cap per buyer, on-chain and
+//! at `/settle` (an `above_spending_limit` refusal), set by the buyer at
+//! deposit. This policy adds a per-call ceiling and, with the guards above,
+//! pins what a commit may be (verifier, wallet as payer, network, payee).
 //!
 //! ## Everything else (as in `token-spending-limit`)
 //!
@@ -111,6 +140,12 @@ const MAX_ARG_INDEX: u32 = 15;
 const MAX_TEXT_LEN: usize = 1024;
 const MAX_PREFIX_LEN: usize = 32;
 
+/// Bounds for `TextGuard`s. Guard strings are copied into fixed buffers, so
+/// they are length-capped (a Stellar strkey is 56 bytes; 128 leaves room).
+const MAX_GUARDS: u32 = 8;
+const MAX_GUARD_VALUES: u32 = 8;
+const MAX_GUARD_LEN: usize = 128;
+
 /// TTL renewal parameters (in ledgers at the historical 5s close time): bump to
 /// ~30 days whenever remaining TTL drops below ~1 week.
 const RENEW_THRESHOLD: u32 = 60 * 60 * 24 / 5 * 7;
@@ -143,6 +178,18 @@ pub enum AmountSource {
     TextLineArg(u32, SorobanString),
 }
 
+/// An exact-match requirement on the text a `TextLineArg` rule reads its
+/// amount from. A violated guard fails the whole authorization.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TextGuard {
+    /// The first line (everything before the first `\n`) equals this exactly.
+    FirstLine(SorobanString),
+    /// Exactly one line starts with `.0`, and the rest of that line equals one
+    /// of the values in `.1`.
+    LineOneOf(SorobanString, Vec<SorobanString>),
+}
+
 /// One recognized spend shape: calling `fn_name` on `contract` debits the
 /// wallet by the amount found per `amount`.
 #[contracttype]
@@ -151,6 +198,12 @@ pub struct SpendRule {
     pub contract: Address,
     pub fn_name: Symbol,
     pub amount: AmountSource,
+    /// If set, the argument at this index must be an Address equal to the
+    /// wallet itself (the payer / `from`). `None` skips the check.
+    pub payer_arg: Option<u32>,
+    /// Extra requirements on the text argument. Must be empty unless `amount`
+    /// is `TextLineArg`.
+    pub text_guards: Vec<TextGuard>,
 }
 
 /// Immutable configuration set at deploy time.
@@ -208,24 +261,26 @@ impl Contract {
             if rule.contract == wallet {
                 panic_with_error!(&env, PolicyError::InvalidConfig);
             }
-            match rule.amount {
+            match &rule.amount {
                 AmountSource::I128Arg(index) => {
-                    if index > MAX_ARG_INDEX {
+                    if *index > MAX_ARG_INDEX {
                         panic_with_error!(&env, PolicyError::InvalidConfig);
                     }
                 }
                 AmountSource::TextLineArg(index, prefix) => {
-                    let len = prefix.len() as usize;
-                    if index > MAX_ARG_INDEX || len == 0 || len > MAX_PREFIX_LEN {
+                    if *index > MAX_ARG_INDEX || !is_valid_line_text::<MAX_PREFIX_LEN>(prefix) {
                         panic_with_error!(&env, PolicyError::InvalidConfig);
                     }
-                    // A prefix containing a line break could never match a line.
-                    let mut buf = [0u8; MAX_PREFIX_LEN];
-                    prefix.copy_into_slice(&mut buf[..len]);
-                    if buf[..len].contains(&b'\n') {
+                    if !valid_text_guards(&rule.text_guards) {
                         panic_with_error!(&env, PolicyError::InvalidConfig);
                     }
                 }
+            }
+            if matches!(rule.amount, AmountSource::I128Arg(_)) && !rule.text_guards.is_empty() {
+                panic_with_error!(&env, PolicyError::InvalidConfig);
+            }
+            if matches!(rule.payer_arg, Some(index) if index > MAX_ARG_INDEX) {
+                panic_with_error!(&env, PolicyError::InvalidConfig);
             }
             for earlier in rules.iter().take(i) {
                 if earlier.contract == rule.contract && earlier.fn_name == rule.fn_name {
@@ -346,8 +401,18 @@ impl PolicyInterface for Contract {
                         None => panic_with_error!(&env, PolicyError::NotAllowed),
                     };
 
+                    // The payer argument must be the wallet itself.
+                    if let Some(index) = rule.payer_arg {
+                        let payer = args
+                            .get(index)
+                            .and_then(|v| Address::try_from_val(&env, &v).ok());
+                        if payer != Some(source.clone()) {
+                            panic_with_error!(&env, PolicyError::NotAllowed);
+                        }
+                    }
+
                     // Fail closed if the amount argument is missing or not an
-                    // i128.
+                    // i128 (or, for text rules, a guard or the amount line fails).
                     let amount = match rule.amount {
                         AmountSource::I128Arg(index) => {
                             args.get(index).and_then(|v| i128::try_from_val(&env, &v).ok())
@@ -355,7 +420,7 @@ impl PolicyInterface for Contract {
                         AmountSource::TextLineArg(index, prefix) => args
                             .get(index)
                             .and_then(|v| SorobanString::try_from_val(&env, &v).ok())
-                            .and_then(|text| amount_from_text_line(&text, &prefix)),
+                            .and_then(|text| amount_from_text(&text, &prefix, &rule.text_guards)),
                     };
                     let amount = match amount {
                         Some(amount) => amount,
@@ -417,32 +482,130 @@ impl PolicyInterface for Contract {
     }
 }
 
-/// Parse the amount from the single line of `text` that starts with `prefix`.
-/// `None` (fail closed) if the text is too long, the prefix is absent or appears
-/// on more than one line, or what follows it is not a canonical non-negative
-/// decimal integer filling the rest of the line.
-fn amount_from_text_line(text: &SorobanString, prefix: &SorobanString) -> Option<i128> {
-    let text_len = text.len() as usize;
-    let prefix_len = prefix.len() as usize;
-    if text_len > MAX_TEXT_LEN || prefix_len == 0 || prefix_len > MAX_PREFIX_LEN {
-        return None;
-    }
-    let mut text_buf = [0u8; MAX_TEXT_LEN];
-    let mut prefix_buf = [0u8; MAX_PREFIX_LEN];
-    text.copy_into_slice(&mut text_buf[..text_len]);
-    prefix.copy_into_slice(&mut prefix_buf[..prefix_len]);
-    let (text, prefix) = (&text_buf[..text_len], &prefix_buf[..prefix_len]);
+/// A fixed-capacity copy of a Soroban string, for byte comparisons in no_std.
+struct Buf<const N: usize> {
+    bytes: [u8; N],
+    len: usize,
+}
 
+impl<const N: usize> Buf<N> {
+    /// `None` if the string does not fit.
+    fn load(s: &SorobanString) -> Option<Self> {
+        let len = s.len() as usize;
+        if len > N {
+            return None;
+        }
+        let mut bytes = [0u8; N];
+        s.copy_into_slice(&mut bytes[..len]);
+        Some(Buf { bytes, len })
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+/// Non-empty, fits in `N` bytes, and contains no line break (so it can match
+/// within a single line).
+fn is_valid_line_text<const N: usize>(s: &SorobanString) -> bool {
+    match Buf::<N>::load(s) {
+        Some(buf) => !buf.as_slice().is_empty() && !buf.as_slice().contains(&b'\n'),
+        None => false,
+    }
+}
+
+/// Constructor check for a rule's guards: bounded, well-formed, and not
+/// self-contradictory (at most one `FirstLine`, no repeated `LineOneOf` prefix).
+fn valid_text_guards(guards: &Vec<TextGuard>) -> bool {
+    if guards.len() > MAX_GUARDS {
+        return false;
+    }
+    let mut first_lines = 0u32;
+    for (i, guard) in guards.iter().enumerate() {
+        match guard {
+            TextGuard::FirstLine(expected) => {
+                first_lines += 1;
+                if first_lines > 1 || !is_valid_line_text::<MAX_GUARD_LEN>(&expected) {
+                    return false;
+                }
+            }
+            TextGuard::LineOneOf(prefix, values) => {
+                if !is_valid_line_text::<MAX_PREFIX_LEN>(&prefix)
+                    || values.is_empty()
+                    || values.len() > MAX_GUARD_VALUES
+                    || !values.iter().all(|v| is_valid_line_text::<MAX_GUARD_LEN>(&v))
+                {
+                    return false;
+                }
+                for earlier in guards.iter().take(i) {
+                    if matches!(earlier, TextGuard::LineOneOf(p, _) if p == prefix) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The remainder of the single line of `text` that starts with `prefix`. `None`
+/// if no line has the prefix or more than one does (ambiguous: never pick one).
+fn unique_line_value<'a>(text: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
     let mut found: Option<&[u8]> = None;
     for line in text.split(|b| *b == b'\n') {
         if line.starts_with(prefix) {
             if found.is_some() {
-                return None; // ambiguous: the prefix appears on two lines
+                return None;
             }
             found = Some(&line[prefix.len()..]);
         }
     }
-    parse_canonical_i128(found?)
+    found
+}
+
+/// Whether `text` satisfies one guard. Fails closed on oversized guard config.
+fn guard_holds(text: &[u8], guard: &TextGuard) -> bool {
+    match guard {
+        TextGuard::FirstLine(expected) => match Buf::<MAX_GUARD_LEN>::load(expected) {
+            Some(expected) => text.split(|b| *b == b'\n').next() == Some(expected.as_slice()),
+            None => false,
+        },
+        TextGuard::LineOneOf(prefix, values) => {
+            let prefix = match Buf::<MAX_PREFIX_LEN>::load(prefix) {
+                Some(prefix) => prefix,
+                None => return false,
+            };
+            let value = match unique_line_value(text, prefix.as_slice()) {
+                Some(value) => value,
+                None => return false,
+            };
+            values.iter().any(|candidate| {
+                Buf::<MAX_GUARD_LEN>::load(&candidate)
+                    .is_some_and(|candidate| candidate.as_slice() == value)
+            })
+        }
+    }
+}
+
+/// Check every guard against `text`, then parse the amount from the single line
+/// that starts with `prefix`. `None` (fail closed) if the text is too long, a
+/// guard fails, the prefix is absent or on more than one line, or what follows
+/// it is not a canonical non-negative decimal integer filling the line.
+fn amount_from_text(
+    text: &SorobanString,
+    prefix: &SorobanString,
+    guards: &Vec<TextGuard>,
+) -> Option<i128> {
+    let text = Buf::<MAX_TEXT_LEN>::load(text)?;
+    let prefix = Buf::<MAX_PREFIX_LEN>::load(prefix)?;
+    if prefix.as_slice().is_empty() {
+        return None;
+    }
+    let text = text.as_slice();
+    if !guards.iter().all(|guard| guard_holds(text, &guard)) {
+        return None;
+    }
+    parse_canonical_i128(unique_line_value(text, prefix.as_slice())?)
 }
 
 /// Digits only, non-empty, no leading zero (except the single digit `0`), and

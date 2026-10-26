@@ -122,6 +122,20 @@
                                       "val": {
                                         "symbol": "f0"
                                       }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
+                                      }
                                     }
                                   ]
                                 },
@@ -156,6 +170,20 @@
                                       },
                                       "val": {
                                         "symbol": "f1"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
                                       }
                                     }
                                   ]
@@ -192,6 +220,20 @@
                                       "val": {
                                         "symbol": "f2"
                                       }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
+                                      }
                                     }
                                   ]
                                 },
@@ -226,6 +268,20 @@
                                       },
                                       "val": {
                                         "symbol": "f3"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
                                       }
                                     }
                                   ]
@@ -262,6 +318,20 @@
                                       "val": {
                                         "symbol": "f4"
                                       }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
+                                      }
                                     }
                                   ]
                                 },
@@ -296,6 +366,20 @@
                                       },
                                       "val": {
                                         "symbol": "f5"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
                                       }
                                     }
                                   ]
@@ -332,6 +416,20 @@
                                       "val": {
                                         "symbol": "f6"
                                       }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
+                                      }
                                     }
                                   ]
                                 },
@@ -366,6 +464,20 @@
                                       },
                                       "val": {
                                         "symbol": "f7"
+                                      }
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "payer_arg"
+                                      },
+                                      "val": "void"
+                                    },
+                                    {
+                                      "key": {
+                                        "symbol": "text_guards"
+                                      },
+                                      "val": {
+                                        "vec": []
                                       }
                                     }
                                   ]
