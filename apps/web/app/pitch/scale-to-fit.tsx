@@ -58,11 +58,7 @@ export function ScaleToFit({ children }: { children: React.ReactNode }) {
             PDF export, not just the on-screen presenter view. One instance,
             positioned over the fixed stage, appears identically on every
             slide instead of six duplicated <img> tags in slides.tsx. */}
-        <img
-          src="/logo-mark.png"
-          alt="Vellar"
-          className="deck-corner-logo"
-        />
+        <img src="/logo-mark.png" alt="Vellar" className="deck-corner-logo" />
       </div>
     </div>
   );

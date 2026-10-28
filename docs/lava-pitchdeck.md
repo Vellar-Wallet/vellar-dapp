@@ -410,20 +410,20 @@ it before.
 Not a slide. Reference material, so nothing on a page has to carry a citation
 and so every figure can be re-checked before the meeting.
 
-| Claim on slide      | Value                                                                                                             | Verify it                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| SDK downloads       | 1,166 all-time, 627 in the last 30 days                                                                           | `curl https://api.npmjs.org/downloads/range/2025-01-01:2026-09-05/vellar-sdk`          |
-| Facilitator tests   | 613 passing, 4 skipped, typecheck clean                                                                           | `npm test` in `vellar-facilitator`                                                     |
-| Concurrency         | 50/50 settled, 0 `txBadSeq`, p95 11,956 ms; control arm 1/50 with 48 `txBadSeq`                                   | `load-test-results-2026-08-31T11-15-47-630Z.json`, commit `6f5de85`                    |
+| Claim on slide      | Value                                                                                                             | Verify it                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| SDK downloads       | 1,166 all-time, 627 in the last 30 days                                                                           | `curl https://api.npmjs.org/downloads/range/2025-01-01:2026-09-05/vellar-sdk`                       |
+| Facilitator tests   | 613 passing, 4 skipped, typecheck clean                                                                           | `npm test` in `vellar-facilitator`                                                                  |
+| Concurrency         | 50/50 settled, 0 `txBadSeq`, p95 11,956 ms; control arm 1/50 with 48 `txBadSeq`                                   | `load-test-results-2026-08-31T11-15-47-630Z.json`, commit `6f5de85`                                 |
 | Live metrics        | 11 named `vellar_*` metrics                                                                                       | `curl -s https://vellar-facilitator-production.up.railway.app/metrics \| grep -c '^# HELP vellar_'` |
 | Ecosystem totals    | 7,725 payments, 557 buyers, 525 sellers                                                                           | `curl https://vellar-explorer-production.up.railway.app/stats`                                      |
-| Vellar's share      | 348 of 7,725 = 4.5%                                                                                               | same endpoint, `facilitatorBreakdown`                                                  |
+| Vellar's share      | 348 of 7,725 = 4.5%                                                                                               | same endpoint, `facilitatorBreakdown`                                                               |
 | Catalog size        | 12 live resources                                                                                                 | `curl https://vellar-facilitator-production.up.railway.app/health`                                  |
-| Channel pool        | 50 channels, all available                                                                                        | same endpoint, `channelPool`                                                           |
-| VS Code extension   | v0.2.3 published, 2 installs, 160 downloads                                                                       | marketplace `extensionquery` API for `VellarWallet.vellar-x402`                        |
-| WebMCP              | 6 tools, 3 core + 3 generated from the catalog                                                                    | `vellar-webmcp.onrender.com`                                                           |
-| Fee-ceiling defect  | ~139,500 stroops for a policy-governed payment vs a 50,000 default ceiling; `MAX_TX_FEE_STROOPS` ships at 500,000 | `docs/decision-fee-thresholds.md` in the facilitator repo                              |
-| Credential-type gap | passkey-kit 0.14 cannot emit type-1 credentials; deployed facilitators reject type-2                              | facilitator `technical-doc.md` §2                                                      |
+| Channel pool        | 50 channels, all available                                                                                        | same endpoint, `channelPool`                                                                        |
+| VS Code extension   | v0.2.3 published, 2 installs, 160 downloads                                                                       | marketplace `extensionquery` API for `VellarWallet.vellar-x402`                                     |
+| WebMCP              | 6 tools, 3 core + 3 generated from the catalog                                                                    | `vellar-webmcp.onrender.com`                                                                        |
+| Fee-ceiling defect  | ~139,500 stroops for a policy-governed payment vs a 50,000 default ceiling; `MAX_TX_FEE_STROOPS` ships at 500,000 | `docs/decision-fee-thresholds.md` in the facilitator repo                                           |
+| Credential-type gap | passkey-kit 0.14 cannot emit type-1 credentials; deployed facilitators reject type-2                              | facilitator `technical-doc.md` §2                                                                   |
 
 **What changed since the Oakvale deck, and why this deck uses the new numbers.**
 SDK downloads moved 1,110 → 1,166. Facilitator tests moved 514 → 613, which

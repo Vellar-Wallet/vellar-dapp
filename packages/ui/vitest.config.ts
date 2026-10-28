@@ -1,8 +1,9 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  esbuild: {
-    jsx: "automatic",
+  // Vite 8 transforms with oxc; the old `esbuild.jsx` key is ignored there.
+  oxc: {
+    jsx: { runtime: "automatic" },
   },
   test: {
     environment: "jsdom",
