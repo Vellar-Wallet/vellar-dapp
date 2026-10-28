@@ -6,12 +6,15 @@ settings:
 
 overrides:
   sac-sdk>@stellar/stellar-sdk: ^16.0.1
-  axios@>=1.0.0 <1.18.0: '>=1.18.1'
-  fast-uri: '>=4.1.3'
+  axios@<1.20.0: '>=1.20.0'
+  follow-redirects@<1.16.1: '>=1.16.1'
+  source-map-js@<1.2.2: '>=1.2.2'
+  zod@>=4.0.0 <4.6.6: '>=4.6.6 <5'
+  fast-uri: '>=4.2.3'
   shell-quote@<=1.8.4: '>=1.9.0'
   sharp@<0.35.0: '>=0.35.0'
   find-my-way@<9.6.1: '>=9.6.1'
-  undici@>=7.0.0 <7.29.0: '>=7.29.0 <8'
+  undici@>=7.0.0 <7.30.1: '>=7.30.1 <8'
   tmp@<0.2.6: '>=0.2.6'
   adm-zip@<0.6.1: '>=0.6.1'
   brace-expansion@<1.1.18: '>=1.1.18'
@@ -19,7 +22,7 @@ overrides:
   browserslist@<4.28.7: '>=4.28.7'
   esbuild@<0.28.1: '>=0.28.1'
   uuid@<11.1.1: '>=11.1.1'
-  toml@<4.2.0: '>=4.2.0'
+  toml@<5.0.1: '>=5.0.1'
   smol-toml@<=1.7.0: '>=1.7.1'
 
 packageExtensionsChecksum: sha256-7EyWhva5Lcamo6pe18OzfUc27A7xbWt39+G/ofluF9k=
@@ -71,8 +74,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2(@stellar/stellar-sdk@16.0.1)(@types/react@19.2.17)(passkey-kit@0.14.0(@stellar/stellar-sdk@16.0.1))(react@19.2.7)
       zod:
-        specifier: ^4.4.3
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
     devDependencies:
       '@types/react':
         specifier: ^19.1.0
@@ -97,7 +100,7 @@ importers:
     dependencies:
       '@hookform/resolvers':
         specifier: ^5.1.0
-        version: 5.4.0(react-hook-form@7.81.0(react@19.2.7))(zod@4.4.3)
+        version: 5.4.0(react-hook-form@7.81.0(react@19.2.7))(zod@4.6.7)
       '@stellar/stellar-sdk':
         specifier: ^16.0.1
         version: 16.0.1
@@ -156,8 +159,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2(@stellar/stellar-sdk@16.0.1)(@types/react@19.2.17)(passkey-kit@0.14.0(@stellar/stellar-sdk@16.0.1))(react@19.2.7)
       zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
       zustand:
         specifier: ^5.0.0
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)
@@ -226,8 +229,8 @@ importers:
         specifier: workspace:*
         version: link:../types
       zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -385,8 +388,8 @@ importers:
         specifier: ^5.12.3
         version: 5.12.3
       zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
     devDependencies:
       tsx:
         specifier: ^4.20.0
@@ -425,8 +428,8 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
       zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
     devDependencies:
       '@types/pg':
         specifier: ^8.20.0
@@ -477,8 +480,8 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
       zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
     devDependencies:
       '@types/pg':
         specifier: ^8.20.0
@@ -520,8 +523,8 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
       zod:
-        specifier: ^4.0.0
-        version: 4.4.3
+        specifier: '>=4.6.6 <5'
+        version: 4.6.7
     devDependencies:
       '@types/pg':
         specifier: ^8.20.0
@@ -1111,7 +1114,7 @@ packages:
     resolution: {integrity: sha512-EIsqr/t/qbinPIhGjMdtvutIN1Kk4uwbROE9/UQ93CAVGR7GkA7Y92+fX80OzXi/OB67jVFYwKGO1WzkxmkFZw==}
     peerDependencies:
       react-hook-form: ^7.55.0
-      zod: '*'
+      zod: '>=4.6.6 <5'
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2024,7 +2027,7 @@ packages:
     resolution: {integrity: sha512-Ofer5QUnuUdTFsBRwARMoWKOH1ND5ehwYhJ3OJ/BQO+StkwQjHw0XyVh4vDttzHB7QOFhPHa/o413PJ82gU/Tg==}
     peerDependencies:
       typescript: '>=5.0.4'
-      zod: ^3.22.0 || ^4.0.0
+      zod: '>=4.6.6 <5'
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -2130,11 +2133,8 @@ packages:
   avvio@9.3.0:
     resolution: {integrity: sha512-g2tQ7LE7oOSqDfwEm3M+ZCMTJc7KiZCdJ4UwyZJb5ckTKyYu50OYmvv0mCFXPuYXoM4zkSt8zM9XQ9KCvxA74A==}
 
-  axios@1.18.0:
-    resolution: {integrity: sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==}
-
-  axios@1.18.1:
-    resolution: {integrity: sha512-3nTvFlvpn9Zu/RkHUqtc7/+al4UpRW5az71ap5zccp6e8RAYEzhMTecX8Dz1wWDYrPpUoB1HAQEGEAEvUr7S9g==}
+  axios@1.20.0:
+    resolution: {integrity: sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==}
 
   bail@2.0.2:
     resolution: {integrity: sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==}
@@ -2747,8 +2747,8 @@ packages:
     resolution: {integrity: sha512-dwsoQlS7h9hMeYUq1W++23NDcBLV4KqONnITDV9DjfS3q1SgDGVrBdvvTLUotWtPSD7asWDV9/CmsZPy8Hf70A==}
     engines: {node: '>=6'}
 
-  fast-uri@4.1.4:
-    resolution: {integrity: sha512-dODXrIxlS9JSdgAnhIUKOosKV1oMtU2VtVw87QRaHzyl5jxO290Ii5tEZfCfzfWNHi3jKWwBSdQj0qIyshdZdQ==}
+  fast-uri@4.2.3:
+    resolution: {integrity: sha512-I1PXwP5eAhlNlcdpjt9CgB59op2ZvZfxw+BkqGFVIUOgNpCVTcTqp3HhTX7brxj5vsip+nSY4nTvff+eIA76hg==}
 
   fastify-plugin@5.1.0:
     resolution: {integrity: sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw==}
@@ -2787,8 +2787,8 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  follow-redirects@1.16.0:
-    resolution: {integrity: sha512-y5rN/uOsadFT/JfYwhxRS5R7Qce+g3zG97+JrtFZlC9klX/W5hD7iiLzScI4nZqUS7DNUdhPgw4xI8W2LuXlUw==}
+  follow-redirects@1.16.2:
+    resolution: {integrity: sha512-/kVP2U8z596Ia0gwFrwyIeo74ta5aVmSeU1FfAUMAmcEP5EP7zydmag3SLiN64NaRKef3lxsq7i/g7ltJQDGow==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -4160,8 +4160,8 @@ packages:
   sonic-boom@4.2.1:
     resolution: {integrity: sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q==}
 
-  source-map-js@1.2.1:
-    resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
+  source-map-js@1.2.2:
+    resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
 
   source-map-support@0.5.21:
@@ -4328,8 +4328,8 @@ packages:
     resolution: {integrity: sha512-m1TdR/rvT7kgGJZhspNtXdsdYk0fddFpJJFlG5s+UkPFo6lkLoZ3YLOaovPYjq1R75NP5JfeTlSHaOsE09peCg==}
     engines: {node: '>=20'}
 
-  toml@5.0.0:
-    resolution: {integrity: sha512-bsqEd+g7fzlrw7LEynQ6W6aOK/lTOlepz5x1sJyIV9fTZVJS2Q76nuju6FK+gZhW5bUpvB7mCEqdR0u4WziMFw==}
+  toml@5.0.1:
+    resolution: {integrity: sha512-EqYNA/YvUNndrA2B3O2ojzLQoTQrBxeZ9UIjQwk8t10oe6n7dwclBwd9IdZQTOKwe6vWX+AXtl6IntXRbepdxQ==}
     engines: {node: '>=20'}
 
   tough-cookie@5.1.2:
@@ -4394,8 +4394,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   unified@11.0.5:
@@ -4805,8 +4805,8 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
   zustand@5.0.14:
     resolution: {integrity: sha512-/8tAspM5LMPr28b3fwLYrtdj77ECpfZviaP75CMTnwO8ISyaE4GDIG/9rDDYq/cH9D2Xw2A2RXglLInmVBQB/g==}
@@ -5208,7 +5208,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.4
+      fast-uri: 4.2.3
 
   '@fastify/cors@11.3.0':
     dependencies:
@@ -5261,13 +5261,13 @@ snapshots:
       fast-querystring: 1.1.2
       fastify-plugin: 6.0.0
       toad-cache: 3.7.4
-      undici: 7.29.0
+      undici: 7.30.1
 
-  '@hookform/resolvers@5.4.0(react-hook-form@7.81.0(react@19.2.7))(zod@4.4.3)':
+  '@hookform/resolvers@5.4.0(react-hook-form@7.81.0(react@19.2.7))(zod@4.6.7)':
     dependencies:
       '@standard-schema/utils': 0.3.0
       react-hook-form: 7.81.0(react@19.2.7)
-      zod: 4.4.3
+      zod: 4.6.7
 
   '@img/colour@1.1.0':
     optional: true
@@ -5453,14 +5453,14 @@ snapshots:
       '@actions/exec': 1.1.1
       '@openzeppelin/relayer-sdk': 1.10.0
       '@stellar/stellar-sdk': 14.6.1
-      axios: 1.18.1
+      axios: 1.20.0
     transitivePeerDependencies:
       - debug
       - supports-color
 
   '@openzeppelin/relayer-sdk@1.10.0':
     dependencies:
-      axios: 1.18.1
+      axios: 1.20.0
     transitivePeerDependencies:
       - debug
       - supports-color
@@ -5635,7 +5635,7 @@ snapshots:
     dependencies:
       '@signinwithethereum/siwe-parser': 4.2.1
     optionalDependencies:
-      viem: 2.56.6(typescript@5.9.3)(zod@4.4.3)
+      viem: 2.56.6(typescript@5.9.3)(zod@4.6.7)
 
   '@simplewebauthn/browser@13.3.0': {}
 
@@ -5657,13 +5657,13 @@ snapshots:
   '@stellar/stellar-sdk@14.6.1':
     dependencies:
       '@stellar/stellar-base': 14.1.0
-      axios: 1.18.1
+      axios: 1.20.0
       bignumber.js: 9.3.1
       commander: 14.0.3
       eventsource: 2.0.2
       feaxios: 0.0.23
       randombytes: 2.1.0
-      toml: 5.0.0
+      toml: 5.0.1
       urijs: 1.19.11
     transitivePeerDependencies:
       - debug
@@ -5674,7 +5674,7 @@ snapshots:
       '@noble/ed25519': 3.1.0
       '@noble/hashes': 2.2.0
       '@stellar/js-xdr': 4.0.0
-      axios: 1.18.1
+      axios: 1.20.0
       base32.js: 0.1.0
       bignumber.js: 11.1.5
       buffer: 6.0.3
@@ -5692,7 +5692,7 @@ snapshots:
       '@noble/ed25519': 3.1.0
       '@noble/hashes': 2.2.0
       '@stellar/js-xdr': 4.0.0
-      axios: 1.18.0
+      axios: 1.20.0
       base32.js: 0.1.0
       bignumber.js: 11.1.5
       buffer: 6.0.3
@@ -5716,7 +5716,7 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.32.0
       magic-string: 0.30.21
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
       tailwindcss: 4.3.2
 
   '@tailwindcss/oxide-android-arm64@4.3.2':
@@ -6017,7 +6017,7 @@ snapshots:
       ajv: 8.20.0
       jose: 5.10.0
       tweetnacl: 1.0.3
-      viem: 2.56.6(typescript@5.9.3)(zod@4.4.3)
+      viem: 2.56.6(typescript@5.9.3)(zod@4.6.7)
       zod: 3.25.76
     transitivePeerDependencies:
       - bufferutil
@@ -6070,7 +6070,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 4.1.4
+      fast-uri: 4.2.3
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -6130,19 +6130,9 @@ snapshots:
       '@fastify/error': 4.2.0
       fastq: 1.20.1
 
-  axios@1.18.0:
+  axios@1.20.0:
     dependencies:
-      follow-redirects: 1.16.0
-      form-data: 4.0.6
-      https-proxy-agent: 5.0.1
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
-      - supports-color
-
-  axios@1.18.1:
-    dependencies:
-      follow-redirects: 1.16.0
+      follow-redirects: 1.16.2
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -6658,7 +6648,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.4
+      fast-uri: 4.2.3
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -6668,7 +6658,7 @@ snapshots:
 
   fast-redact@3.5.0: {}
 
-  fast-uri@4.1.4: {}
+  fast-uri@4.2.3: {}
 
   fastify-plugin@5.1.0: {}
 
@@ -6724,7 +6714,7 @@ snapshots:
       minimist: 1.2.8
       xml2js: 0.6.2
 
-  follow-redirects@1.16.0: {}
+  follow-redirects@1.16.2: {}
 
   for-each@0.3.5:
     dependencies:
@@ -7289,7 +7279,7 @@ snapshots:
     dependencies:
       '@babel/parser': 7.29.7
       '@babel/types': 7.29.7
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   make-error@1.3.6: {}
 
@@ -7794,7 +7784,7 @@ snapshots:
 
   os-shim@0.1.3: {}
 
-  ox@0.14.44(typescript@5.9.3)(zod@4.4.3):
+  ox@0.14.44(typescript@5.9.3)(zod@4.6.7):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -7971,13 +7961,13 @@ snapshots:
     dependencies:
       nanoid: 6.0.1
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   postcss@8.5.28:
     dependencies:
       nanoid: 3.3.19
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   postgres-array@2.0.0: {}
 
@@ -8035,7 +8025,7 @@ snapshots:
       jsonwebtoken: 9.0.3
       listr2: 10.2.2
       ofetch: 1.5.1
-      zod: 4.4.3
+      zod: 4.6.7
 
   punycode@2.3.1: {}
 
@@ -8347,7 +8337,7 @@ snapshots:
     dependencies:
       atomic-sleep: 1.0.0
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.2: {}
 
   source-map-support@0.5.21:
     dependencies:
@@ -8491,7 +8481,7 @@ snapshots:
 
   toad-cache@3.7.4: {}
 
-  toml@5.0.0: {}
+  toml@5.0.1: {}
 
   tough-cookie@5.1.2:
     dependencies:
@@ -8546,7 +8536,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici@7.29.0: {}
+  undici@7.30.1: {}
 
   unified@11.0.5:
     dependencies:
@@ -8674,7 +8664,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  viem@2.56.6(typescript@5.9.3)(zod@4.4.3):
+  viem@2.56.6(typescript@5.9.3)(zod@4.6.7):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
@@ -8682,7 +8672,7 @@ snapshots:
       '@scure/bip39': 1.6.0
       abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
       isows: 1.0.7(ws@8.21.0)
-      ox: 0.14.44(typescript@5.9.3)(zod@4.4.3)
+      ox: 0.14.44(typescript@5.9.3)(zod@4.6.7)
       ws: 8.21.0
     optionalDependencies:
       typescript: 5.9.3
@@ -9024,7 +9014,7 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zod@4.4.3: {}
+  zod@4.6.7: {}
 
   zustand@5.0.14(@types/react@19.2.17)(react@19.2.7):
     optionalDependencies:
