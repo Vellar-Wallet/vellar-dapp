@@ -26,6 +26,9 @@ overrides:
   axios@<1.20.0: ">=1.20.0"
   follow-redirects@<1.16.1: ">=1.16.1"
   source-map-js@<1.2.2: ">=1.2.2"
+  # fastify 5.12.6 is the fix floor for the 2026-10 fastify advisories (the
+  # live backend HTTP stack: service-kit and every service). Same minor line.
+  fastify@<5.12.6: ">=5.12.6 <6"
   # zod 4.4.3 -> 4.6.6: memory-exhaustion advisory (CVE-2023-54404). Same major;
   # zod 3.x (one transitive) has no fix line and is left alone.
   zod@>=4.0.0 <4.6.6: ">=4.6.6 <5"

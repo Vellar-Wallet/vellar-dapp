@@ -9,6 +9,7 @@ overrides:
   axios@<1.20.0: '>=1.20.0'
   follow-redirects@<1.16.1: '>=1.16.1'
   source-map-js@<1.2.2: '>=1.2.2'
+  fastify@<5.12.6: '>=5.12.6 <6'
   zod@>=4.0.0 <4.6.6: '>=4.6.6 <5'
   fast-uri: '>=4.2.3'
   shell-quote@<=1.8.4: '>=1.9.0'
@@ -245,8 +246,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
       prom-client:
         specifier: ^15.1.0
         version: 15.1.3
@@ -348,8 +349,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/service-kit
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
     devDependencies:
       tsx:
         specifier: ^4.20.0
@@ -380,13 +381,13 @@ importers:
         version: 2.26.0(typescript@5.9.3)
       '@x402/fastify':
         specifier: ^2.26.0
-        version: 2.26.0(fastify@5.12.3)(typescript@5.9.3)
+        version: 2.26.0(fastify@5.12.7)(typescript@5.9.3)
       '@x402/stellar':
         specifier: ^2.26.0
         version: 2.26.0
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
       zod:
         specifier: '>=4.6.6 <5'
         version: 4.6.7
@@ -422,8 +423,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -466,7 +467,7 @@ importers:
         version: 2.26.0(typescript@5.9.3)
       '@x402/fastify':
         specifier: ^2.26.0
-        version: 2.26.0(fastify@5.12.3)(typescript@5.9.3)
+        version: 2.26.0(fastify@5.12.7)(typescript@5.9.3)
       '@x402/stellar':
         specifier: ^2.26.0
         version: 2.26.0
@@ -474,8 +475,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -514,8 +515,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
       passkey-kit:
         specifier: ^0.14.0
         version: 0.14.0(@stellar/stellar-sdk@16.0.1)
@@ -560,8 +561,8 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.22.0)
       fastify:
-        specifier: ^5.12.3
-        version: 5.12.3
+        specifier: '>=5.12.6 <6'
+        version: 5.12.7
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -2014,7 +2015,7 @@ packages:
     resolution: {integrity: sha512-9UROqO5kqpZB+lZP+o4vQ9ps7H+zYZFDTB+ggMarGsdobhk3FDP06rzw0wFrPLo9AHTNBtVMiJZeFW7f1Pd6fQ==}
     peerDependencies:
       '@x402/paywall': ^2.26.0
-      fastify: ^5.0.0
+      fastify: '>=5.12.6 <6'
     peerDependenciesMeta:
       '@x402/paywall':
         optional: true
@@ -2756,8 +2757,8 @@ packages:
   fastify-plugin@6.0.0:
     resolution: {integrity: sha512-fZOty7z3O7vOliF6d8bHE3wiEh1KcNnKEQensSgTk9C1DvN6nRLS++XVd86v33Hw/8u9Un8A1zDrQ8ujcQDHEg==}
 
-  fastify@5.12.3:
-    resolution: {integrity: sha512-reZ8wce5VNCcufIt9AVtzZa3L4u1j8esikn7OEgHWLVpRpL5R7Y2+Xzj70OUkv5zDfzUAxXZT6cu4Rt0zr3EKA==}
+  fastify@5.12.7:
+    resolution: {integrity: sha512-v4pEPsTRPuqlDIYiQFB+BHjVN4SdHX9u0ABk0ZDUKbbdY1vsNryUd1j4Z+jQEZajvYIVk047Kimva9/AJ79GYw==}
 
   fastq@1.20.1:
     resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
@@ -6025,11 +6026,11 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@x402/fastify@2.26.0(fastify@5.12.3)(typescript@5.9.3)':
+  '@x402/fastify@2.26.0(fastify@5.12.7)(typescript@5.9.3)':
     dependencies:
       '@x402/core': 2.26.0
       '@x402/extensions': 2.26.0(typescript@5.9.3)
-      fastify: 5.12.3
+      fastify: 5.12.7
     transitivePeerDependencies:
       - bufferutil
       - ethers
@@ -6664,7 +6665,7 @@ snapshots:
 
   fastify-plugin@6.0.0: {}
 
-  fastify@5.12.3:
+  fastify@5.12.7:
     dependencies:
       '@fastify/ajv-compiler': 4.0.5
       '@fastify/error': 4.2.0
