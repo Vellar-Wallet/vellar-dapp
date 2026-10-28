@@ -2,8 +2,10 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  esbuild: {
-    jsx: "automatic",
+  // Vite 8 transforms with oxc, not esbuild; the old `esbuild.jsx` key is ignored
+  // there and JSX in test files fails to parse.
+  oxc: {
+    jsx: { runtime: "automatic" },
   },
   resolve: {
     alias: {
