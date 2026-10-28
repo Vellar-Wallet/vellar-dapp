@@ -13,6 +13,7 @@ resolver = "2"
 members = [
     "policy-templates/spending-limit",
     "policy-templates/token-spending-limit",
+    "policy-templates/rule-spending-limit",
     "policy-templates/verified-recipient",
     "attestation-registry",
 ]
