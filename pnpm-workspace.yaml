@@ -103,3 +103,15 @@ packageExtensions:
   "@hookform/resolvers":
     peerDependencies:
       zod: "*"
+
+# Audit exception, one advisory only (approved 2026-10-28). GHSA-mrhx-c7xc-m3w5
+# (zod memory exhaustion) is fixed only on the 4.x line (>=4.6.6), and this repo
+# is already on 4.6.7. The remaining hit is zod 3.25.76, pulled in by
+# @x402/core (declares zod ^3.24.2; latest 2.28.0 still does) and by viem's
+# abitype/ox through @x402/extensions in lifecycle-service and
+# verification-service. Forcing 4.x under x402 would change a runtime schema
+# library beneath payment verification without a way to test it here.
+# REMOVE this block once @x402/core ships a zod 4 release.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-mrhx-c7xc-m3w5
