@@ -49,26 +49,35 @@ export const SLIDES: Slide[] = [
           AI agents can act. <em>They cannot safely spend.</em>
         </h2>
         <p className="pitch-lead">
-          Agents already chain tools and call APIs. The moment execution hits an external
-          paywall — a $0.02 search, a $0.10 scrape, a $1.00 compute call — it breaks down into
-          two flawed extremes: a human approves every call, which kills autonomy, or the agent
-          holds a raw private key, which is one bad prompt away from a drained wallet.
+          Agents already chain tools and call APIs. The moment execution hits an external paywall —
+          a $0.02 search, a $0.10 scrape, a $1.00 compute call — it breaks down into two flawed
+          extremes: a human approves every call, which kills autonomy, or the agent holds a raw
+          private key, which is one bad prompt away from a drained wallet.
         </p>
         <div className="pitch-pillars" style={{ "--cols": 3 } as React.CSSProperties}>
           <div className="pitch-pillar">
             <span className="num">01</span>
             <h4>Web2 API keys</h4>
-            <p>A human approves every $0.05 call, or a static key gets handed to the agent outright. Either kills autonomy or removes the guardrail entirely.</p>
+            <p>
+              A human approves every $0.05 call, or a static key gets handed to the agent outright.
+              Either kills autonomy or removes the guardrail entirely.
+            </p>
           </div>
           <div className="pitch-pillar">
             <span className="num">02</span>
             <h4>Unbounded Web3 wallet</h4>
-            <p>The agent holds a raw private key with no spending ceiling. One compromised process or hallucinated tool call drains the wallet.</p>
+            <p>
+              The agent holds a raw private key with no spending ceiling. One compromised process or
+              hallucinated tool call drains the wallet.
+            </p>
           </div>
           <div className="pitch-pillar">
             <span className="num">03</span>
             <h4>The Vellar standard</h4>
-            <p>A human sets a budget once, enforced on-chain. The agent transacts freely inside it — autonomous, and provably bounded.</p>
+            <p>
+              A human sets a budget once, enforced on-chain. The agent transacts freely inside it —
+              autonomous, and provably bounded.
+            </p>
           </div>
         </div>
       </div>
@@ -85,26 +94,41 @@ export const SLIDES: Slide[] = [
           A budget, <em>not your keys.</em>
         </h2>
         <p className="pitch-lead">
-          A human sets a spending policy once, on-chain. The agent transacts autonomously,
-          strictly inside that limit, and cannot override it — not even by compromising the
-          process it runs in.
+          A human sets a spending policy once, on-chain. The agent transacts autonomously, strictly
+          inside that limit, and cannot override it — not even by compromising the process it runs
+          in.
         </p>
         <div className="pitch-evidence">
           <div className="pitch-evidence-row">
             <span className="num">Wallet</span>
-            <span className="label">A non-custodial Soroban smart account enforcing hard spending limits inside <code>__check_auth</code> — the chain refuses an over-budget payment before any funds move.</span>
+            <span className="label">
+              A non-custodial Soroban smart account enforcing hard spending limits inside{" "}
+              <code>__check_auth</code> — the chain refuses an over-budget payment before any funds
+              move.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Facilitator</span>
-            <span className="label">A hosted verify/settle service, wire-compatible with the canonical x402 clients. Re-simulates every payment — which runs the buyer's own on-chain policy — before anything settles.</span>
+            <span className="label">
+              A hosted verify/settle service, wire-compatible with the canonical x402 clients.
+              Re-simulates every payment — which runs the buyer's own on-chain policy — before
+              anything settles.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Bazaar</span>
-            <span className="label">Every settled payment auto-catalogs its resource. No registration, no API key — a listing is a side effect of a real payment, so spam costs real money.</span>
+            <span className="label">
+              Every settled payment auto-catalogs its resource. No registration, no API key — a
+              listing is a side effect of a real payment, so spam costs real money.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">MCP + CLI</span>
-            <span className="label">An MCP server and CLI let an agent discover, quote, and pay for a resource in one step. The process-level guard is convenience; the on-chain policy is the actual security boundary.</span>
+            <span className="label">
+              An MCP server and CLI let an agent discover, quote, and pay for a resource in one
+              step. The process-level guard is convenience; the on-chain policy is the actual
+              security boundary.
+            </span>
           </div>
         </div>
       </div>
@@ -121,10 +145,9 @@ export const SLIDES: Slide[] = [
           Six steps, <em>and one that matters most.</em>
         </h2>
         <p className="pitch-lead">
-          x402 turns HTTP 402 into a machine-payable API call. Verification is not a signature
-          check — the facilitator re-simulates the whole transaction, which runs the buyer's own{" "}
-          <code>__check_auth</code>, so a spending-limit policy is enforced before anything
-          settles.
+          x402 turns HTTP 402 into a machine-payable API call. Verification is not a signature check
+          — the facilitator re-simulates the whole transaction, which runs the buyer's own{" "}
+          <code>__check_auth</code>, so a spending-limit policy is enforced before anything settles.
         </p>
         <div className="pitch-evidence pitch-evidence--tight">
           {[
@@ -145,8 +168,8 @@ export const SLIDES: Slide[] = [
           <span className="pitch-callout-kicker">The non-custodial property</span>
           <p>
             The facilitator is never a party to the transfer. Funds move directly from buyer to
-            seller. <b>It can refuse to submit a payment, but it cannot redirect one or hold your
-            money.</b>
+            seller.{" "}
+            <b>It can refuse to submit a payment, but it cannot redirect one or hold your money.</b>
           </p>
         </div>
       </div>
@@ -209,11 +232,13 @@ export const SLIDES: Slide[] = [
         <div className="pitch-som-result">
           <span className="label">Illustrative annual facilitator revenue at scale</span>
           <span className="value">$4.5M</span>
-          <span className="detail">from ~$895M in annual gated payment volume at a 0.5% take rate</span>
+          <span className="detail">
+            from ~$895M in annual gated payment volume at a 0.5% take rate
+          </span>
         </div>
         <p className="pitch-note" style={{ marginTop: "var(--lp-sp-3)" }}>
-          This is a bottom-up estimate off Stellar's own measured stablecoin volume, not the
-          macro TAM — deliberately conservative, and an estimate, not a result already achieved.
+          This is a bottom-up estimate off Stellar's own measured stablecoin volume, not the macro
+          TAM — deliberately conservative, and an estimate, not a result already achieved.
         </p>
       </div>
     ),
@@ -229,8 +254,8 @@ export const SLIDES: Slide[] = [
           Live on testnet. <em>Live on mainnet.</em>
         </h2>
         <p className="pitch-lead" style={{ marginBottom: 0 }}>
-          Every figure below links to a ledger, a doc, or a repo that proves it. Testnet and
-          mainnet are kept separate on purpose.
+          Every figure below links to a ledger, a doc, or a repo that proves it. Testnet and mainnet
+          are kept separate on purpose.
         </p>
 
         <div className="pitch-stats-row" style={{ "--cols": 3 } as React.CSSProperties}>
@@ -240,11 +265,15 @@ export const SLIDES: Slide[] = [
           </div>
           <div className="pitch-stat">
             <span className="v">11</span>
-            <span className="l">real mainnet settlements, ~3.6 USDC — live today, scaling deliberately</span>
+            <span className="l">
+              real mainnet settlements, ~3.6 USDC — live today, scaling deliberately
+            </span>
           </div>
           <div className="pitch-stat">
             <span className="v">386 / 7,988</span>
-            <span className="l">testnet payments an independent, non-Vellar ledger indexer attributes to Vellar</span>
+            <span className="l">
+              testnet payments an independent, non-Vellar ledger indexer attributes to Vellar
+            </span>
           </div>
         </div>
 
@@ -268,8 +297,8 @@ export const SLIDES: Slide[] = [
         <p className="pitch-note">
           Vellar is listed in the official <b>Stellar developer documentation</b> as a community
           x402 facilitator (stellar/stellar-docs PR #2836, merged), and its facilitator passed a
-          pre-mainnet security review covering the service, settlement path, and catalog
-          ownership system.
+          pre-mainnet security review covering the service, settlement path, and catalog ownership
+          system.
         </p>
       </div>
     ),
@@ -290,28 +319,36 @@ export const SLIDES: Slide[] = [
           now back the x402 Foundation governing the standard — and in July 2026, Coinbase opened
           x402 payments to every Coinbase Business customer.
         </p>
-        <p className="pitch-kicker">An agent cannot buy a $0.05 scrape if the network fee is $1.50</p>
+        <p className="pitch-kicker">
+          An agent cannot buy a $0.05 scrape if the network fee is $1.50
+        </p>
         <div className="pitch-fee-lines">
           <div className="pitch-fee-line">
             <span className="name">Ethereum L1</span>
-            <span className="track"><span className="fill" style={{ width: "100%" }} /></span>
+            <span className="track">
+              <span className="fill" style={{ width: "100%" }} />
+            </span>
             <span className="amt">$1.50&ndash;$5+</span>
           </div>
           <div className="pitch-fee-line">
             <span className="name">EVM L2 / Base</span>
-            <span className="track"><span className="fill" style={{ width: "4%" }} /></span>
+            <span className="track">
+              <span className="fill" style={{ width: "4%" }} />
+            </span>
             <span className="amt">$0.01&ndash;$0.05</span>
           </div>
           <div className="pitch-fee-line is-lead">
             <span className="name">Vellar / Stellar</span>
-            <span className="track"><span className="fill" style={{ width: "0.2%" }} /></span>
+            <span className="track">
+              <span className="fill" style={{ width: "0.2%" }} />
+            </span>
             <span className="amt">~$0.001</span>
           </div>
         </div>
         <p className="pitch-note">
           Adoption is real but still early and uneven — on-chain activity surged, then cooled
-          through early 2026, which is why distribution and a working product today matter more
-          than timing a wave.
+          through early 2026, which is why distribution and a working product today matter more than
+          timing a wave.
         </p>
       </div>
     ),
@@ -327,7 +364,9 @@ export const SLIDES: Slide[] = [
           The protocol is open. <em>The enforcement is ours.</em>
         </h2>
         <div className="pitch-callout pitch-callout--tight">
-          <span className="pitch-callout-kicker">Why a generic x402 facilitator can't just copy this</span>
+          <span className="pitch-callout-kicker">
+            Why a generic x402 facilitator can't just copy this
+          </span>
           <p>
             Policy-governed payments cost more gas to verify. Most hosted facilitators cap
             sponsorship low enough to <b>reject</b> them outright. Vellar raised its ceiling 10x
@@ -385,22 +424,31 @@ export const SLIDES: Slide[] = [
         <div className="pitch-evidence">
           <div className="pitch-evidence-row">
             <span className="num">Layer 1</span>
-            <span className="label">Process-level ceiling in the agent's own runtime — guards against mistakes, resets on restart.</span>
+            <span className="label">
+              Process-level ceiling in the agent's own runtime — guards against mistakes, resets on
+              restart.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Layer 2</span>
-            <span className="label">On-chain spending-limit policy inside __check_auth — the real security boundary. Survives a fully compromised agent process.</span>
+            <span className="label">
+              On-chain spending-limit policy inside __check_auth — the real security boundary.
+              Survives a fully compromised agent process.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Proof</span>
-            <span className="label">0.1 USDC under a 0.5 USDC cap settled; 0.6 USDC over cap was refused by the chain itself, balance unaffected — confirmed by on-chain arithmetic.</span>
+            <span className="label">
+              0.1 USDC under a 0.5 USDC cap settled; 0.6 USDC over cap was refused by the chain
+              itself, balance unaffected — confirmed by on-chain arithmetic.
+            </span>
           </div>
         </div>
         <p className="pitch-note">
-          Boring infrastructure most competitors skip: exactly 50 dedicated channel accounts
-          remove shared-sequence-number collisions under concurrent settlement load. Catalog
-          listings cost real on-chain money to fake, so the cost of an attack scales linearly
-          with its size, and the attacker pays it.
+          Boring infrastructure most competitors skip: exactly 50 dedicated channel accounts remove
+          shared-sequence-number collisions under concurrent settlement load. Catalog listings cost
+          real on-chain money to fake, so the cost of an attack scales linearly with its size, and
+          the attacker pays it.
         </p>
       </div>
     ),
@@ -416,31 +464,44 @@ export const SLIDES: Slide[] = [
           Narrow claims, <em>held precisely.</em>
         </h2>
         <p className="pitch-lead">
-          The same discipline that makes the proof slide credible means being explicit about
-          what isn't true yet.
+          The same discipline that makes the proof slide credible means being explicit about what
+          isn't true yet.
         </p>
         <div className="pitch-evidence">
           <div className="pitch-evidence-row">
             <span className="num">Audit</span>
-            <span className="label">The spending-limit policy contract has not had a mainnet security audit. The facilitator itself passed review; the policy contract is separate, ongoing work.</span>
+            <span className="label">
+              The spending-limit policy contract has not had a mainnet security audit. The
+              facilitator itself passed review; the policy contract is separate, ongoing work.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Scope</span>
-            <span className="label">The on-chain policy bounds how much an agent can spend. It does not guard who receives it — recipient-safety is the application's job.</span>
+            <span className="label">
+              The on-chain policy bounds how much an agent can spend. It does not guard who receives
+              it — recipient-safety is the application's job.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Scale</span>
-            <span className="label">Mainnet volume is proof of capability (11 settlements), not proof of scale. Search quality numbers are a regression baseline on 19 catalog entries, not a quality claim at any larger size.</span>
+            <span className="label">
+              Mainnet volume is proof of capability (11 settlements), not proof of scale. Search
+              quality numbers are a regression baseline on 19 catalog entries, not a quality claim
+              at any larger size.
+            </span>
           </div>
           <div className="pitch-evidence-row">
             <span className="num">Scheme</span>
-            <span className="label">The metered (upto) settlement scheme is experimental and testnet-only; the main SDK does not yet build upto payments.</span>
+            <span className="label">
+              The metered (upto) settlement scheme is experimental and testnet-only; the main SDK
+              does not yet build upto payments.
+            </span>
           </div>
         </div>
         <p className="pitch-note">
           <b>The defensible claim:</b> an agent cannot spend more than the budget you set, enforced
-          by Stellar consensus, even if the agent process is fully compromised. That is proven on
-          a public ledger. Claims broader than that are flagged, not implied.
+          by Stellar consensus, even if the agent process is fully compromised. That is proven on a
+          public ledger. Claims broader than that are flagged, not implied.
         </p>
       </div>
     ),
