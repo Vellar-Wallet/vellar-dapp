@@ -30,18 +30,22 @@ import {
 } from "../lib/state";
 import { backgroundErrorReporter } from "../lib/error-reporter";
 
+import { PairedTabManager, type PendingApprovalEntry } from "../lib/paired-tab-manager";
+
 // Background service worker (technical-doc.md §6.2B, §7.3): routes validated
 // dApp requests, holds the pending-approval queue, and opens the approval
 // popup. The trusted origin comes exclusively from the message sender.
 
-interface PendingApproval extends PendingApprovalSummary {
-  resolve(payload: ResponsePayload): void;
-}
-
 export default defineBackground(() => {
-  const pending = new Map<string, PendingApproval>();
-  // Track the open approval window so we don't spawn a new one per request.
-  let approvalWindowId: number | undefined;
+  const requestManager = new PairedTabManager({
+    closeWindow: async (winId) => {
+      try {
+        await browser.windows.remove(winId);
+      } catch {
+        // window was already closed
+      }
+    },
+  });
 
   // Global unhandled error handlers for background worker (#302)
   if (typeof self !== "undefined") {
@@ -81,8 +85,12 @@ export default defineBackground(() => {
     }
   }
 
+  browser.tabs.onRemoved.addListener((closedTabId) => {
+    void requestManager.handleTabRemoved(closedTabId);
+  });
+
   browser.windows.onRemoved.addListener((closedId) => {
-    if (closedId === approvalWindowId) approvalWindowId = undefined;
+    requestManager.handleWindowRemoved(closedId);
   });
 
   async function handleProviderRequest(
@@ -117,19 +125,25 @@ export default defineBackground(() => {
 
     return new Promise<ResponsePayload>((resolve) => {
       const id = message.envelope.id;
-      pending.set(id, { id, origin: decision.origin, request: message.envelope.request, resolve });
+      requestManager.addPending({
+        id,
+        origin: decision.origin,
+        request: message.envelope.request,
+        tabId,
+        resolve,
+      });
       void openApprovalWindow();
     });
   }
 
   async function openApprovalWindow(): Promise<void> {
     // Reuse an already-open approval window; only create one if none exists.
-    if (approvalWindowId !== undefined) {
+    if (requestManager.approvalWindowId !== undefined) {
       try {
-        await browser.windows.update(approvalWindowId, { focused: true });
+        await browser.windows.update(requestManager.approvalWindowId, { focused: true });
         return;
       } catch {
-        approvalWindowId = undefined; // window was gone; fall through to create
+        requestManager.approvalWindowId = undefined; // window was gone; fall through to create
       }
     }
     const win = await browser.windows.create({
@@ -138,28 +152,35 @@ export default defineBackground(() => {
       width: 380,
       height: 600,
     });
-    approvalWindowId = win?.id;
+    requestManager.approvalWindowId = win?.id;
   }
 
   async function handleResolvePending(id: string, approved: boolean): Promise<boolean> {
-    const entry = pending.get(id);
+    const entry = requestManager.startResolving(id);
     if (!entry) return false;
-    pending.delete(id);
 
     if (!approved) {
-      entry.resolve(errorPayload("rejected", "The user declined the request"));
+      requestManager.finishResolving(id, errorPayload("rejected", "The user declined the request"));
       return true;
     }
 
     if (entry.request.method === "pair") {
-      await handlePairApproval(entry);
+      try {
+        await handlePairApproval(entry);
+        requestManager.finishResolving(id);
+      } catch (err) {
+        requestManager.finishResolving(
+          id,
+          errorPayload("internal", err instanceof Error ? err.message : "Pairing failed"),
+        );
+      }
       return true;
     }
 
     const state = await loadState(browserKv);
     const wallet = state.pairedWallet;
     if (!wallet) {
-      entry.resolve(errorPayload("disconnected", "No wallet is paired"));
+      requestManager.finishResolving(id, errorPayload("disconnected", "No wallet is paired"));
       return true;
     }
 
@@ -193,7 +214,10 @@ export default defineBackground(() => {
         const store = createIdbDeviceKeyStore();
         const pair = await store.get();
         if (!pair) {
-          entry.resolve(errorPayload("disconnected", "No device signer — re-pair the extension"));
+          requestManager.finishResolving(
+            id,
+            errorPayload("disconnected", "No device signer — re-pair the extension"),
+          );
           return true;
         }
         const rawPublicKey = Uint8Array.from(
@@ -205,13 +229,14 @@ export default defineBackground(() => {
           deviceKeyPair: pair,
           deviceRawPublicKey: rawPublicKey,
         });
-        entry.resolve({ method: "sign_transaction", result: { signedXdr } });
+        requestManager.finishResolving(id, { method: "sign_transaction", result: { signedXdr } });
       } catch (err) {
         void backgroundErrorReporter.reportError(err, {
           method: "sign_transaction",
           origin: entry.origin,
         });
-        entry.resolve(
+        requestManager.finishResolving(
+          id,
           errorPayload("internal", err instanceof Error ? err.message : "Signing failed"),
         );
       }
@@ -223,7 +248,10 @@ export default defineBackground(() => {
         const store = createIdbDeviceKeyStore();
         const pair = await store.get();
         if (!pair) {
-          entry.resolve(errorPayload("disconnected", "No device signer — re-pair the extension"));
+          requestManager.finishResolving(
+            id,
+            errorPayload("disconnected", "No device signer — re-pair the extension"),
+          );
           return true;
         }
         const rawPublicKey = Uint8Array.from(
@@ -235,13 +263,17 @@ export default defineBackground(() => {
           deviceKeyPair: pair,
           deviceRawPublicKey: rawPublicKey,
         });
-        entry.resolve({ method: "sign_auth_entry", result: { signedAuthEntry } });
+        requestManager.finishResolving(id, {
+          method: "sign_auth_entry",
+          result: { signedAuthEntry },
+        });
       } catch (err) {
         void backgroundErrorReporter.reportError(err, {
           method: "sign_auth_entry",
           origin: entry.origin,
         });
-        entry.resolve(
+        requestManager.finishResolving(
+          id,
           errorPayload("internal", err instanceof Error ? err.message : "Signing failed"),
         );
       }
@@ -253,20 +285,24 @@ export default defineBackground(() => {
         const store = createIdbDeviceKeyStore();
         const pair = await store.get();
         if (!pair) {
-          entry.resolve(errorPayload("disconnected", "No device signer — re-pair the extension"));
+          requestManager.finishResolving(
+            id,
+            errorPayload("disconnected", "No device signer — re-pair the extension"),
+          );
           return true;
         }
         const signedMessage = await signMessageBytes({
           message: entry.request.params.message,
           deviceKeyPair: pair,
         });
-        entry.resolve({ method: "sign_message", result: { signedMessage } });
+        requestManager.finishResolving(id, { method: "sign_message", result: { signedMessage } });
       } catch (err) {
         void backgroundErrorReporter.reportError(err, {
           method: "sign_message",
           origin: entry.origin,
         });
-        entry.resolve(
+        requestManager.finishResolving(
+          id,
           errorPayload("internal", err instanceof Error ? err.message : "Signing failed"),
         );
       }
@@ -274,11 +310,14 @@ export default defineBackground(() => {
     }
 
     // Connect, sign, and pair approvals are the full set today.
-    entry.resolve(errorPayload("internal", `Unexpected approval for ${entry.request.method}`));
+    requestManager.finishResolving(
+      id,
+      errorPayload("internal", `Unexpected approval for ${entry.request.method}`),
+    );
     return true;
   }
 
-  async function handlePairApproval(entry: PendingApproval): Promise<void> {
+  async function handlePairApproval(entry: PendingApprovalEntry): Promise<void> {
     if (entry.request.method !== "pair") {
       entry.resolve(errorPayload("internal", "Not a pair request"));
       return;
@@ -308,9 +347,7 @@ export default defineBackground(() => {
       case "provider-request":
         return handleProviderRequest(message, sender);
       case "list-pending":
-        return Promise.resolve(
-          [...pending.values()].map(({ id, origin, request }) => ({ id, origin, request })),
-        );
+        return Promise.resolve(requestManager.listPending());
       case "resolve-pending":
         return handleResolvePending(message.id, message.approved);
       default:

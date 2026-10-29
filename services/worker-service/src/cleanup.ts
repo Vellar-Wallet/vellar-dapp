@@ -19,6 +19,14 @@ import {
 //     timestamp on the record. Using it (rather than created_at) ensures a
 //     row that sat in submitted for a long time and only recently went terminal
 //     gets the full retention window from when it actually completed.
+//   • Age-based timestamp semantics (issue #694): staleness across the service
+//     (including the stranded-building-row reaper in job-store and terminal row
+//     cleanup here) relies on updated_at / startedBuildingAtMs. An artificially
+//     updated timestamp (e.g. manually edited by an operator to look fresh)
+//     resets the age calculation and defers reaping/cleanup until the full
+//     timeout/retention window expires past the modified timestamp. This is an
+//     accepted gap: staleness relies on stored write timestamps rather than an
+//     out-of-band heartbeat mechanism.
 //   • Archive INSERT uses ON CONFLICT DO NOTHING, so re-running after an
 //     interrupted batch never duplicates archived rows or errors out.
 //   • DELETE uses WHERE id = ANY(...) with the exact IDs that were archived
