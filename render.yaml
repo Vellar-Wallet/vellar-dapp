@@ -1,3 +1,19 @@
+# STALE: not the production source of truth (evidence gathered 2026-11-02).
+#
+# The production backend (the @vellar/all-in-one image) runs on Railway: build is
+# the root Dockerfile via railway.json, and the live Railway process has been up
+# since 2026-09-29 03:25 UTC. The facilitator is also on Railway; the web app,
+# docs, explorer and playground are on Vercel.
+#
+# This file is NOT a staging template and must not be copied for one. A Render
+# instance of the same backend (vellar-backend.onrender.com, free tier,
+# cold-starting) is STILL LIVE and answers /health with 200 and serves the x402
+# 402 challenge for stellar:pubnet with the same payTo as Railway. Whether that is
+# an intentional standby or a forgotten duplicate cannot be told from the repo.
+# OPERATOR ACTION: confirm its purpose, or suspend/delete the Render web service
+# and its vellar-db, and rotate any secret that was ever set there (RELAYER_API_KEY,
+# SPONSOR_SECRET_KEY). Staging is defined for Railway in docs/runbooks/staging-and-promotion.md.
+#
 # Render Blueprint — combined VELA backend + Postgres (free tier).
 #
 # Deploys the single-process backend (@vellar/all-in-one: gateway + wallet +
