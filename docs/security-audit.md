@@ -1193,6 +1193,18 @@ branch had no server-side guard at all (our exposure there is relayer quota, not
   about 10 minutes) ahead of the latest ledger read from the trusted RPC; if the ledger cannot be read
   the submission is refused (503 `ledger_unavailable`). Expired rows are purged every 5 minutes.
 
+**One trusted network (PR #736 review, RA-10 class).** The ledger lookup that bounds the expiration
+window, the sponsor submitter, the scoping passphrase, the budget label and the relayer all read ONE
+value, `networkSettingsFromEnv` (`services/wallet-service/src/network-settings.ts`), resolved from the
+explicit `STELLAR_NETWORK`. `STELLAR_RPC_URL` / `STELLAR_NETWORK_PASSPHRASE` override the default for
+THAT network (mainnet defaults to `https://mainnet.sorobanrpc.com`), never a testnet default. Before,
+`index.ts` derived the RPC and passphrase in five places as `relayer?.x ?? <testnet default>`, so with the
+relayer unset they ignored the env: a relayer-less mainnet sponsor could not boot, and the sponsor RPC
+could differ from the one `resolveNetwork` had validated. At boot the service also calls `getNetwork()` on
+that RPC and refuses to start if its passphrase differs from the configured one (an unreachable RPC
+refuses in production and only warns elsewhere, after 3 tries). A test pins that `index.ts` never falls
+back to `DEFAULTS` again. `policy-service` uses the same `resolveNetwork` pattern and is not changed here.
+
 **Every shipped client signs inside the cap** (checked in code, not assumed): the web passkey flow uses
 the passkey-kit default (latest + 6 ledgers, about 30s); the extension signs at exactly latest + 60 from a
 trusted anchor (`signer-expiration.ts`, L4) and does not call this route itself; `vellar-sdk` x402 caps at
