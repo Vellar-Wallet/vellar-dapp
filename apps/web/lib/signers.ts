@@ -14,7 +14,7 @@ import { classifySigners, type SignerEntry, type SignerKeyRef } from "./signer-m
 // tests can mock it, mirroring lib/sessions.ts.
 
 export type { SignerEntry, SignerKeyRef, SignerKind } from "./signer-model";
-export { canRevokeSigner, isLastPasskey } from "./signer-model";
+export { canRevokeSigner, isLastPasskey, isLastSigner, revokeConfirmationMessage, LAST_SIGNER_REVOCATION_MESSAGE } from "./signer-model";
 
 export const signersKey = (accountId: string | undefined, network: Network) => [
   "signers",

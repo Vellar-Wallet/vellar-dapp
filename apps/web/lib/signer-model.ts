@@ -183,6 +183,41 @@ export function canRevokeSigner(entry: SignerEntry, entries: SignerEntry[]): Rev
   return { allowed: true };
 }
 
+/** Whether `entry` is the only signer on the account — removing it would
+ * leave the wallet with no way to authorize anything. Distinct from
+ * `isLastPasskey` (which counts only passkeys): this is the broader
+ * "last remaining signer of any kind" check the confirmation step uses. */
+export function isLastSigner(entry: SignerEntry, entries: SignerEntry[]): boolean {
+  return entries.length === 1 && entries[0] !== undefined && entries[0].id === entry.id;
+}
+
+/** Distinctly-worded confirmation copy for the catastrophic case of revoking
+ * the only remaining signer on a wallet. Stronger than the routine revoke
+ * confirmation so the consequence is unmistakable. */
+export const LAST_SIGNER_REVOCATION_MESSAGE =
+  "This is the only signer on the account. Revoking it will permanently lock you out — there is no seed phrase and no social recovery. Type the account address to confirm you understand the consequence.";
+
+/** Returns the confirmation copy to show for a revoke: the distinct
+ * last-signer message when removing `entry` would empty the signer set,
+ * otherwise a routine per-kind confirmation. */
+export function revokeConfirmationMessage(entry: SignerEntry, entries: SignerEntry[]): string {
+  if (isLastSigner(entry, entries)) {
+    return LAST_SIGNER_REVOCATION_MESSAGE;
+  }
+  switch (entry.kind) {
+    case "passkey":
+      return "Revoke this passkey? It will no longer be able to sign for this account.";
+    case "device-session":
+      return "Revoke this device session? The paired extension stops being able to approve transactions immediately.";
+    case "agent":
+      return "Revoke this agent key? The key stops signing immediately.";
+    case "policy":
+      return "Detach this policy? Its rules stop applying to this account.";
+    case "unknown":
+      return "Revoke this signer? Its effect on the account can't be confirmed here.";
+  }
+}
+
 /** Map a failed wallet transaction to the contract's own reason where the
  * wallet reported one (smart-wallet-interface error codes). */
 export function walletContractErrorCode(err: unknown): number | undefined {
