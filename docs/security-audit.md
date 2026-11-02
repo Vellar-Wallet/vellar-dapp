@@ -320,28 +320,87 @@ read oracle. Same build-box gating as H2.
   > in `runbooks/staging-and-promotion.md`, and that GitHub branch protection (required `ci` check, no
   > direct pushes) is on for `main` and for the `staging` branch the staging environment deploys from.
 
-  > **Finding (2026-11-03): the production database was migrated by builds that are not in the
-  > deploy history.** A read-only dry run of the migration runner against the production database
-  > (`pnpm migration:dry-run`, `BEGIN READ ONLY`) showed 7 recorded migrations:
+  > ### INCIDENT 2026-11-03: production database migrated outside the deploy history. **OPEN, UNDER INVESTIGATION**
   >
-  > - 6 match files on `main` (wallet `0000` to `0003_submission_replay`, policy `0000`, verification
-  >   `0000`; policy `0001` is the same file as wallet `0001`).
-  > - 1 matches **no file on `main`**: hash `e9d72232674b`, which is dev's
-  >   `0003_add_activity_logs_actor_column` (dev PR #256, only on `dev`). A build containing dev code
-  >   therefore ran against the production database at some point.
-  > - `0003_submission_replay` (`main`, #736) is recorded and the `submission_replay` table exists
-  >   with 0 rows, yet the newest successful `vellar-backend` deployment in the Railway CLI is
-  >   2026-09-29, before #736 existed. So the main-line migration was also applied by something that
-  >   is not a listed deployment of that service.
+  > **Severity (provisional): Medium, pending cause.** Schema-only so far and the data is tiny, but the
+  > production database credential was used by something that is not a listed deployment, and the cause
+  > is unknown. Owner of the investigation: the repo owner. The findings section is theirs to fill.
   >
-  > The timestamps that the migration table stores are the migration files' own journal times, not the
-  > time they were applied (drizzle records the file's timestamp), and `track_commit_timestamp` is off,
-  > so Postgres cannot say when either was applied. The cause is **unexplained**: the likely sources are
-  > a local or CI run holding the production `DATABASE_URL`, or a deploy the CLI does not list. This
-  > matters to M9 because the production database credential was used outside the deploy pipeline.
-  > Only `vellar-backend` has `DATABASE_URL` set among the Railway services. **Open for the owner:**
-  > check the Neon console query history around the two migrations, and rotate the database credential
-  > if its use cannot be accounted for.
+  > **What we know (read-only evidence, 2026-11-03):**
+  >
+  > - A read-only dry run of the migration runner against the production database (`pnpm migration:dry-run`, one `BEGIN READ ONLY` transaction) shows 7 recorded migrations. 6 match files on
+  >   `main`. 1 matches **no file on `main`**: hash `e9d72232674b`, dev's
+  >   `0003_add_activity_logs_actor_column` (dev PR #256, only on `dev`).
+  > - That dev migration **took effect**: `activity_logs` has the `actor` column in production.
+  > - Main's `0003_submission_replay` (#736) is also recorded, and `submission_replay` exists with 0 rows.
+  > - The newest successful `vellar-backend` deployment in the Railway CLI is 2026-09-29, before #736
+  >   existed. `vellar-backend` has no connected repo. Among the Railway services only `vellar-backend`
+  >   has `DATABASE_URL`.
+  > - The timestamps the migration table stores are the migration files' own journal times, not apply
+  >   times, and `track_commit_timestamp` is off, so Postgres cannot say when either was applied. Bounds
+  >   from the repo: the dev migration file did not exist before 2026-09-26 20:29 UTC (dev commit
+  >   21:20 UTC); main's migration file did not exist before 2026-11-02 13:45 UTC (merged 14:42 UTC).
+  >   So the main-line migration was applied **no earlier than 2026-11-02 13:45 UTC**.
+  > - The dev build that migrated production contained #256 but **not** dev's later verification
+  >   migration `0001_register_archive_table` (journal 2026-09-26 23:30 UTC, dev commit 23:32 UTC).
+  >   That migration is not recorded, although drizzle's migrator would have applied it had it been in
+  >   the build. So the build was dev at or near #256, or a branch containing #256 only.
+  > - Impact so far: the `actor` column and one empty table. Production holds 1 wallet, 1 session and 1
+  >   activity row. At the time of the check the only connection to the database was the checker's own.
+  > - Not found: the production database host or any connection string in any committed file, any
+  >   commit on any local or remote-tracking branch (775 commits searched), the local `.env*` files of
+  >   this machine and the sibling Vellar clones, or the CI workflows (CI uses a local service database).
+  >   Pull-request refs of forks were not searched.
+  >
+  > **Why this matters for M9:** any build that holds a `DATABASE_URL` migrates it at boot (full list in
+  > the next paragraph), so a deploy or a local run pointed at the production database changes its schema
+  > with no review. The deploy gate (M9) cannot see a run that is not a deployment.
+  >
+  > **Code paths that migrate whatever `DATABASE_URL` they are given.** On `main` and on `dev`:
+  > `wallet-service`, `policy-service` and `verification-service` each call `connectDb()` from their
+  > `index.ts` (through `tryConnectDb`) whenever `DATABASE_URL` is set, and `connectDb()` migrates
+  > under a shared advisory lock. `main` uses drizzle's timestamp migrator; `dev` uses the hash-based
+  > `applyMigrations`. `@vellar/all-in-one` imports all of them, so `pnpm --filter @vellar/all-in-one
+start` (and `dev`) migrate, and both load `../../.env` if it exists (`--env-file-if-exists`). The
+  > root `Dockerfile` and `railway.json` start the all-in-one. `lifecycle-service`, `api-gateway` and
+  > `worker-service` run no migrations. On `dev` only, `services/verification-service/scripts/
+backfill-metadata.ts` also runs `migrate()` on `DATABASE_URL` even in its default dry-run mode, and
+  > prints the full `DATABASE_URL` to stdout. No `package.json` script runs `drizzle-kit`
+  > migrate or push.
+  >
+  > **Hypotheses (none confirmed):**
+  >
+  > 1. **The still-live Render `vellar-backend` was pointed at the production database and migrated
+  >    on deploy.** It is a full all-in-one build, it was still answering on mainnet when last probed
+  >    (2026-11-02), and a Render service can deploy a branch such as `dev`, which fits a dev-era
+  >    migration. To check: the Render service's `DATABASE_URL` host (host only), its deploy history
+  >    against the two windows above, and which branch and commit it deployed.
+  > 2. **A developer machine or other automation ran a service or the backfill script with the
+  >    production `DATABASE_URL`** (for example from a `.env` file that `pnpm start` loads). This
+  >    machine's env files hold no production host. Other machines are unknown.
+  > 3. **An unlisted Railway deployment** (the CLI shows none after 2026-09-29, and only one service
+  >    holds the variable). Low likelihood.
+  > 4. **The credential was exposed** (a log, a pasted URL, the backfill script's stdout) and used
+  >    elsewhere. No evidence in the repo.
+  > 5. **A tool with Neon access ran the SQL** (Neon console or SQL editor, or an AI assistant with a
+  >    Neon connector). Check the Neon query history for both migrations.
+  >
+  > **Actions taken:**
+  >
+  > - 2026-11-03: read-only dry run against production, history and env-file search, migration-path
+  >   inventory, and this entry (all read-only; nothing was written to production).
+  > - 2026-11-03, by the owner (in progress): inspecting the Render service's environment and deploy
+  >   history, suspending the Render service, and rotating the production database credential. The
+  >   owner will merge the open PRs only after the rotation.
+  > - Not done by design: no PR is merged until the rotation completes.
+  >
+  > **Findings (owner to fill):** cause, evidence, when each migration was applied, what else the
+  > credential could have reached, and the date the incident is closed.
+  >
+  > **Follow-ups once the cause is known:** one database credential per environment with no sharing
+  > between Render and Railway; the backfill script must never migrate or print a connection string;
+  > consider a boot guard so a build refuses to migrate a database whose tier marker (#738) does not
+  > match its `DEPLOY_ENV`, which stops a stray build from migrating production once the marker exists.
 
 ---
 
