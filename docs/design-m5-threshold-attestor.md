@@ -247,10 +247,53 @@ boundary tests in `1bf77d6`).
    (location not recorded here).
 4. Signer B: Hetzner Cloud proposed, in a separate account with the independence requirements above.
 
+## Gate: verify on testnet before anything builds on `revoke_record`
+
+The 3-per-24-hours cap rests on one assumption: **a custom account's `__check_auth` cannot persist
+state on the real Soroban host**, which is why the counter lives in `revoke_record` rather than in
+`__check_auth`. The contract's own tests call `__check_auth` directly and cannot answer this; only a
+real signed authorisation through the host can. **Nothing is to be built on `revoke_record` until this is
+verified and the result is recorded here.**
+
+**Status: NOT YET VERIFIED.** The probe could not be built in the working environment because compiling
+any Soroban contract downloads dependencies from crates.io and the local cargo cache is empty. It is
+waiting on that go-ahead; no result is claimed.
+
+Experiment (throwaway probe, testnet only, outside this repository):
+
+- A custom-account contract whose `__check_auth` takes a mode number as its "signature" and tries one
+  thing per mode: `0` no write (control), `1` write instance storage, `2` write persistent storage,
+  `3` extend the instance TTL, `4` publish an event, `5` read storage.
+- A `ping` function that requires the contract's own authorisation, so the host runs `__check_auth`.
+- A script that, for each mode, simulates `ping` with a hand-built authorisation entry (enforcing
+  mode), then sends it, then reads the counters back with view functions.
+
+Record, per mode: the simulation result and error text, whether the transaction succeeded, and whether
+the state changed afterwards.
+
+| Mode | What `__check_auth` tries | Simulation | Sent    | State changed | Result  |
+| ---- | ------------------------- | ---------- | ------- | ------------- | ------- |
+| 0    | nothing (control)         | not run    | not run | not run       | pending |
+| 1    | write instance storage    | not run    | not run | not run       | pending |
+| 2    | write persistent storage  | not run    | not run | not run       | pending |
+| 3    | extend instance TTL       | not run    | not run | not run       | pending |
+| 4    | publish an event          | not run    | not run | not run       | pending |
+| 5    | read storage              | not run    | not run | not run       | pending |
+
+What each outcome changes:
+
+- **Writes refused (expected):** the `revoke_record` design stands as written. The existing threshold
+  contract's `renew_instance` call inside `__check_auth` is then itself a bug to fix (TTL extension
+  there would fail on the real host).
+- **Writes allowed:** the cap can live inside `__check_auth` and `revoke_record` is unnecessary;
+  simplify the design.
+- **TTL extension or events allowed but storage writes refused:** keep `revoke_record` for the counter
+  and use the allowed operation for the keep-alive and the alert event.
+
 ## Still open
 
 1. Confirm the hardware wallet can sign a raw 32-byte Ed25519 payload (testnet rehearsal).
 2. Signer A's host: can Railway do an isolated wasm rebuild, or does A need a Docker-capable host?
 3. A second person to administer the accounts for signers A and B.
-4. Whether `__check_auth` may emit events or write state on the real host (testnet); the design
-   assumes it may not write state and keeps a fallback for events.
+4. The testnet gate above (whether `__check_auth` may write state or emit events). Nothing builds on
+   `revoke_record` until it is recorded.
