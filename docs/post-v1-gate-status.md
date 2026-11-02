@@ -2,6 +2,11 @@
 
 **Recorded 2026-09-25 against `dev` at `e26c0a8`.**
 
+> **Snapshot, re-check before relying on it.** `dev`'s catalogue records #413 (the SDK-package
+> decision) as resolved on 2026-09-25, after this table was written, so the #414 gate may now hold.
+> The #415 row (external reviewer not engaged) is unchanged. Promoted to `main` on 2026-11-02
+> (promotion PR 1) without re-verifying the other rows.
+
 Each of these four issues says it must not be built until a condition holds. This
 file records whether each condition holds, the evidence checked, and what would
 unblock it. It exists because `docs/decisions.md` is gitignored (see

@@ -1323,7 +1323,7 @@ acceptable-with-documentation, not go/no-go gates.
 
 ### External review (#415) — status
 
-**Not engaged** as of 2026-09-25. The scope package for the reviewer — all five in-tree contracts,
+**Not engaged** as of 2026-09-25. The scope package for the reviewer — all six in-tree contracts (five on `main`, `threshold-attestor` on `dev` only, to be reviewed post-fix),
 the `passkey-kit` smart-wallet contract, the `vellar-sdk` / `passkey-kit` integration surface, the
 per-contract checklist, findings format, and the mandatory fix re-review — is in
 [`external-security-review-scope.md`](external-security-review-scope.md). This section is updated only
