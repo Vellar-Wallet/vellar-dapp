@@ -16,7 +16,8 @@ Mainnet attestor = a Soroban threshold account (`contracts/threshold-attestor`) 
 | Hand the registry to another attestor (`set_attestor`) | **2 of 3**        |
 | **Revoke ONE attestation record**                      | **1 of 3**        |
 
-A single signature may authorise **exactly one record revoked**: the authorisation must
+Each signer may do this at most **3 times per rolling 24 hours** (17,280 ledgers), enforced in
+the contract; beyond that a revoke needs 2-of-3. A single signature may authorise **exactly one record revoked**: the authorisation must
 contain one call, `revoke`, on the bound registry, with one argument. A multi-call
 authorisation, any other function, or any other contract needs 2-of-3.
 
@@ -38,10 +39,20 @@ Controls (conditions of this design):
    the registry's revoke event is watched; the alert fires on every single-signature revoke,
    not on a threshold. The contract also records which path authorised it (see below).
 3. **Re-attesting a wrongly revoked record is a documented 2-of-3 step** (runbook below).
-4. Optional, needs your number: an on-chain cap on single-signature revokes per window
-   (for example 5 per 24 hours = 17,280 ledgers), after which revokes need 2-of-3. Without
-   it, one compromised key can still freeze records one transaction at a time, each
-   individually alerting. **I recommend the cap; the value is yours to set.**
+4. **A per-signer cap, decided: 3 single-signature revokes per rolling 24 hours (17,280
+   ledgers), enforced in the contract, not in the off-chain service.** The fourth within the window
+   from the same signer is refused on the 1-of-3 path and needs 2-of-3. Each signer has its own
+   allowance: signer A's three do not consume signer B's. The ledger count is an approximation
+   of 24 hours (ledger close time varies); the contract counts ledgers, not wall-clock time.
+
+   Acceptance tests (all in the contract's test suite and in the real-host rehearsal):
+   - the 4th single-signer revoke inside the window is refused, and a 2-of-3 revoke of the same
+     record still succeeds;
+   - after 17,280 ledgers the oldest of the three has aged out and a single-signer revoke is
+     allowed again (boundary tested at 17,279 and 17,280);
+   - signer A exhausting its allowance leaves signers B and C unaffected;
+   - a 2-of-3 revoke does not consume any signer's allowance;
+   - the refusal does not change any counter, and a refused attempt cannot be replayed later.
 
 ### Runbook: a record was revoked by mistake
 
@@ -91,15 +102,26 @@ Problems found (verified by reading the code; the hash mismatch was also compute
   index, or `threshold`). Whether a custom account may emit events from `__check_auth` is to be
   confirmed on testnet; the fallback is the registry's own revoke event plus an off-chain watcher
   that reads the signature count from the transaction.
-- Optional: the single-signature revoke cap above.
+- **Where the cap lives.** A custom account's `__check_auth` is an authorisation hook; this design
+  assumes it cannot persist state (to be confirmed on testnet), so the counter is not incremented
+  there. Instead the attestor exposes `revoke_record(record, by: Option<u32>)`:
+  - `__check_auth` accepts a **single signature** only when the one call is
+    `revoke_record(record, Some(i))` on this attestor, `i` equals the index of the sole
+    signature, and signer `i` is under its cap (it can read the counters). Otherwise it requires
+    the 2-of-3 attest threshold, which also covers `revoke_record(record, None)`.
+  - `revoke_record` records the ledger for signer `i` in a ring of its last 3 revoke ledgers
+    (refusing the single-signer path if the oldest is within 17,280 ledgers), then calls the
+    registry's `revoke(record)`. The registry's attestor is this contract, and a contract calling
+    another is authorised as the invoker, so no second authorisation is needed.
+    The fast path therefore no longer authorises `revoke` on the registry directly.
 
 ### Signers: independent hosts that re-verify before signing
 
-| Signer | Where                                                          | Role                                                      |
-| ------ | -------------------------------------------------------------- | --------------------------------------------------------- |
-| A      | a new Railway service in project `vellar`                      | automated verifier                                        |
-| B      | a **different provider and a different account** (not Railway) | automated verifier                                        |
-| C      | offline                                                        | break-glass: second signature for rotation, manual revoke |
+| Signer | Where                                                                  | Role                                                      |
+| ------ | ---------------------------------------------------------------------- | --------------------------------------------------------- |
+| A      | a new Railway service in project `vellar`                              | automated verifier                                        |
+| B      | **Hetzner Cloud, in a separate account** (see "Signer B"), not Railway | automated verifier                                        |
+| C      | offline                                                                | break-glass: second signature for rotation, manual revoke |
 
 Attest and rotate need two of A, B, C, so the **normal automated path is A+B**. C is needed only
 for rotation, a manual revoke when A and B are unavailable, and recovery.
@@ -137,21 +159,50 @@ independent, none of which is proposed to be built now:
 - a human-in-the-loop signature (signer C) required for anything unusual, such as a first-time
   publisher or an unexpectedly large change.
 
-### Who holds the offline key (signer C) and where it is stored
+### Signer C: the offline key (decided)
 
-**Not decided; the repo cannot answer it.** The catalogue records that every single point of
-failure today is one person (sponsor key, DB token, hosting account, npm, DNS). If the owner also
-holds C, then C and the Railway account are the same trust domain, and compromising that one
-person yields A, C and the platform account together.
+- **Holder:** Chigozirim.
+- **Form:** a hardware wallet, kept offline, with a sealed seed backup held separately from the
+  device. Where the device and the backup are kept is **not recorded in this repository**, on purpose.
+- **Acceptance check before relying on it:** the device must be able to sign a raw 32-byte
+  Ed25519 payload for the Soroban authorisation. Many hardware wallets sign only transactions, or
+  sign arbitrary hashes only behind a "blind signing" setting. Confirm the exact device and app on
+  testnet in the rehearsal; if it cannot, signer C needs a different form before any mainnet use.
+- Signer C is independent of the owner's laptop and of both hosting accounts by construction;
+  it should also be a different **person** from whoever administers signer A's and B's accounts.
 
-Proposal, for you to confirm or replace:
+### Signer B: provider and what "independent" requires
 
-- **Holder:** the project owner for now, with a named second trusted person to hold either C or
-  the account that hosts B. _Holder name: TO BE FILLED IN BY THE OWNER._
-- **Storage:** an ed25519 key generated on an air-gapped machine, stored on a hardware token or
-  an encrypted file (age) in a physically separate location from the laptop used for deploys,
-  with a written recovery procedure. The key must be able to sign a raw 32-byte payload; many
-  hardware wallets only sign transactions, so confirm the device before choosing it.
+**Proposed provider: Hetzner Cloud**, one small VPS running Docker. Reasons: it operates its own
+data centres rather than reselling another cloud, it runs a Docker daemon (signers must rebuild wasm
+in an isolated container, which PaaS platforms usually do not allow), and it is a different company
+and jurisdiction from the Railway project. Weaknesses: you patch the OS yourself, and one region is
+one failure domain.
+
+**Signer A's host is an open question for the same reason.** The signer must rebuild wasm in a
+sandbox that has no access to the signing key, and Railway services do not normally expose a Docker
+daemon. If signer A cannot do an isolated rebuild on Railway, it needs a Docker-capable host too, and
+that host must still differ from B's provider. Check Railway's actual capabilities before deciding;
+I have not verified them.
+
+Each signer is two parts: a **builder** (an isolated container with no network and no secrets, which
+returns only the resulting hash) and a **signer** (holds one key, never executes submitted code).
+
+"Independent" for signer B means, all of:
+
+| Requirement                            | Meaning                                                                                                                                                        |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Separate provider and account          | a different company, and an account no one else's login can reach                                                                                              |
+| Separate identity                      | its own email address and a hardware 2FA device not shared with A's or C's accounts                                                                            |
+| Separate billing                       | its own payment instrument, so a billing dispute or suspension on one cannot take both                                                                         |
+| No shared credentials                  | no shared password-manager vault, SSO, API token, SSH key, deploy key or CI secret with A, C or the Railway project                                            |
+| Own source access                      | a read-only deploy key created only for B, revocable on its own                                                                                                |
+| Own secrets store                      | B's key lives on B's host only; nothing about it is in the repo or in A's environment                                                                          |
+| Own network identity                   | B's endpoint is authenticated by a pinned certificate or key on the coordinator, so a DNS or domain compromise cannot redirect signing requests to an impostor |
+| Different administrator where possible | the person who can log in to B's account is not the only person who can log in to A's                                                                          |
+| Separate failure and patching          | its own patch schedule; one platform outage or one account lock cannot stop both                                                                               |
+
+This covers hosting independence only. Logical independence of the verifier is described above.
 
 ### Mainnet registry deployment steps
 
@@ -188,9 +239,18 @@ The `dev` sources are `contracts/threshold-attestor/` and
 `services/worker-service/src/threshold-submitter.ts` (both added in `bfeec6c`, plus the contract's
 boundary tests in `1bf77d6`).
 
-## Open items for the owner
+## Decisions recorded
 
-1. Approve N=3, 2-of-3, revoke 1-of-3 with the one-record rule.
-2. Set the single-signature revoke cap, or decline it.
-3. Name the holder and storage of signer C, and a second trusted person.
-4. Choose signer B's provider.
+1. N=3, attest, rotate and handoff 2-of-3, revoke 1-of-3 limited to one record per authorisation.
+2. Single-signer revoke cap: **3 per rolling 24 hours per signer, in the contract.**
+3. Signer C: held by **Chigozirim**, hardware wallet, offline, sealed seed backup kept separately
+   (location not recorded here).
+4. Signer B: Hetzner Cloud proposed, in a separate account with the independence requirements above.
+
+## Still open
+
+1. Confirm the hardware wallet can sign a raw 32-byte Ed25519 payload (testnet rehearsal).
+2. Signer A's host: can Railway do an isolated wasm rebuild, or does A need a Docker-capable host?
+3. A second person to administer the accounts for signers A and B.
+4. Whether `__check_auth` may emit events or write state on the real host (testnet); the design
+   assumes it may not write state and keeps a fallback for events.
