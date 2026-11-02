@@ -18,17 +18,17 @@ is **create a passkey, connect (find it again), sign**. This page has two halves
 
 | Scenario                                                                                                  | Covered | Notes                                                |
 | --------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
-| Platform authenticator detected (`isUserVerifyingPlatformAuthenticatorAvailable`)                         | yes     |                                                      |
+| Platform authenticator detected                                                                           | yes     |                                                      |
 | Create: ES256 resident credential on the page's `rpId`                                                    | yes     | checks user handle, resident flag, P-256 key         |
-| Connect: discoverable `get` (no `allowCredentials`) finds it and returns the user handle                  | yes     | also with two passkeys                               |
+| Connect: discoverable `get` returns the user handle                                                       | yes     | also with two passkeys                               |
 | Sign: assertion verifies over `authData \|\| SHA-256(clientData)`, echoes the challenge, binds the `rpId` | yes     | verified in Node, not trusted from the browser       |
-| Sign: signature converts to the 64-byte low-S form the wallet contract uses                               | yes     |                                                      |
+| Sign: converts to the 64-byte low-S contract form                                                         | yes     |                                                      |
 | Counter increments per ceremony                                                                           | yes     |                                                      |
 | Duplicate registration -> `InvalidStateError` -> `credential-exists`                                      | yes     | via the real `normalizePasskeyError`                 |
 | UV required but not performed -> `NotAllowedError` -> `cancelled`                                         | yes     |                                                      |
 | Abandoned ceremony -> `AbortError` -> `aborted`                                                           | yes     |                                                      |
-| The real `/app` page: Create wallet registers a real credential; a dead backend ends in a usable error    | yes     | backend and RPC blocked                              |
-| The real `/app` page: Sign in sends the registered credential's id to `/wallet/connect`                   | yes     |                                                      |
+| Real `/app`: Create registers a credential; dead backend ends in an error                                 | yes     | backend and RPC blocked                              |
+| Real `/app`: Sign in sends the credential id to `/wallet/connect`                                         | yes     |                                                      |
 | Deploying the smart account, funding, submitting a payment                                                | **no**  | needs a live backend; see the stale live specs below |
 
 ### Findings from building it
