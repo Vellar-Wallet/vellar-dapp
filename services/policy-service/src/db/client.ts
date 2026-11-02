@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { applyMigrations } from "@vellar/service-kit";
 import pg from "pg";
 
 export type Db = NodePgDatabase;
@@ -28,9 +28,10 @@ export async function connectDb(databaseUrl: string): Promise<DbHandle> {
   const lockConn = await pool.connect();
   try {
     await lockConn.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    // Hash-based, not drizzle's newest-timestamp rule: the migrations table is
+    // shared with the other services in one database (see service-kit
+    // migrations.ts: the timestamp rule silently skipped whole services).
+    await applyMigrations(lockConn, fileURLToPath(new URL("../../drizzle", import.meta.url)));
   } finally {
     await lockConn.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]).catch(() => {});
     lockConn.release();

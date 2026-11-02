@@ -184,3 +184,5 @@ export function hostFromEnv(defaultHost: string, env: NodeJS.ProcessEnv = proces
   const raw = env.BIND_HOST;
   return raw && raw.trim() !== "" ? raw.trim() : defaultHost;
 }
+
+export { applyMigrations, type MigrationClient } from "./migrations";
