@@ -5,14 +5,15 @@
 # since 2026-09-29 03:25 UTC. The facilitator is also on Railway; the web app,
 # docs, explorer and playground are on Vercel.
 #
-# This file is NOT a staging template and must not be copied for one. A Render
-# instance of the same backend (vellar-backend.onrender.com, free tier,
-# cold-starting) is STILL LIVE and answers /health with 200 and serves the x402
-# 402 challenge for stellar:pubnet with the same payTo as Railway. Whether that is
-# an intentional standby or a forgotten duplicate cannot be told from the repo.
-# OPERATOR ACTION: confirm its purpose, or suspend/delete the Render web service
-# and its vellar-db, and rotate any secret that was ever set there (RELAYER_API_KEY,
-# SPONSOR_SECRET_KEY). Staging is defined for Railway in docs/runbooks/staging-and-promotion.md.
+# This file is NOT a staging template and must not be copied for one. Production
+# on Railway is CONFIRMED by the owner (2026-11-02). A Render instance of the same
+# backend (vellar-backend.onrender.com, free tier, cold-starting) is nonetheless
+# STILL LIVE: it answers /health with 200 and serves the x402 402 challenge for
+# stellar:pubnet with the same payTo as Railway. It is therefore a leftover, not a
+# deployment target.
+# OPERATOR ACTION: suspend or delete the Render web service and its vellar-db, and
+# rotate any secret that was ever set there (RELAYER_API_KEY, SPONSOR_SECRET_KEY).
+# Staging is defined for Railway in docs/runbooks/staging-and-promotion.md.
 #
 # Render Blueprint — combined VELA backend + Postgres (free tier).
 #

@@ -86,5 +86,5 @@ in that order. Never promote a build artifact from a different SHA.
   above is manual.
 - Railway builds each environment separately from the Dockerfile. Reproducibility
   rests on `pnpm-lock.yaml` being committed (it is) and the same SHA being used.
-- The Render duplicate (see the table) is outside this runbook. Decide whether to
-  keep or retire it before relying on any statement about "the" production backend.
+- The Render leftover (see the table) is outside this runbook. Suspend or delete it,
+  and rotate any secret set there, so there is exactly one mainnet backend.
