@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { applyMigrations } from "@vellar/service-kit";
+import { applyMigrations, describePlan } from "@vellar/service-kit";
 
 // The shared-database migration runner against REAL Postgres. wallet-, policy- and
 // verification-service each ship their own drizzle journal but migrate into ONE
@@ -220,5 +220,111 @@ describe.skipIf(!DATABASE_URL)("applyMigrations against a shared Postgres databa
     } finally {
       await pool.end();
     }
+  });
+
+  describe("dry run", () => {
+    /** A connection on which the SERVER rejects any write, to prove the planner needs none. */
+    async function readOnlyPool(name: string): Promise<pg.Pool> {
+      const url = new URL(DATABASE_URL as string);
+      url.pathname = `/${name}`;
+      return new pg.Pool({
+        connectionString: url.toString(),
+        options: "-c default_transaction_read_only=on",
+      });
+    }
+
+    it("lists every migration for a brand-new database and writes nothing (read-only connection)", async () => {
+      const { pool, name } = await freshDatabase();
+      await pool.end();
+      const ro = await readOnlyPool(name);
+      try {
+        const client = await ro.connect();
+        try {
+          const plan = await describePlan(client, WALLET);
+          expect(plan.pending.map((p) => p.tag)).toEqual([
+            "0000_init",
+            "0001_spend_ledger",
+            "0002_add_session_expiry",
+            "0003_submission_replay",
+          ]);
+          expect(plan.blockers).toEqual([]);
+          expect(await applyMigrations(client, WALLET, { dryRun: true })).toBe(4);
+        } finally {
+          client.release();
+        }
+        // Nothing was created: the bookkeeping schema does not exist.
+        const { rows } = await ro.query(
+          `SELECT to_regclass('drizzle.__drizzle_migrations') AS reg`,
+        );
+        expect(rows[0].reg).toBeNull();
+      } finally {
+        await ro.end();
+      }
+    });
+
+    it("is empty for a database drizzle's own migrator fully migrated (nothing to baseline)", async () => {
+      const { pool, name } = await freshDatabase();
+      await migrate(drizzle(pool), { migrationsFolder: WALLET });
+      await pool.end();
+      const ro = await readOnlyPool(name);
+      try {
+        const client = await ro.connect();
+        try {
+          const plan = await describePlan(client, WALLET);
+          expect(plan.pending).toEqual([]);
+          expect(plan.blockers).toEqual([]);
+          expect(plan.recordedCount).toBe(4);
+        } finally {
+          client.release();
+        }
+      } finally {
+        await ro.end();
+      }
+    });
+
+    it("flags a table that exists but was never recorded (created outside the journal) as a blocker", async () => {
+      const { pool, name } = await freshDatabase();
+      await pool.query(`CREATE TABLE "wallets" (key_id text)`); // created by hand
+      await pool.end();
+      const ro = await readOnlyPool(name);
+      try {
+        const client = await ro.connect();
+        try {
+          const plan = await describePlan(client, WALLET);
+          const init = plan.pending.find((p) => p.tag === "0000_init")!;
+          expect(init.classification).toBe("table-exists-unrecorded");
+          expect(init.existingTables).toContain("wallets");
+          expect(plan.blockers.map((b) => b.tag)).toContain("0000_init");
+        } finally {
+          client.release();
+        }
+      } finally {
+        await ro.end();
+      }
+    });
+
+    it("a migration file edited after it was applied shows as a blocker, not as silently pending", async () => {
+      const { pool, name } = await freshDatabase();
+      await migrate(drizzle(pool), { migrationsFolder: WALLET });
+      // Make the recorded row for 0000 carry a hash the current file no longer has.
+      await pool.query(
+        `UPDATE "drizzle"."__drizzle_migrations" SET hash = 'edited' WHERE created_at = (SELECT min(created_at) FROM "drizzle"."__drizzle_migrations")`,
+      );
+      await pool.end();
+      const ro = await readOnlyPool(name);
+      try {
+        const client = await ro.connect();
+        try {
+          const plan = await describePlan(client, WALLET);
+          expect(plan.blockers).toHaveLength(1);
+          expect(plan.blockers[0]!.classification).toBe("edited-after-apply");
+          expect(plan.blockers[0]!.tag).toBe("0000_init");
+        } finally {
+          client.release();
+        }
+      } finally {
+        await ro.end();
+      }
+    });
   });
 });

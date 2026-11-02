@@ -51,7 +51,9 @@ function fakeClient(opts: { recorded?: string[]; failOn?: RegExp } = {}) {
     async query(text, params) {
       queries.push(text);
       if (opts.failOn?.test(text)) throw new Error(`boom: ${text.slice(0, 30)}`);
-      if (/SELECT hash FROM/i.test(text)) return { rows: recorded.map((hash) => ({ hash })) };
+      if (/to_regclass/i.test(text)) return { rows: [{ reg: "drizzle.__drizzle_migrations" }] };
+      if (/SELECT hash(, created_at)? FROM/i.test(text))
+        return { rows: recorded.map((hash) => ({ hash })) };
       if (/INSERT INTO "drizzle"\."__drizzle_migrations"/i.test(text)) {
         inserted.push({ hash: String(params?.[0]), createdAt: Number(params?.[1]) });
         recorded.push(String(params?.[0]));
@@ -239,4 +241,162 @@ describe("every database client uses the shared-database runner", () => {
       expect(source).not.toMatch(/\bmigrate\(/);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Dry run: list what WOULD be applied, apply nothing, write nothing. Used to check a
+// production database before switching it to this runner.
+// ---------------------------------------------------------------------------
+import { describePlan, pendingMigrations } from "./migrations";
+
+interface Row {
+  hash: string;
+  created_at: number;
+}
+
+/** A recording client that serves only the read-only queries the planner is allowed. */
+function readOnlyClient(opts: { bookkeeping?: Row[] | null; tables?: string[] } = {}) {
+  const queries: string[] = [];
+  const client: MigrationClient = {
+    async query(text) {
+      queries.push(text);
+      if (/to_regclass/i.test(text)) {
+        return {
+          rows: [{ reg: opts.bookkeeping === null ? null : "drizzle.__drizzle_migrations" }],
+        };
+      }
+      if (/SELECT hash, created_at FROM/i.test(text)) {
+        return { rows: (opts.bookkeeping ?? []).map((r) => ({ ...r })) };
+      }
+      if (/information_schema\.tables/i.test(text)) {
+        return { rows: (opts.tables ?? []).map((table_name) => ({ table_name })) };
+      }
+      return { rows: [] };
+    },
+  };
+  return { client, queries };
+}
+
+const WRITES = /\b(CREATE|INSERT|UPDATE|DELETE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK|TRUNCATE|GRANT)\b/i;
+
+describe("pendingMigrations (read-only dry run)", () => {
+  it("lists every migration as pending when the bookkeeping table does not exist, with tags in journal order", async () => {
+    const { client } = readOnlyClient({ bookkeeping: null });
+    const pending = await pendingMigrations(client, folder([A, B]));
+    expect(pending.map((p) => p.tag)).toEqual(["0000_a", "0001_b"]);
+    expect(pending.map((p) => p.hash)).toEqual([sha(A.sql), sha(B.sql)]);
+    expect(pending.map((p) => p.folderMillis)).toEqual([A.when, B.when]);
+  });
+
+  it("excludes migrations whose hash is recorded, including the CRLF/LF forms", async () => {
+    const multi = { tag: "0002_m", when: 3_000, sql: 'CREATE TABLE "m" (\n  id int\n);\n' };
+    const { client } = readOnlyClient({
+      bookkeeping: [
+        { hash: sha(A.sql), created_at: A.when },
+        { hash: sha(multi.sql.replace(/\n/g, "\r\n")), created_at: multi.when },
+      ],
+    });
+    const pending = await pendingMigrations(client, folder([A, B, multi]));
+    expect(pending.map((p) => p.tag)).toEqual(["0001_b"]);
+  });
+
+  it("is empty for a database that already holds every migration", async () => {
+    const { client } = readOnlyClient({
+      bookkeeping: [
+        { hash: sha(A.sql), created_at: A.when },
+        { hash: sha(B.sql), created_at: B.when },
+      ],
+    });
+    expect(await pendingMigrations(client, folder([A, B]))).toEqual([]);
+  });
+
+  it("issues ONLY read queries: no DDL, no INSERT, no transaction", async () => {
+    const { client, queries } = readOnlyClient({ bookkeeping: null });
+    await pendingMigrations(client, folder([A, B]));
+    await describePlan(client, folder([A, B]));
+    expect(queries.length).toBeGreaterThan(0);
+    for (const q of queries) expect(q, q).not.toMatch(WRITES);
+  });
+
+  it("applyMigrations with dryRun reports the count and never runs a statement", async () => {
+    const { client, queries } = readOnlyClient({ bookkeeping: null });
+    const count = await applyMigrations(client, folder([A, B]), { dryRun: true });
+    expect(count).toBe(2);
+    for (const q of queries) expect(q, q).not.toMatch(WRITES);
+    expect(queries).not.toContain(A.sql);
+  });
+
+  it("derives the tables a pending migration would create, with and without IF NOT EXISTS", async () => {
+    const e: Entry = {
+      tag: "0000_t",
+      when: 1,
+      sql: 'CREATE TABLE "one" (id int);\n--> statement-breakpoint\nCREATE TABLE IF NOT EXISTS "two" (id int);',
+    };
+    const { client } = readOnlyClient({ bookkeeping: null });
+    const [p] = await pendingMigrations(client, folder([e]));
+    expect(p!.createsTables).toEqual(["one", "two"]);
+  });
+});
+
+describe("describePlan classifies each pending migration", () => {
+  it("a normal new migration is 'new'", async () => {
+    const { client } = readOnlyClient({ bookkeeping: [], tables: [] });
+    const plan = await describePlan(client, folder([A]));
+    expect(plan.pending).toHaveLength(1);
+    expect(plan.pending[0]!.classification).toBe("new");
+    expect(plan.blockers).toEqual([]);
+  });
+
+  it("flags a migration whose table already exists but is not recorded (created outside the journal)", async () => {
+    const { client } = readOnlyClient({ bookkeeping: [], tables: ["a"] });
+    const plan = await describePlan(client, folder([A]));
+    expect(plan.pending[0]!.classification).toBe("table-exists-unrecorded");
+    expect(plan.pending[0]!.existingTables).toEqual(["a"]);
+    expect(plan.blockers).toHaveLength(1);
+  });
+
+  it("flags a migration recorded under the same timestamp with a DIFFERENT hash (edited after apply)", async () => {
+    const { client } = readOnlyClient({
+      bookkeeping: [{ hash: sha("the OLD text of the file"), created_at: A.when }],
+      tables: ["a"],
+    });
+    const plan = await describePlan(client, folder([A]));
+    expect(plan.pending[0]!.classification).toBe("edited-after-apply");
+    expect(plan.pending[0]!.recordedHashAtSameTime).toBe(sha("the OLD text of the file"));
+    expect(plan.blockers).toHaveLength(1);
+  });
+
+  it("a recorded row at the same timestamp that matches by line-ending form is NOT pending at all", async () => {
+    const multi = { tag: "0000_m", when: 9, sql: 'CREATE TABLE "m" (\n  id int\n);\n' };
+    const { client } = readOnlyClient({
+      bookkeeping: [{ hash: sha(multi.sql.replace(/\n/g, "\r\n")), created_at: multi.when }],
+      tables: ["m"],
+    });
+    const plan = await describePlan(client, folder([multi]));
+    expect(plan.pending).toEqual([]);
+    expect(plan.blockers).toEqual([]);
+  });
+
+  it("reports how many migrations are recorded and not on disk", async () => {
+    const { client } = readOnlyClient({
+      bookkeeping: [
+        { hash: sha(A.sql), created_at: A.when },
+        { hash: sha("a migration this checkout does not have"), created_at: 77 },
+      ],
+    });
+    const plan = await describePlan(client, folder([A]));
+    expect(plan.recordedNotOnDisk).toBe(1);
+    expect(plan.blockers).toEqual([]);
+  });
+
+  it("an explained pending migration is distinguishable from a blocker", async () => {
+    const { client } = readOnlyClient({
+      bookkeeping: [{ hash: sha(A.sql), created_at: A.when }],
+      tables: ["a"],
+    });
+    const plan = await describePlan(client, folder([A, B]));
+    expect(plan.pending.map((p) => p.tag)).toEqual(["0001_b"]);
+    expect(plan.pending[0]!.classification).toBe("new");
+    expect(plan.blockers).toEqual([]);
+  });
 });
