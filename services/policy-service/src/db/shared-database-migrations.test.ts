@@ -274,6 +274,9 @@ describe.skipIf(!DATABASE_URL)("applyMigrations against a shared Postgres databa
           expect(plan.pending).toEqual([]);
           expect(plan.blockers).toEqual([]);
           expect(plan.recordedCount).toBe(4);
+          // Every file is listed, and each matched a hash drizzle recorded.
+          expect(plan.considered).toHaveLength(4);
+          expect(plan.considered.every((c) => c.recorded)).toBe(true);
         } finally {
           client.release();
         }

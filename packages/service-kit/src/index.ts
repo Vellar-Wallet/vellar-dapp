@@ -190,6 +190,7 @@ export {
   describePlan,
   pendingMigrations,
   type ApplyOptions,
+  type ConsideredMigration,
   type DescribedMigration,
   type MigrationClient,
   type MigrationPlan,

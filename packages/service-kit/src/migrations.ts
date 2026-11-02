@@ -131,7 +131,19 @@ export interface DescribedMigration extends PendingMigration {
   recordedHashAtSameTime?: string;
 }
 
+/** One journal file the planner looked at, and whether a recorded hash matched it. */
+export interface ConsideredMigration {
+  tag: string;
+  hash: string;
+  folderMillis: number;
+  recorded: boolean;
+}
+
 export interface MigrationPlan {
+  /** EVERY file in the folder's journal, in order, with whether a recorded hash matched it. */
+  considered: ConsideredMigration[];
+  /** The raw recorded rows (hash, created_at), for explaining rows no file matches. */
+  recordedRows: Array<{ hash: string; createdAt: number | undefined }>;
   pending: DescribedMigration[];
   /** Pending migrations that are NOT plainly new: the runner must not be switched on until explained. */
   blockers: DescribedMigration[];
@@ -181,6 +193,13 @@ export async function describePlan(
 
   const onDisk = new Set(migrations.flatMap((m) => recordedForms(m)));
   return {
+    considered: all.map((p, i) => ({
+      tag: p.tag,
+      hash: p.hash,
+      folderMillis: p.folderMillis,
+      recorded: !isPending(i),
+    })),
+    recordedRows: recorded,
     pending,
     blockers: pending.filter((p) => p.classification !== "new"),
     recordedCount: recorded.length,

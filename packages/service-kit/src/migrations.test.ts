@@ -338,6 +338,25 @@ describe("pendingMigrations (read-only dry run)", () => {
   });
 });
 
+describe("describePlan lists every file it considered", () => {
+  it("marks each journal file recorded or not, in journal order, and exposes the raw recorded rows", async () => {
+    const { client } = readOnlyClient({
+      bookkeeping: [{ hash: sha(A.sql), created_at: A.when }],
+      tables: [],
+    });
+    const plan = await describePlan(client, folder([A, B]));
+    expect(plan.considered.map((c) => [c.tag, c.recorded])).toEqual([
+      [expect.stringContaining("0000"), true],
+      [expect.stringContaining("0001"), false],
+    ]);
+    expect(plan.recordedRows).toEqual([{ hash: sha(A.sql), createdAt: A.when }]);
+    // pending is exactly the files not recorded
+    expect(plan.pending.map((p) => p.tag)).toEqual(
+      plan.considered.filter((c) => !c.recorded).map((c) => c.tag),
+    );
+  });
+});
+
 describe("describePlan classifies each pending migration", () => {
   it("a normal new migration is 'new'", async () => {
     const { client } = readOnlyClient({ bookkeeping: [], tables: [] });

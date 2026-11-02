@@ -58,6 +58,11 @@ async function main(): Promise<number> {
     const blockers: string[] = [];
     for (const [service, plan] of plans) {
       console.log(`\n== ${service} ==`);
+      console.log("  files considered:");
+      for (const c of plan.considered)
+        console.log(
+          `    ${c.recorded ? "recorded " : "NOT RECORDED"}  ${c.tag}  hash ${c.hash.slice(0, 12)}  journal when ${new Date(c.folderMillis).toISOString()}`,
+        );
       console.log(`  recorded rows with no file in this checkout: ${plan.recordedNotOnDisk}`);
       if (plan.pending.length === 0) console.log("  pending: none");
       for (const p of plan.pending) {
@@ -78,6 +83,13 @@ async function main(): Promise<number> {
         if (p.classification !== "new") blockers.push(`${service}/${p.tag}: ${p.classification}`);
       }
     }
+    const known = new Set(plans.flatMap(([, p]) => p.considered.map((c) => c.hash)));
+    const orphans = plans[0]![1].recordedRows.filter((r) => !known.has(r.hash));
+    console.log(`\nrecorded rows matching NO file in any service: ${orphans.length}`);
+    for (const r of orphans)
+      console.log(
+        `  hash ${r.hash.slice(0, 12)}  created_at ${r.createdAt} (${r.createdAt ? new Date(r.createdAt).toISOString() : "?"})`,
+      );
     console.log(
       blockers.length
         ? `\nBLOCKERS (${blockers.length}):\n  - ${blockers.join("\n  - ")}`
