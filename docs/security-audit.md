@@ -977,9 +977,17 @@ As a pure unit, `isBlockedAddress` returns `false` for `::ffff:7f00:1` (127.0.0.
 emits IPv4-mapped answers in the dotted form the regex does catch. Latent defense-in-depth: it
 defends only a hypothetical future refactor that strips brackets before the literal check.
 
-> **Status (RA-7): OPEN (latent).** Canonicalize IPv6 to bytes and range-check embedded IPv4-mapped
->
-> - NAT64 rather than string-prefix matching. Low urgency; no live path.
+> **Status (RA-7): CLOSED.** `isBlockedAddress` now parses an IPv6 literal into its eight 16-bit
+> groups and range-checks those, never the text. A literal that embeds an IPv4 address is judged by
+> that address: IPv4-mapped (`::ffff:0:0/96`), IPv4-translated/SIIT (`::ffff:0:0:0/96`), NAT64
+> (`64:ff9b::/96`) and 6to4 (`2002::/16`), in dotted, hex, expanded, zero-padded and upper-case
+> spellings and with a `%zone` id. Blocked outright: `::/96` (unspecified, loopback, the deprecated
+> IPv4-compatible range), `fe80::/10` (the old check matched only the `fe80` text prefix, so
+> `fe90::`–`febf::` slipped through), `fec0::/10`, `fc00::/7`, `ff00::/8`, local-use NAT64
+> `64:ff9b:1::/48`, Teredo `2001::/32`, documentation `2001:db8::/32` and `100::/64`. Tests generate
+> every encoding of 127.0.0.1, 10/8, 169.254.169.254, 172.16/12, 192.168/16 and 0.0.0.0, plus the
+> resolver-level path (a hostname answering with a hex-mapped loopback, and a mixed public + private
+> answer set). Public addresses stay allowed in every embedded encoding.
 
 ### RA-8 — Audit hygiene: M3 / M4 / M5(deferral) / M8 / M9 are **not** code-fixed closures ℹ️ Info
 
@@ -1092,7 +1100,7 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) i
   create-budget V5, cleanup-chunk walk) + **RA-11-D** (verification `statusDetail`), each with a
   seam-crossing or bug-catching test (#`security/session-client-seam`).
 - **Closed by doc/config/deferral (NOT code-fixed):** M3, M4, M5, M8, M9 (see RA-8).
-- **Open / partial:** RA-7 (latent IPv6, Info); RA-11-E (`/policies/deploy` external `vellar-sdk`
+- **Open / partial:** RA-11-E (`/policies/deploy` external `vellar-sdk`
   client — unverifiable in-repo); RA-6/L-3 (connector-factory delegation-edge test — cheap follow-up);
   RA-3's L-1/L-2/L-5 (list-route inject-clock seam, sibling-id exposure, stale-record display — all Low,
   acceptable-with-documentation).
@@ -1158,7 +1166,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 | **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                           |
 | **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                   |
 | **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion); L-3 delegation edge **open** (Low)                             |
-| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | open (latent; no reachable path)                                                                  |
+| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | closed-by-test (byte-level IPv6 range check, every encoding)                                      |
 | **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                           |
 | **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                       |
 | **RA-10**   | Network classification from defaulted passphrase (class) | Med  | closed-by-test (explicit STELLAR_NETWORK ×3 svcs, #233)                                           |
@@ -1198,7 +1206,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the two deferred
 prerequisites (M5, V3), the two operator-owned V6 dashboard facts, the external-SDK confirmation
 (RA-11-E), and — conditioning every verdict — the unaudited `vellar-sdk`/`passkey-kit`. Testnet posture
-is sound today. The residual open items are Low/Info (I1, RA-7, RA-6/L-3, RA-3/L-1/L-2/L-5) and are
+is sound today. The residual open items are Low/Info (I1, RA-6/L-3, RA-3/L-1/L-2/L-5) and are
 acceptable-with-documentation, not go/no-go gates.
 
 ---

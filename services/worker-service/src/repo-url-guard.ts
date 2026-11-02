@@ -35,8 +35,51 @@ export function parseHttpsRepoUrl(repoUrl: string): URL {
   return url;
 }
 
+/** Parse a valid IPv6 literal (as accepted by `isIP`) into its eight 16-bit
+ * groups. Handles `::` compression, an embedded dotted-quad tail, any letter
+ * case, zero-padding, and a trailing `%zone` id. Returns undefined if the text
+ * is not a well-formed address, which the caller treats as blocked. */
+function ipv6Groups(ip: string): number[] | undefined {
+  let text = ip.toLowerCase();
+  const zone = text.indexOf("%");
+  if (zone !== -1) text = text.slice(0, zone);
+
+  // A dotted-quad tail (`::ffff:127.0.0.1`) stands for the last two groups.
+  const tail = text.match(/^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (tail) {
+    const octets = [tail[2], tail[3], tail[4], tail[5]].map(Number);
+    if (octets.some((o) => !Number.isInteger(o) || o > 255)) return undefined;
+    const [a, b, c, d] = octets as [number, number, number, number];
+    text = `${tail[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+
+  const halves = text.split("::");
+  if (halves.length > 2) return undefined;
+  const parse = (part: string): number[] | undefined => {
+    if (part === "") return [];
+    const groups = part.split(":").map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN));
+    return groups.some(Number.isNaN) ? undefined : groups;
+  };
+  const head = parse(halves[0] ?? "");
+  const rest = parse(halves[1] ?? "");
+  if (!head || !rest) return undefined;
+
+  if (halves.length === 1) return head.length === 8 ? head : undefined;
+  const missing = 8 - head.length - rest.length;
+  if (missing < 1) return undefined;
+  return [...head, ...new Array<number>(missing).fill(0), ...rest];
+}
+
+/** The IPv4 address held in two 16-bit groups, as dotted-quad text. */
+function v4FromGroups(hi: number, lo: number): string {
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+
 /** True when an IP literal is loopback, private, link-local, or otherwise not a
- * public routable address that the build host should ever fetch from. */
+ * public routable address that the build host should ever fetch from. An IPv6
+ * literal that EMBEDS an IPv4 address (mapped, NAT64, SIIT, 6to4) is judged by
+ * that IPv4 address; this works on the parsed 128 bits, never on the text, so
+ * hex / expanded / padded / upper-case spellings cannot slip past (RA-7). */
 export function isBlockedAddress(ip: string): boolean {
   const kind = isIP(ip);
   if (kind === 4) {
@@ -55,14 +98,39 @@ export function isBlockedAddress(ip: string): boolean {
     return false;
   }
   if (kind === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true; // loopback / unspecified
-    if (lower.startsWith("fe80")) return true; // link-local
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
-    if (lower.startsWith("ff")) return true; // multicast
-    // IPv4-mapped ::ffff:a.b.c.d — re-check the embedded v4.
-    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped && mapped[1]) return isBlockedAddress(mapped[1]);
+    const g = ipv6Groups(ip);
+    if (!g) return true; // isIP said v6 but we could not parse it: fail closed
+    const [g0, g1, g2, g3, g4, g5, g6, g7] = g as [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    const upperFiveZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
+
+    if (upperFiveZero && g5 === 0) return true; // ::/96 — unspecified, loopback, deprecated IPv4-compatible
+    if (upperFiveZero && g5 === 0xffff) return isBlockedAddress(v4FromGroups(g6, g7)); // ::ffff:0:0/96 IPv4-mapped
+    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) {
+      return isBlockedAddress(v4FromGroups(g6, g7)); // ::ffff:0:0:0/96 IPv4-translated (SIIT)
+    }
+    if (g0 === 0x64 && g1 === 0xff9b) {
+      if (g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+        return isBlockedAddress(v4FromGroups(g6, g7)); // 64:ff9b::/96 NAT64
+      }
+      if (g2 === 1) return true; // 64:ff9b:1::/48 local-use NAT64 (RFC 8215)
+    }
+    if (g0 === 0x2002) return isBlockedAddress(v4FromGroups(g1, g2)); // 2002::/16 6to4
+    if (g0 === 0x2001 && g1 === 0) return true; // 2001::/32 Teredo
+    if (g0 === 0x2001 && g1 === 0xdb8) return true; // 2001:db8::/32 documentation
+    if (g0 === 0x100 && g1 === 0 && g2 === 0 && g3 === 0) return true; // 100::/64 discard-only
+    if ((g0 & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+    if ((g0 & 0xffc0) === 0xfec0) return true; // fec0::/10 deprecated site-local
+    if ((g0 & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+    if ((g0 & 0xff00) === 0xff00) return true; // ff00::/8 multicast
     return false;
   }
   // Not a parseable IP literal — treat as blocked (caller resolves hostnames).
