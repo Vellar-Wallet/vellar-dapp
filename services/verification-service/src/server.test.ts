@@ -22,7 +22,7 @@ const G1 = "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM";
 // valid value in the environment for that call to succeed.
 const PREVIOUS_RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 beforeAll(() => {
-  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend.onrender.com";
+  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend-production.up.railway.app";
 });
 afterAll(() => {
   if (PREVIOUS_RENDER_EXTERNAL_URL === undefined) {
@@ -381,7 +381,9 @@ describe("GET /verification/:contractId/status", () => {
 
   it("returns the latest record's status", async () => {
     const records = createMemoryVerificationRepository();
-    app = buildServer({ records });
+    // Inject the fake: without it buildServer would construct a real client for
+    // the configured FACILITATOR_URL and call the live facilitator.
+    app = buildServer({ records, x402FacilitatorClient: fakeFacilitatorClient() });
     const submit = await app.inject({
       method: "POST",
       url: "/verification/submit",
@@ -470,7 +472,7 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
     const challengeB64 = res.headers["payment-required"] as string;
     const challenge = JSON.parse(Buffer.from(challengeB64, "base64").toString("utf8"));
     expect(challenge.resource.url).toBe(
-      "https://vellar-backend.onrender.com/verification/:contractId",
+      "https://vellar-backend-production.up.railway.app/verification/:contractId",
     );
     expect(challenge.resource.url).not.toContain("localhost");
   });

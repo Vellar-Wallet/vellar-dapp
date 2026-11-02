@@ -6,6 +6,7 @@ import {
   domainMetrics,
   recordOutcome,
   publicBaseUrlFromEnv,
+  facilitatorUrlFromEnv,
 } from "@vellar/service-kit";
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
@@ -33,11 +34,12 @@ export interface LifecycleServiceDeps {
   reader: AccountReader;
   networkPassphrase?: string;
   /** x402 facilitator client for the /lifecycle/execute payment gate. Defaults
-   * to a real HTTPFacilitatorClient hitting vellar-facilitator. Tests inject
+   * to a real HTTPFacilitatorClient at the URL in FACILITATOR_URL (required: the service
+   * refuses to boot without it; there is no built-in host). Tests inject
    * `fakeFacilitatorClient()` instead: x402ResourceServer.initialize() (run on
    * every buildServer() call) otherwise makes a real network call to the live
-   * facilitator per test, which is slow and flaky against a cold Render
-   * instance — see docs/decisions.md. */
+   * facilitator per test, which is slow and flaky against a cold or remote
+   * facilitator. See docs/decisions.md. */
   x402FacilitatorClient?: FacilitatorClient;
 }
 
@@ -181,8 +183,7 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
   const x402PublicResourceUrl = `${publicBaseUrlFromEnv()}/lifecycle/execute`;
 
   const x402FacilitatorClient =
-    deps.x402FacilitatorClient ??
-    new HTTPFacilitatorClient({ url: "https://vellar-facilitator-production.up.railway.app" });
+    deps.x402FacilitatorClient ?? new HTTPFacilitatorClient({ url: facilitatorUrlFromEnv() });
   const x402Server = new x402ResourceServer(x402FacilitatorClient)
     .register("stellar:pubnet", new ExactStellarScheme())
     .registerExtension(bazaarResourceServerExtension);

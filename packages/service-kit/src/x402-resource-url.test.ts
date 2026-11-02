@@ -13,9 +13,12 @@ import {
 describe("validatePublicResourceUrl", () => {
   it("accepts a valid public https URL", () => {
     expect(() =>
-      validatePublicResourceUrl("https://vellar-backend.onrender.com/lifecycle/execute", {
-        requireHttps: true,
-      }),
+      validatePublicResourceUrl(
+        "https://vellar-backend-production.up.railway.app/lifecycle/execute",
+        {
+          requireHttps: true,
+        },
+      ),
     ).not.toThrow();
   });
 
@@ -45,9 +48,12 @@ describe("validatePublicResourceUrl", () => {
 
   it("rejects http when requireHttps is true (stellar:pubnet must be https)", () => {
     expect(() =>
-      validatePublicResourceUrl("http://vellar-backend.onrender.com/lifecycle/execute", {
-        requireHttps: true,
-      }),
+      validatePublicResourceUrl(
+        "http://vellar-backend-production.up.railway.app/lifecycle/execute",
+        {
+          requireHttps: true,
+        },
+      ),
     ).toThrow(X402ResourceUrlError);
   });
 
@@ -133,23 +139,27 @@ describe("publicBaseUrlFromEnv", () => {
 
   it("uses RENDER_EXTERNAL_URL when PUBLIC_BASE_URL is absent", () => {
     expect(
-      publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com" }),
-    ).toBe("https://vellar-backend.onrender.com");
+      publicBaseUrlFromEnv({
+        RENDER_EXTERNAL_URL: "https://vellar-backend-production.up.railway.app",
+      }),
+    ).toBe("https://vellar-backend-production.up.railway.app");
   });
 
   it("prefers an explicit PUBLIC_BASE_URL over RENDER_EXTERNAL_URL", () => {
     expect(
       publicBaseUrlFromEnv({
         PUBLIC_BASE_URL: "https://api.vellar.xyz",
-        RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com",
+        RENDER_EXTERNAL_URL: "https://vellar-backend-production.up.railway.app",
       }),
     ).toBe("https://api.vellar.xyz");
   });
 
   it("strips a trailing slash", () => {
     expect(
-      publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "https://vellar-backend.onrender.com/" }),
-    ).toBe("https://vellar-backend.onrender.com");
+      publicBaseUrlFromEnv({
+        RENDER_EXTERNAL_URL: "https://vellar-backend-production.up.railway.app/",
+      }),
+    ).toBe("https://vellar-backend-production.up.railway.app");
   });
 
   it("still rejects a loopback value even if someone sets it explicitly", () => {
@@ -160,7 +170,9 @@ describe("publicBaseUrlFromEnv", () => {
 
   it("rejects a non-https RENDER_EXTERNAL_URL (defense in depth, though Render always gives https)", () => {
     expect(() =>
-      publicBaseUrlFromEnv({ RENDER_EXTERNAL_URL: "http://vellar-backend.onrender.com" }),
+      publicBaseUrlFromEnv({
+        RENDER_EXTERNAL_URL: "http://vellar-backend-production.up.railway.app",
+      }),
     ).toThrow(X402ResourceUrlError);
   });
 });

@@ -186,3 +186,4 @@ export function hostFromEnv(defaultHost: string, env: NodeJS.ProcessEnv = proces
 }
 
 export { applyMigrations, type MigrationClient } from "./migrations";
+export { facilitatorUrlFromEnv, FacilitatorUrlError } from "./facilitator-url";
