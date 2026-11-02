@@ -46,7 +46,7 @@ export function deployEnvFromEnv(env: NodeJS.ProcessEnv): DeployEnv {
 }
 
 /** A flag is "set" unless it is blank, 0 or false (any other value enables it). */
-function flagIsSet(value: string | undefined): boolean {
+export function flagIsSet(value: string | undefined): boolean {
   const v = value?.trim().toLowerCase();
   return !!v && v !== "0" && v !== "false";
 }
@@ -77,11 +77,9 @@ function databaseViolations(env: NodeJS.ProcessEnv): string[] {
   if (!url) {
     return ["DATABASE_URL is required on staging (its own Postgres; never in-memory)."];
   }
-  const production = env.PRODUCTION_DATABASE_URL?.trim();
-  // Compared, never printed: connection strings carry credentials.
-  if (production && production === url) {
-    return ["DATABASE_URL points at the same database as production."];
-  }
+  // Which TIER the database belongs to is checked against a marker stored IN the database
+  // (deployment-marker.ts), not by comparing connection strings: that would need the
+  // production credentials inside the staging environment.
   return [];
 }
 

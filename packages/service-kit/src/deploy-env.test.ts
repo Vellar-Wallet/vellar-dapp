@@ -111,24 +111,12 @@ describe("deployEnvViolations (staging)", () => {
       expect(deployEnvViolations({ ...goodStaging(), DATABASE_URL: "  " })).toHaveLength(1);
     });
 
-    it("rejects staging pointed at the production database when PRODUCTION_DATABASE_URL is known", () => {
-      const prod = "postgres://prod:pw@prod-db.internal:5432/vellar";
-      const v = deployEnvViolations({
-        ...goodStaging(),
-        DATABASE_URL: prod,
-        PRODUCTION_DATABASE_URL: prod,
-      });
-      expect(v.join(" ")).toMatch(/same database as production/i);
-    });
-
-    it("does not leak the connection string into the message", () => {
-      const prod = "postgres://prod:s3cretpw@prod-db.internal:5432/vellar";
-      const v = deployEnvViolations({
-        ...goodStaging(),
-        DATABASE_URL: prod,
-        PRODUCTION_DATABASE_URL: prod,
-      });
-      expect(v.join(" ")).not.toContain("s3cretpw");
+    it("does not consult PRODUCTION_DATABASE_URL: the tier is checked by the marker stored in the database", () => {
+      // Production credentials must never have to be placed in the staging environment.
+      const url = "postgres://staging-user:pw@staging-db.internal:5432/vellar_staging";
+      expect(
+        deployEnvViolations({ ...goodStaging(), DATABASE_URL: url, PRODUCTION_DATABASE_URL: url }),
+      ).toEqual([]);
     });
   });
 

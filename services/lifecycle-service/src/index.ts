@@ -3,6 +3,7 @@ import {
   portFromEnv,
   startService,
   enforceDeployEnvPolicy,
+  horizonUrlFromEnv,
 } from "@vellar/service-kit";
 import { createHorizonAccountReader } from "./horizon";
 import { buildServer } from "./server";
@@ -11,7 +12,9 @@ import { buildServer } from "./server";
 // testnet-pinned, on its own database, with every production escape hatch unset.
 enforceDeployEnvPolicy("lifecycle-service");
 
-const horizonUrl = process.env.HORIZON_URL || "https://horizon-testnet.stellar.org";
+// RA-10 class: Horizon follows the explicit STELLAR_NETWORK and refuses a mismatch; it never
+// defaults to testnet.
+const horizonUrl = horizonUrlFromEnv();
 
 const app = buildServer({ reader: createHorizonAccountReader(horizonUrl) });
 await startService(app, {

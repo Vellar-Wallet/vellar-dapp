@@ -78,6 +78,13 @@ same code, differing from production only in its variables and its database:
   unless it is pinned to testnet, has its own `DATABASE_URL`, has `ALLOW_INMEMORY` and
   `ALLOW_SINGLE_KEY_ATTESTOR` unset, and allows no production CORS origin
   (`packages/service-kit/src/deploy-env.ts`);
+- a **database tier marker**: each database holds a one-row `deployment_marker` table. A staging
+  process refuses to boot unless its database says `staging`; a production process refuses a
+  database that says `staging`. No production connection string is ever placed in staging.
+  Production adopts its (unmarked) database as `production` on its first boot after this change
+  (one new table and one row). Staging never adopts silently: set `INIT_DEPLOY_MARKER=1` for ONE
+  boot against the new, EMPTY staging database, then unset it (an existing, non-empty database is
+  refused);
 - testnet-only keys generated for staging, with no production secret reused;
 - it deploys from a **`staging` branch**, and **nothing deploys production automatically**.
 
@@ -101,6 +108,8 @@ nothing in Railway; the staging Postgres and a second running service may be bil
    trigger or require CI first. This is the M9 control; M9 stays reopened until you confirm it.
 5. **Add the staging Postgres.** In `staging`: New -> Database -> PostgreSQL. Point `DATABASE_URL`
    at that service's variable; no variable in `staging` may reference the `production` environment.
+   Set `INIT_DEPLOY_MARKER=1` for the first boot only, so the services claim the empty database as
+   staging, then remove it.
 6. **Paste the variables.** Raw Editor, from `infra/staging/staging.env.example`, then add the three
    secrets (`RELAYER_API_KEY`, `SPONSOR_SECRET_KEY`, `SPONSOR_PUBLIC_KEY`) with **testnet-only**
    values, the sponsor funded from friendbot.
