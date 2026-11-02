@@ -99,21 +99,20 @@ Problems found (verified by reading the code; the hash mismatch was also compute
 - Single-signature path: exactly one context, `revoke`, one argument; otherwise require
   the attest threshold.
 - Emit an event on each authorisation that records the path (`single_revoke` with the signer
-  index, or `threshold`). Whether a custom account may emit events from `__check_auth` is to be
-  confirmed on testnet; the fallback is the registry's own revoke event plus an off-chain watcher
-  that reads the signature count from the transaction.
-- **Where the cap lives.** A custom account's `__check_auth` is an authorisation hook; this design
-  assumes it cannot persist state (to be confirmed on testnet), so the counter is not incremented
-  there. Instead the attestor exposes `revoke_record(record, by: Option<u32>)`:
-  - `__check_auth` accepts a **single signature** only when the one call is
-    `revoke_record(record, Some(i))` on this attestor, `i` equals the index of the sole
-    signature, and signer `i` is under its cap (it can read the counters). Otherwise it requires
-    the 2-of-3 attest threshold, which also covers `revoke_record(record, None)`.
-  - `revoke_record` records the ledger for signer `i` in a ring of its last 3 revoke ledgers
-    (refusing the single-signer path if the oldest is within 17,280 ledgers), then calls the
-    registry's `revoke(record)`. The registry's attestor is this contract, and a contract calling
-    another is authorised as the invoker, so no second authorisation is needed.
-    The fast path therefore no longer authorises `revoke` on the registry directly.
+  index, or `threshold`). A custom account can emit events from `__check_auth` (verified on testnet, see "Gate: result").
+- **Where the cap lives: inside `__check_auth`, verified on testnet** (see "Gate: result" below; an
+  earlier draft routed it through a separate `revoke_record` function on the assumption that
+  `__check_auth` could not write state, which the real host disproved). `__check_auth` accepts a
+  **single signature** only when all of the following hold, and otherwise requires the 2-of-3 attest
+  threshold:
+  - there is exactly one signature, and exactly one call in the authorisation: `revoke(record)` on the
+    bound registry, with one argument;
+  - signer `i` (the index of that signature) is under its cap: its ring of the last 3 single-signature
+    revoke ledgers has fewer than 3 entries, or the oldest is at least 17,280 ledgers old.
+    When it accepts, it writes the current ledger into signer `i`'s ring in the same call. A refused
+    attempt writes nothing. The write is part of the transaction, so if the revoke later fails the counter
+    rolls back with it. The transaction footprint must include the signer's counter key as read-write;
+    the coordinator always simulates first, which discovers it.
 
 ### Signers: independent hosts that re-verify before signing
 
@@ -247,53 +246,60 @@ boundary tests in `1bf77d6`).
    (location not recorded here).
 4. Signer B: Hetzner Cloud proposed, in a separate account with the independence requirements above.
 
-## Gate: verify on testnet before anything builds on `revoke_record`
+## Gate: result (verified on testnet, 2026-11-02)
 
-The 3-per-24-hours cap rests on one assumption: **a custom account's `__check_auth` cannot persist
-state on the real Soroban host**, which is why the counter lives in `revoke_record` rather than in
-`__check_auth`. The contract's own tests call `__check_auth` directly and cannot answer this; only a
-real signed authorisation through the host can. **Nothing is to be built on `revoke_record` until this is
-verified and the result is recorded here.**
+The cap originally rested on one assumption: a custom account's `__check_auth` cannot persist state on
+the real Soroban host. The contract's own tests call `__check_auth` directly and cannot answer that, so a
+throwaway probe was run through a real signed authorisation on the host. **The assumption is false.**
 
-**Status: NOT YET VERIFIED.** The probe could not be built in the working environment because compiling
-any Soroban contract downloads dependencies from crates.io and the local cargo cache is empty. It is
-waiting on that go-ahead; no result is claimed.
+**Setup.** A minimal custom account (outside this repository, built with `cargo build --locked` against
+the repo's pinned `Cargo.lock`, wasm sha256 `01e2bc32a94b9637a455f9afd0cacd2e2546b00c6663aa87feeb52e1ec2ca85e`)
+deployed to testnet as `CB27QTZRE23ROOEWHTFPILKPNSQSWA5BM6CPXWKYREQERN2WJNHHLWAY`, funded from a fresh
+throwaway key (`GBRZQBWTW3C4Z6LFD2S3YD5NE7EISVKP62FQRNN7PKPBBLSGZGZ3Y5GK`, used for nothing else). Its
+`__check_auth` takes a mode number as the "signature" and tries one thing per mode. Each mode was
+simulated, then sent, with a hand-built authorisation entry for the account; state was read back from the
+ledger afterwards. Both networks report protocol version 29 (checked through each network's RPC on
+2026-11-02).
 
-Experiment (throwaway probe, testnet only, outside this repository):
+| Mode | `__check_auth` tries                   | Simulation | Transaction                                                                 | State after                                                                                |
+| ---- | -------------------------------------- | ---------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 0    | nothing (control)                      | ok         | SUCCESS, `41d22e61da2170869f805181ff7226b21c96d2bd93598cfbfa6b1b4253da59a8` | unchanged: counter 0, persisted 0, TTL 5647507                                             |
+| 1    | write instance storage                 | ok         | SUCCESS, `7101d044d8e389a78ab4c07dcb4d7ea7c208090e023d4629552a3a097a324276` | **counter 0 to 1**                                                                         |
+| 2    | write persistent storage               | ok         | SUCCESS, `107fcdb2a64a075aa9581998a96bb77303359ebbb024525ebfd95587d0189cd5` | **persisted 0 to 1**                                                                       |
+| 3    | extend instance TTL (a real extension) | ok         | SUCCESS, `8fbd90e16e84a91e0415ab0f7305b60817d116cb3acded97ecdb1c7a99bce0da` | **TTL 5647507 to 7526572**                                                                 |
+| 4    | publish an event                       | ok         | SUCCESS, `26f14b5d4579efcac0b4444b8471b64b89e05145d1700c5dcd3b1df476f57423` | one contract event, topic `probe`, visible through `getEvents` and in the transaction meta |
+| 5    | read storage                           | ok         | SUCCESS, `3434b1925f1635dd2d9e426aaa2bf6e7f66f79f0538bbc7d07f526e3cf04b301` | unchanged                                                                                  |
 
-- A custom-account contract whose `__check_auth` takes a mode number as its "signature" and tries one
-  thing per mode: `0` no write (control), `1` write instance storage, `2` write persistent storage,
-  `3` extend the instance TTL, `4` publish an event, `5` read storage.
-- A `ping` function that requires the contract's own authorisation, so the host runs `__check_auth`.
-- A script that, for each mode, simulates `ping` with a hand-built authorisation entry (enforcing
-  mode), then sends it, then reads the counters back with view functions.
+Every mode was accepted at simulation and applied on-chain, so no refused-mode transaction had to be
+forced. The control left state untouched, so the writes in modes 1 to 3 are the probe's doing and not
+the harness.
 
-Record, per mode: the simulation result and error text, whether the transaction succeeded, and whether
-the state changed afterwards.
+**What this proves and what it does not.**
 
-| Mode | What `__check_auth` tries | Simulation | Sent    | State changed | Result  |
-| ---- | ------------------------- | ---------- | ------- | ------------- | ------- |
-| 0    | nothing (control)         | not run    | not run | not run       | pending |
-| 1    | write instance storage    | not run    | not run | not run       | pending |
-| 2    | write persistent storage  | not run    | not run | not run       | pending |
-| 3    | extend instance TTL       | not run    | not run | not run       | pending |
-| 4    | publish an event          | not run    | not run | not run       | pending |
-| 5    | read storage              | not run    | not run | not run       | pending |
+- Proves: on protocol 29 a custom account's `__check_auth` can write instance and persistent storage,
+  extend TTLs and publish contract events, and those effects persist when the transaction succeeds.
+- Does not prove: anything about signature verification (the probe checks none), behaviour under a
+  different protocol version, or that a write survives a transaction that later fails (the usual rollback
+  is expected and is the desired behaviour for the cap, but it was not tested here).
+- Re-run the probe against the final contract in the testnet rehearsal, and again after any protocol
+  upgrade, as an acceptance test. The coordinator must always simulate first so the footprint includes
+  the keys `__check_auth` writes.
 
-What each outcome changes:
+**What changes in the design.**
 
-- **Writes refused (expected):** the `revoke_record` design stands as written. The existing threshold
-  contract's `renew_instance` call inside `__check_auth` is then itself a bug to fix (TTL extension
-  there would fail on the real host).
-- **Writes allowed:** the cap can live inside `__check_auth` and `revoke_record` is unnecessary;
-  simplify the design.
-- **TTL extension or events allowed but storage writes refused:** keep `revoke_record` for the counter
-  and use the allowed operation for the keep-alive and the alert event.
+- `revoke_record` is dropped. The 3-per-24-hours cap is enforced directly in `__check_auth` (see
+  "Contract changes"), which is simpler and keeps the registry's attestor authorisation in one place.
+- The alert event for each single-signature revoke can be emitted from `__check_auth` itself.
+- The existing `threshold-attestor` already calls `extend_ttl` in `__check_auth` (`renew_instance`); that
+  is therefore fine on protocol 29, and it was not the bug it might have been.
+
+Acceptance tests for the cap are unchanged (the 4th single-signer revoke in the window is refused; per-signer
+allowances are independent; the 17,279 and 17,280 ledger boundary; a 2-of-3 revoke consumes no allowance; a
+refused attempt changes no counter), plus: a revoke that fails after authorisation rolls its counter back.
 
 ## Still open
 
 1. Confirm the hardware wallet can sign a raw 32-byte Ed25519 payload (testnet rehearsal).
 2. Signer A's host: can Railway do an isolated wasm rebuild, or does A need a Docker-capable host?
 3. A second person to administer the accounts for signers A and B.
-4. The testnet gate above (whether `__check_auth` may write state or emit events). Nothing builds on
-   `revoke_record` until it is recorded.
+4. Re-run the `__check_auth` write probe against the final contract in the rehearsal, and after any protocol upgrade (the question itself is settled; see "Gate: result").
