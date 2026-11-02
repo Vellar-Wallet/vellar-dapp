@@ -3,6 +3,9 @@ import {
   canRevokeSigner,
   classifySigners,
   isLastPasskey,
+  isLastSigner,
+  revokeConfirmationMessage,
+  LAST_SIGNER_REVOCATION_MESSAGE,
   signerMutationErrorMessage,
   walletContractErrorCode,
   type RawSigner,
@@ -175,5 +178,40 @@ describe("wallet contract error mapping", () => {
       /already exists/,
     );
     expect(signerMutationErrorMessage(new Error("boom"), "fallback")).toBe("fallback");
+  });
+});
+
+describe("last-signer confirmation (#595)", () => {
+  it("detects a wallet with a single signer (last remaining)", () => {
+    const entries = classifySigners([passkey("cred-1")], opts);
+    expect(isLastSigner(entries[0]!, entries)).toBe(true);
+  });
+
+  it("is false for a two-signer wallet revoking one", () => {
+    const entries = classifySigners([passkey("cred-1"), passkey("cred-2")], opts);
+    expect(isLastSigner(entries[0]!, entries)).toBe(false);
+    expect(isLastSigner(entries[1]!, entries)).toBe(false);
+  });
+
+  it("returns a distinct last-signer message for the single-signer case", () => {
+    const entries = classifySigners([passkey("cred-1")], opts);
+    const msg = revokeConfirmationMessage(entries[0]!, entries);
+    expect(msg).toBe(LAST_SIGNER_REVOCATION_MESSAGE);
+    expect(msg).toMatch(/permanently lock you out/);
+  });
+
+  it("returns a routine confirmation for a two-signer wallet", () => {
+    const entries = classifySigners([passkey("cred-1"), passkey("cred-2")], opts);
+    const msg = revokeConfirmationMessage(entries[0]!, entries);
+    expect(msg).not.toBe(LAST_SIGNER_REVOCATION_MESSAGE);
+    expect(msg).toMatch(/Revoke this passkey/);
+  });
+
+  it("returns the distinct message even for non-passkey last signer", () => {
+    const entries = classifySigners([ed("GAGENT")], opts);
+    expect(isLastSigner(entries[0]!, entries)).toBe(true);
+    expect(revokeConfirmationMessage(entries[0]!, entries)).toBe(
+      LAST_SIGNER_REVOCATION_MESSAGE,
+    );
   });
 });
