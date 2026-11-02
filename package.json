@@ -10,7 +10,8 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "test:workflows": "node --test \".github/workflows/*.test.mjs\"",
+    "test:workflows": "node --test \".github/workflows/*.test.mjs\" \"scripts/*.test.mjs\"",
+    "check:render-urls": "node scripts/check-no-render-urls.mjs",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yaml,yml}\""

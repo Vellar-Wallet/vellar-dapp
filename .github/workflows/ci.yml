@@ -64,6 +64,10 @@ jobs:
       - name: Workflow script tests
         run: pnpm test:workflows
 
+      # Render is retired: no Render-hosted URL may remain in non-doc source.
+      - name: No Render hosts in source
+        run: pnpm check:render-urls
+
       - name: Build
         run: pnpm build
 
