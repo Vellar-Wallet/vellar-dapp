@@ -474,6 +474,15 @@ read oracle. Same build-box gating as H2.
   and there is **zero `${{ }}` interpolation** across all workflows — the RCE class is absent.
   **Fix:** escape filenames before embedding; do **not** add a checkout step.
 
+> **Status (I1): CLOSED.** The workflow now renders each filename as exactly one Markdown code span:
+> control, line/paragraph-separator and bidi characters are replaced, names are capped at 200
+> characters, and the delimiter is one backtick longer than the longest run inside (padded when the
+> name starts or ends with a backtick). No checkout step was added. `close-prs-outside-contrib.test.mjs`
+> extracts the shipped `github-script` body and runs it against a fake `github`/`context` with hostile
+> names (span-closing backtick, fence, newline list injection, CR, bidi, only-backticks, 5000 chars);
+> `pnpm test:workflows` runs it in CI. (`close-prs-to-main.yml` embeds only the author's GitHub login,
+> whose charset cannot carry Markdown.)
+
 ---
 
 ## Remediation order
@@ -1162,7 +1171,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 | **L5**      | normalizeOrigin trailing-dot FQDNs                       | Low  | closed-by-test (#230)                                                                             |
 | **L6/L6b**  | Cleanup one-tx + unpaginated Horizon / "safe" copy       | Low  | closed-by-test (split + pagination) + copy (#230)                                                 |
 | **L7**      | 14 high dep advisories                                   | Low  | closed-by-config (overrides; audit gate)                                                          |
-| **I1**      | Markdown injection in bot comment                        | Info | open (accepted — no code exec; escape recommended)                                                |
+| **I1**      | Markdown injection in bot comment                        | Info | closed-by-test (filenames rendered as one escaped code span; CI runs the workflow script)         |
 | **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                           |
 | **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                     |
 | **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                   |
@@ -1215,7 +1224,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the two deferred
 prerequisites (M5, V3), the two operator-owned V6 dashboard facts, the external-SDK confirmation
 (RA-11-E), and — conditioning every verdict — the unaudited `vellar-sdk`/`passkey-kit`. Testnet posture
-is sound today. The residual open items are Low/Info (I1, RA-3/L-1/L-2/L-5) and are
+is sound today. The residual open items are Low/Info (RA-3/L-1/L-2/L-5) and are
 acceptable-with-documentation, not go/no-go gates.
 
 ---
