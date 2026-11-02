@@ -24,6 +24,14 @@ export {
   type Network,
   type NetworkInputs,
 } from "./network-config";
+export {
+  assertDeployEnvPolicy,
+  DeployEnvPolicyError,
+  deployEnvFromEnv,
+  deployEnvViolations,
+  enforceDeployEnvPolicy,
+  type DeployEnv,
+} from "./deploy-env";
 
 export {
   validatePublicResourceUrl,
