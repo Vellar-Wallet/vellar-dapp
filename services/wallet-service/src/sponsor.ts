@@ -154,6 +154,16 @@ export function createSponsorSubmitter(config: SponsorConfig): TransactionSubmit
           "sponsor_submit_failed",
         );
       }
+      // TRY_AGAIN_LATER means the network did not accept the tx into its queue,
+      // so polling its hash can only time out. Report the definite not-landed
+      // outcome (releasable for replay protection) instead of a 60s tx_timeout.
+      // DUPLICATE (already queued) falls through and is polled like PENDING.
+      if (sent.status === "TRY_AGAIN_LATER") {
+        throw new SubmissionError(
+          "Network is busy and did not accept the transaction; try again shortly.",
+          "sponsor_try_again_later",
+        );
+      }
 
       const deadline = Date.now() + 60_000;
       for (;;) {

@@ -8,10 +8,18 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { createMemoryAuditLog, createMemoryWalletRepository, type AuditLog } from "./repository";
+import {
+  createMemoryAuditLog,
+  createMemorySessionRepository,
+  createMemoryWalletRepository,
+  type AuditLog,
+  type SessionRepository,
+} from "./repository";
 import { createUnconfiguredSubmitter, SubmissionError, type TransactionSubmitter } from "./relayer";
 import { buildServer } from "./server";
 import { deriveWalletContractId } from "./derivation";
+import { createMemoryReplayGuard } from "./replay";
+import { buildInvokeTx, KNOWN_WALLET, OTHER_CONTRACT, PASSPHRASE } from "./test-fixtures";
 
 function workingSubmitter(): TransactionSubmitter {
   return { submit: vi.fn().mockResolvedValue({ hash: "txhash123" }) };
@@ -646,6 +654,106 @@ describe("session management (§5.1) — bearer capability (RA-3/M1)", () => {
     expect(expired.json()).toEqual(bogus.json());
   });
 
+  // RA-3 L-1: the list route must judge expiry with the SAME injected clock the
+  // bearer check uses. It used to fall back to the store's wall clock, so under
+  // an injected clock the two disagreed (and expiry on the list was untestable).
+  it("lists sessions as of the injected clock, not the wall clock (L-1)", async () => {
+    // 2026-08 is long past in real time: a wall-clock filter would call both
+    // sessions expired and return [].
+    const clock = new Date("2026-08-09T00:00:00.000Z");
+    app = buildServer({ submitter: workingSubmitter(), now: () => clock });
+    const create = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+    const connect = await app.inject({
+      method: "POST",
+      url: "/wallet/connect",
+      payload: { keyId: createBody.keyId, network: "testnet" },
+    });
+    const ids = [create.json().sessionId, connect.json().sessionId] as string[];
+
+    const res = await app.inject({
+      url: "/wallet/sessions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(ids[0]!),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(
+      res
+        .json()
+        .sessions.map((s: { id: string }) => s.id)
+        .sort(),
+    ).toEqual([...ids].sort());
+  });
+
+  it("omits a session that expired under the injected clock from the list (L-1)", async () => {
+    let clock = new Date("2026-08-09T00:00:00.000Z");
+    app = buildServer({ submitter: workingSubmitter(), now: () => clock });
+    const old = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+    const oldId = old.json().sessionId as string;
+    // 3 days later a second device connects; the first is never used again.
+    clock = new Date("2026-08-12T00:00:00.000Z");
+    const fresh = await app.inject({
+      method: "POST",
+      url: "/wallet/connect",
+      payload: { keyId: createBody.keyId, network: "testnet" },
+    });
+    const freshId = fresh.json().sessionId as string;
+    // 8 days after the first session's last use: it has expired, the second is live.
+    clock = new Date("2026-08-17T00:00:01.000Z");
+
+    const res = await app.inject({
+      url: "/wallet/sessions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(freshId),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const listed = res.json().sessions.map((s: { id: string }) => s.id);
+    expect(listed).toEqual([freshId]);
+    expect(listed).not.toContain(oldId);
+  });
+
+  // RA-3 L-5: GET /wallet/session returned the record as it was BEFORE the
+  // authorised-use slide, so the caller saw a stale lastActiveAt / expiresAt
+  // that disagreed with what the store (and the list route) held.
+  it("GET /wallet/session shows the slid lastActiveAt and expiresAt, not the pre-slide values (L-5)", async () => {
+    let clock = new Date("2026-08-09T00:00:00.000Z");
+    app = buildServer({ submitter: workingSubmitter(), now: () => clock });
+    const create = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+    const sid = create.json().sessionId as string;
+
+    clock = new Date("2026-08-11T12:00:00.000Z");
+    const res = await app.inject({ url: "/wallet/session", headers: bearer(sid) });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().createdAt).toBe("2026-08-09T00:00:00.000Z");
+    expect(res.json().lastActiveAt).toBe("2026-08-11T12:00:00.000Z");
+    expect(res.json().expiresAt).toBe("2026-08-18T12:00:00.000Z");
+
+    // The list route reads the store; both views must now agree.
+    const list = await app.inject({
+      url: "/wallet/sessions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(sid),
+    });
+    expect(list.json().sessions[0]).toMatchObject({
+      lastActiveAt: "2026-08-11T12:00:00.000Z",
+      expiresAt: "2026-08-18T12:00:00.000Z",
+    });
+  });
+
+  it("treats a session that vanishes between find and touch as absent (401), not as authorised (L-5)", async () => {
+    const real = createMemorySessionRepository();
+    const racing: SessionRepository = { ...real, touch: async () => false };
+    app = buildServer({ submitter: workingSubmitter(), sessions: racing });
+    const create = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+
+    const res = await app.inject({
+      url: "/wallet/session",
+      headers: bearer(create.json().sessionId as string),
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: "unauthorized" });
+  });
+
   it("rejects a bad list query (400) before touching auth", async () => {
     const server = build(workingSubmitter());
     const bad = await server.inject({ url: "/wallet/sessions?network=devnet" });
@@ -691,5 +799,327 @@ describe("GET /health", () => {
     const server = build(workingSubmitter());
     const res = await server.inject({ url: "/health" });
     expect(res.json()).toEqual({ status: "ok", service: "wallet-service" });
+  });
+});
+
+describe("POST /wallet/submit replay protection (approved design 1A)", () => {
+  const LATEST = 10_000;
+  const SOON = LATEST + 6; // the kit default window
+  const wallets = () => {
+    const repo = createMemoryWalletRepository();
+    return repo;
+  };
+
+  async function register(repo: ReturnType<typeof wallets>) {
+    for (const network of ["testnet", "mainnet"] as const) {
+      await repo.insert({
+        keyId: `k-${network}`,
+        contractId: KNOWN_WALLET,
+        network,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  async function replayServer(
+    submitter: TransactionSubmitter,
+    extra: Partial<Parameters<typeof buildServer>[0]> = {},
+  ) {
+    const repo = wallets();
+    await register(repo);
+    const audit = createMemoryAuditLog();
+    app = buildServer({
+      submitter,
+      wallets: repo,
+      audit,
+      networkPassphrase: PASSPHRASE,
+      budgetNetwork: "testnet",
+      replayGuard: createMemoryReplayGuard(),
+      getLatestLedger: async () => LATEST,
+      ...extra,
+    });
+    return { server: app, audit };
+  }
+
+  const post = (server: FastifyInstance, signedXdr: string, network = "testnet") =>
+    server.inject({ method: "POST", url: "/wallet/submit", payload: { signedXdr, network } });
+
+  const tx = (nonce: string, expiration = SOON) =>
+    buildInvokeTx([{ subject: KNOWN_WALLET, nonce, expiration }]);
+
+  it("accepts a fresh submission and refuses the same signed tx the second time (409)", async () => {
+    const submitter = workingSubmitter();
+    const { server } = await replayServer(submitter);
+    const signed = tx("1");
+
+    const first = await post(server, signed);
+    const second = await post(server, signed);
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error).toBe("replay_detected");
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("concurrent identical submissions: exactly one reaches the submitter, the rest get 409", async () => {
+    // A slow submitter keeps the first request in flight while the copies arrive,
+    // which is the window where each copy would otherwise pass simulation and
+    // consume budget.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const submitter: TransactionSubmitter = {
+      submit: vi.fn(async () => {
+        await gate;
+        return { hash: "h" };
+      }),
+    };
+    const { server } = await replayServer(submitter);
+    const signed = tx("77");
+
+    const inFlight = Array.from({ length: 6 }, () => post(server, signed));
+    await vi.waitFor(() => expect(submitter.submit).toHaveBeenCalledTimes(1));
+    release();
+    const results = await Promise.all(inFlight);
+
+    expect(results.filter((r) => r.statusCode === 200)).toHaveLength(1);
+    expect(results.filter((r) => r.statusCode === 409)).toHaveLength(5);
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a re-wrapped envelope (new source, sequence, fee) with the same auth is still a replay", async () => {
+    const submitter = workingSubmitter();
+    const { server } = await replayServer(submitter);
+    const a = tx("500");
+    const b = tx("500"); // different random source account => different tx hash
+
+    expect(a).not.toBe(b);
+    expect((await post(server, a)).statusCode).toBe(200);
+    expect((await post(server, b)).statusCode).toBe(409);
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinct nonces are independent submissions", async () => {
+    const submitter = workingSubmitter();
+    const { server } = await replayServer(submitter);
+
+    expect((await post(server, tx("1"))).statusCode).toBe(200);
+    expect((await post(server, tx("2"))).statusCode).toBe(200);
+    expect(submitter.submit).toHaveBeenCalledTimes(2);
+  });
+
+  it("flipping the body `network` label cannot evade the replay check (V5: config decides)", async () => {
+    const submitter = workingSubmitter();
+    const { server } = await replayServer(submitter);
+    const signed = tx("31");
+
+    expect((await post(server, signed, "testnet")).statusCode).toBe(200);
+    expect((await post(server, signed, "mainnet")).statusCode).toBe(409);
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a tx with several auth entries is reserved all-or-nothing", () => {
+    it("refuses the whole tx when ANY entry was already reserved, and reserves none of its others", async () => {
+      const submitter = workingSubmitter();
+      const { server } = await replayServer(submitter);
+      expect((await post(server, tx("1001"))).statusCode).toBe(200);
+
+      const mixed = buildInvokeTx([
+        { subject: KNOWN_WALLET, nonce: "1002", expiration: SOON },
+        { subject: KNOWN_WALLET, nonce: "1001", expiration: SOON },
+      ]);
+      const refused = await post(server, mixed);
+      expect(refused.statusCode).toBe(409);
+
+      // B was NOT left reserved by the refused attempt: its legitimate signer
+      // can still submit it.
+      expect((await post(server, tx("1002"))).statusCode).toBe(200);
+      expect(submitter.submit).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("reservations are released only when the tx definitely did not land", () => {
+    it.each([
+      "sponsor_try_again_later",
+      "sponsor_simulation_failed",
+      "sponsor_bad_tx",
+      "sponsor_fee_too_high",
+      "sponsor_budget_exceeded",
+      "sponsor_submit_failed",
+      "relayer_not_configured",
+    ])("%s: the same signed tx can be retried", async (code) => {
+      const submitter: TransactionSubmitter = {
+        submit: vi
+          .fn()
+          .mockRejectedValueOnce(new SubmissionError("pre-send failure", code))
+          .mockResolvedValueOnce({ hash: "retry-ok" }),
+      };
+      const { server } = await replayServer(submitter);
+      const signed = tx("900");
+
+      const failed = await post(server, signed);
+      const retried = await post(server, signed);
+
+      expect(failed.statusCode).toBe(502);
+      expect(retried.statusCode).toBe(200);
+      expect(submitter.submit).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(["tx_timeout", "tx_failed", "submission_failed", "txBadSeq", "weird_relayer_code"])(
+      "%s: outcome unknown or possibly landed, so the reservation is kept and a retry is refused",
+      async (code) => {
+        const submitter: TransactionSubmitter = {
+          submit: vi.fn().mockRejectedValue(new SubmissionError("maybe landed", code)),
+        };
+        const { server } = await replayServer(submitter);
+        const signed = tx("901");
+
+        expect((await post(server, signed)).statusCode).toBe(502);
+        expect((await post(server, signed)).statusCode).toBe(409);
+        expect(submitter.submit).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("a non-SubmissionError throw has an unknown outcome: reservation kept", async () => {
+      const submitter: TransactionSubmitter = {
+        submit: vi.fn().mockRejectedValue(new Error("socket hang up")),
+      };
+      const { server } = await replayServer(submitter);
+      const signed = tx("902");
+
+      expect((await post(server, signed)).statusCode).toBe(502);
+      expect((await post(server, signed)).statusCode).toBe(409);
+    });
+
+    it("a failing release does not turn a clean refusal into a crash", async () => {
+      const guard = createMemoryReplayGuard();
+      guard.release = async () => {
+        throw new Error("db gone");
+      };
+      const submitter: TransactionSubmitter = {
+        submit: vi.fn().mockRejectedValue(new SubmissionError("pre-send", "sponsor_bad_tx")),
+      };
+      const { server } = await replayServer(submitter, { replayGuard: guard });
+
+      const res = await post(server, tx("903"));
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toBe("sponsor_bad_tx");
+    });
+  });
+
+  describe("fails closed", () => {
+    it("503 and no submission when the replay store cannot record the reservation", async () => {
+      const submitter = workingSubmitter();
+      const guard = createMemoryReplayGuard();
+      guard.reserve = async () => {
+        throw new Error("replay store down");
+      };
+      const { server } = await replayServer(submitter, { replayGuard: guard });
+
+      const res = await post(server, tx("1"));
+
+      expect(res.statusCode).toBe(503);
+      expect(res.json().error).toBe("persistence_unavailable");
+      expect(submitter.submit).not.toHaveBeenCalled();
+    });
+
+    it("an unscoped tx is rejected (403) BEFORE anything is reserved", async () => {
+      const submitter = workingSubmitter();
+      const guard = createMemoryReplayGuard();
+      const reserve = vi.spyOn(guard, "reserve");
+      const { server } = await replayServer(submitter, { replayGuard: guard });
+
+      const res = await post(
+        server,
+        buildInvokeTx([{ subject: OTHER_CONTRACT, nonce: "1", expiration: SOON }]),
+      );
+
+      expect(res.statusCode).toBe(403);
+      expect(reserve).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("signature expiration cap (120 ledgers, approved 2A)", () => {
+    it("accepts an entry exactly at latest + 120", async () => {
+      const { server } = await replayServer(workingSubmitter());
+      expect((await post(server, tx("1", LATEST + 120))).statusCode).toBe(200);
+    });
+
+    it("refuses an entry at latest + 121 with a coded 422, before reserving or submitting", async () => {
+      const submitter = workingSubmitter();
+      const guard = createMemoryReplayGuard();
+      const reserve = vi.spyOn(guard, "reserve");
+      const { server } = await replayServer(submitter, { replayGuard: guard });
+
+      const res = await post(server, tx("1", LATEST + 121));
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error).toBe("auth_expiration_too_far");
+      expect(res.json().maxLedgers).toBe(120);
+      expect(reserve).not.toHaveBeenCalled();
+      expect(submitter.submit).not.toHaveBeenCalled();
+    });
+
+    it("refuses the whole tx when only ONE of several entries exceeds the cap", async () => {
+      const submitter = workingSubmitter();
+      const { server } = await replayServer(submitter);
+      const res = await post(
+        server,
+        buildInvokeTx([
+          { subject: KNOWN_WALLET, nonce: "1", expiration: SOON },
+          { subject: KNOWN_WALLET, nonce: "2", expiration: LATEST + 9999 },
+        ]),
+      );
+      expect(res.statusCode).toBe(422);
+      expect(submitter.submit).not.toHaveBeenCalled();
+    });
+
+    it("the cap is configurable per deployment", async () => {
+      const { server } = await replayServer(workingSubmitter(), { maxAuthExpirationLedgers: 10 });
+      expect((await post(server, tx("1", LATEST + 10))).statusCode).toBe(200);
+      expect((await post(server, tx("2", LATEST + 11))).statusCode).toBe(422);
+    });
+
+    it("503 and no submission when the latest ledger cannot be read (cannot bound the window)", async () => {
+      const submitter = workingSubmitter();
+      const { server } = await replayServer(submitter, {
+        getLatestLedger: async () => {
+          throw new Error("rpc down");
+        },
+      });
+
+      const res = await post(server, tx("1"));
+
+      expect(res.statusCode).toBe(503);
+      expect(res.json().error).toBe("ledger_unavailable");
+      expect(submitter.submit).not.toHaveBeenCalled();
+    });
+
+    it("an already-expired entry is not capped (the host rejects it at simulation, before any spend)", async () => {
+      const { server } = await replayServer(workingSubmitter());
+      expect((await post(server, tx("1", LATEST - 5))).statusCode).toBe(200);
+    });
+  });
+
+  it("audits a refused replay with a fingerprint, never the raw nonce", async () => {
+    const { server, audit } = await replayServer(workingSubmitter());
+    const signed = tx("123456789012345");
+    await post(server, signed);
+    await post(server, signed);
+
+    const events = await audit.list();
+    const refused = events.find((e) => e.type === "tx.replay_rejected");
+    expect(refused).toBeDefined();
+    expect(JSON.stringify(refused)).not.toContain("123456789012345");
+    expect(refused?.data).toMatchObject({ network: "testnet" });
+    expect((refused?.data as { fingerprint: string }).fingerprint).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("with no networkPassphrase configured (dev), replay checking is off like scoping", async () => {
+    const submitter = workingSubmitter();
+    app = buildServer({ submitter });
+    const signed = tx("1");
+
+    expect((await post(app, signed)).statusCode).toBe(200);
+    expect((await post(app, signed)).statusCode).toBe(200);
   });
 });

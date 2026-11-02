@@ -34,10 +34,29 @@ jobs:
 
             if (outside.length === 0) return;
 
+            // Filenames are attacker-controlled (security-audit.md I1). Render each as
+            // exactly ONE Markdown code span: drop control, line-separator and bidi
+            // characters, cap the length, and use a delimiter longer than any backtick
+            // run inside so the name cannot close the span and inject Markdown. This
+            // stays inline on purpose: adding a checkout step to a pull_request_target
+            // workflow would be the real hazard.
+            const MAX_NAME = 200;
+            const codeSpan = (raw) => {
+              let name = String(raw).replace(
+                /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,
+                "\ufffd",
+              );
+              if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME) + "\u2026";
+              const longestRun = Math.max(0, ...(name.match(/`+/g) ?? []).map((r) => r.length));
+              const fence = "`".repeat(longestRun + 1);
+              const pad = name.startsWith("`") || name.endsWith("`") ? " " : "";
+              return fence + pad + name + pad + fence;
+            };
+
             const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
             const list = outside
               .slice(0, 20)
-              .map((p) => `- \`${p}\``)
+              .map((p) => `- ${codeSpan(p)}`)
               .join("\n");
             const more = outside.length > 20 ? `\n- …and ${outside.length - 20} more` : "";
 

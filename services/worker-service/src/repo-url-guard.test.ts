@@ -52,6 +52,132 @@ describe("isBlockedAddress — private / loopback / link-local ranges", () => {
   );
 });
 
+// RA-7: every IPv6 spelling of an IPv4 address must be judged by that IPv4
+// address, not by a string-prefix match on the IPv6 text. The encodings below
+// are generated from the v4 octets so each target is covered in every form.
+function hexGroups(v4: string): [string, string] {
+  const [a, b, c, d] = v4.split(".").map(Number) as [number, number, number, number];
+  return [((a << 8) | b).toString(16), ((c << 8) | d).toString(16)];
+}
+
+function pad4(group: string): string {
+  return group.padStart(4, "0");
+}
+
+/** Every IPv6 spelling that embeds `v4` and is judged by it, labelled by encoding. */
+function embeddedEncodings(v4: string): Array<[string, string]> {
+  const [hi, lo] = hexGroups(v4);
+  return [
+    ["mapped dotted", `::ffff:${v4}`],
+    ["mapped hex", `::ffff:${hi}:${lo}`],
+    ["mapped hex upper", `::FFFF:${hi.toUpperCase()}:${lo.toUpperCase()}`],
+    ["mapped expanded", `0:0:0:0:0:ffff:${hi}:${lo}`],
+    ["mapped expanded dotted tail", `0:0:0:0:0:ffff:${v4}`],
+    ["mapped zero-padded", `0000:0000:0000:0000:0000:ffff:${pad4(hi)}:${pad4(lo)}`],
+    ["mapped compressed mid", `0:0::ffff:${hi}:${lo}`],
+    ["NAT64 dotted", `64:ff9b::${v4}`],
+    ["NAT64 hex", `64:ff9b::${hi}:${lo}`],
+    ["NAT64 expanded", `64:ff9b:0:0:0:0:${hi}:${lo}`],
+    ["NAT64 zero-padded", `0064:ff9b:0000:0000:0000:0000:${pad4(hi)}:${pad4(lo)}`],
+    ["IPv4-translated (SIIT) dotted", `::ffff:0:${v4}`],
+    ["IPv4-translated (SIIT) hex", `::ffff:0:${hi}:${lo}`],
+    ["6to4", `2002:${hi}:${lo}::`],
+    ["6to4 with host bits", `2002:${hi}:${lo}:1:2:3:4:5`],
+  ];
+}
+
+describe("isBlockedAddress — IPv6 encodings of blocked IPv4 addresses (RA-7)", () => {
+  const blockedV4 = [
+    "127.0.0.1",
+    "127.255.255.254",
+    "10.0.0.1",
+    "10.255.255.255",
+    "169.254.169.254",
+    "172.16.0.1",
+    "192.168.0.1",
+    "0.0.0.0",
+  ];
+
+  for (const v4 of blockedV4) {
+    it.each(embeddedEncodings(v4))(`blocks ${v4} as %s (%s)`, (_label, ip) => {
+      expect(isBlockedAddress(ip)).toBe(true);
+    });
+  }
+
+  it.each([
+    ["::1"],
+    ["0:0:0:0:0:0:0:1"],
+    ["0000:0000:0000:0000:0000:0000:0000:0001"],
+    ["::0001"],
+    ["0::1"],
+    ["::"],
+    ["0:0:0:0:0:0:0:0"],
+    ["::1%lo0"], // a zone id must not defeat the check
+    ["fe80::1%eth0"],
+    ["::ffff:7f00:1%lo0"],
+  ])("blocks every spelling of loopback / unspecified: %s", (ip) => {
+    expect(isBlockedAddress(ip)).toBe(true);
+  });
+
+  it.each([
+    ["fe80::1"],
+    ["fe90::1"], // fe80::/10 is wider than the fe80 text prefix
+    ["feaf::1"],
+    ["febf:ffff::1"],
+    ["fec0::1"], // deprecated site-local
+    ["fc00::1"],
+    ["fdff::1"],
+    ["ff02::1"],
+    ["FE80::1"],
+    ["64:ff9b:1::1"], // local-use NAT64 (RFC 8215) can reach anything the NAT64 box can
+    ["2001::1"], // Teredo: embeds an obfuscated v4, never a legitimate clone target
+    ["2001:db8::1"], // documentation range is never routable
+    ["100::1"], // discard-only prefix
+  ])("blocks non-public IPv6 range: %s", (ip) => {
+    expect(isBlockedAddress(ip)).toBe(true);
+  });
+
+  it.each([["8.8.8.8"], ["93.184.216.34"], ["1.1.1.1"]])(
+    "still allows a public %s in every embedded encoding",
+    (v4) => {
+      for (const [label, ip] of embeddedEncodings(v4)) {
+        expect(isBlockedAddress(ip), `${label}: ${ip}`).toBe(false);
+      }
+    },
+  );
+
+  // ::/96 (IPv4-compatible) is deprecated by RFC 4291 and has no legitimate use
+  // as a remote clone target, so the whole range is blocked rather than judged
+  // on its embedded address.
+  it.each([
+    ["::127.0.0.1"],
+    ["::7f00:1"],
+    ["::10.0.0.1"],
+    ["::8.8.8.8"],
+    ["::808:808"],
+    ["0:0:0:0:0:0:808:808"],
+    ["::5"],
+  ])("blocks the deprecated IPv4-compatible range ::/96: %s", (ip) => {
+    expect(isBlockedAddress(ip)).toBe(true);
+  });
+
+  it.each([
+    ["2606:4700:4700::1111"],
+    ["2a00:1450:4001:81b::200e"],
+    ["2001:4860:4860::8888"], // 2001::/32 is Teredo ONLY for 2001:0000::, not all of 2001::/16
+    ["64:ff9a::1"], // one nibble off the NAT64 prefix is just a public address
+  ])("allows ordinary public IPv6: %s", (ip) => {
+    expect(isBlockedAddress(ip)).toBe(false);
+  });
+
+  it.each([["not-an-ip"], [""], ["::ffff:999.1.1.1"], ["1.2.3"], ["[::1]"], ["127.1"], ["0x7f.1"]])(
+    "treats a non-IP string as blocked (caller resolves hostnames): %s",
+    (ip) => {
+      expect(isBlockedAddress(ip)).toBe(true);
+    },
+  );
+});
+
 describe("assertPublicHttpsRepoUrl — full guard with injectable resolver (defeats DNS rebinding)", () => {
   it("passes when the host resolves to a public address", async () => {
     const pin = await assertPublicHttpsRepoUrl("https://github.com/x.git", {
@@ -60,6 +186,28 @@ describe("assertPublicHttpsRepoUrl — full guard with injectable resolver (defe
     // Returns the validated pin so the CALLER pins git's connection to the exact
     // IP the guard checked (no independent re-resolution by git).
     expect(pin).toEqual({ host: "github.com", port: 443, ip: "140.82.112.3" });
+  });
+
+  it.each([
+    ["::ffff:7f00:1"],
+    ["::ffff:a9fe:a9fe"],
+    ["64:ff9b::a9fe:a9fe"],
+    ["2002:7f00:1::"],
+    ["::1"],
+  ])("rejects a hostname whose resolver answers with %s (RA-7)", async (answer) => {
+    await expect(
+      assertPublicHttpsRepoUrl("https://rebind.example.com/x.git", {
+        resolve: async () => [answer],
+      }),
+    ).rejects.toThrow(RepoUrlError);
+  });
+
+  it("rejects a mixed public + hex-mapped-private answer set (rebinding leg)", async () => {
+    await expect(
+      assertPublicHttpsRepoUrl("https://rebind.example.com/x.git", {
+        resolve: async () => ["140.82.112.3", "::ffff:a00:1"],
+      }),
+    ).rejects.toThrow(RepoUrlError);
   });
 
   it("returns no pin for an IP-literal host (host IS the checked address)", async () => {

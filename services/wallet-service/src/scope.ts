@@ -36,7 +36,7 @@ export class ScopeError extends Error {
  * (`address` V1, `addressV2`, `addressWithDelegates`) wrap the same
  * `SorobanAddressCredentials`, so the subject address is read uniformly.
  */
-function addressCredentials(
+export function addressCredentials(
   creds: xdr.SorobanCredentials,
 ): xdr.SorobanAddressCredentials | undefined {
   switch (creds.switch().name) {

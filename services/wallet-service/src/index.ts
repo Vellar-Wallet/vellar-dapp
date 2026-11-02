@@ -3,15 +3,16 @@ import {
   createUnavailableBudget,
   hostFromEnv,
   portFromEnv,
-  resolveNetwork,
   resolvePersistencePolicy,
   startService,
   tryConnectDb,
   type SpendBudget,
 } from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
-import { configFromEnv, DEFAULTS } from "./config";
+import { configFromEnv } from "./config";
+import { networkSettingsFromEnv, verifyRpcAtBoot, type NetworkSettings } from "./network-settings";
 import { createUnconfiguredSubmitter } from "./relayer";
+import { maxAuthExpirationLedgersFromEnv } from "./replay";
 import { buildServer, type WalletServiceDeps } from "./server";
 
 // FIX 3 budget window + ceilings (confirmed). All env-overridable.
@@ -33,12 +34,31 @@ const budgetLimits = {
 
 const config = configFromEnv();
 
+// ONE trusted network for the whole process (RA-10 class). The scoping
+// passphrase, budget label, ledger lookup, sponsor submitter and relayer all read
+// this value, resolved from the EXPLICIT STELLAR_NETWORK (STELLAR_RPC_URL /
+// STELLAR_NETWORK_PASSPHRASE override the default for THAT network). It is never
+// derived from `relayer ?? <testnet default>`, so a relayer-less mainnet sponsor
+// gets the mainnet RPC. An unset, unknown or incoherent network refuses to boot.
+let net: NetworkSettings;
+try {
+  net = networkSettingsFromEnv(process.env);
+} catch (err) {
+  console.error(`[wallet-service] ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+const relayer = config.relayer && {
+  ...config.relayer,
+  rpcUrl: net.rpcUrl,
+  networkPassphrase: net.networkPassphrase,
+};
+
 // Resolve persistence FIRST — the funding-path budget (FIX 3) needs a durable
 // ledger, and the submitter needs that budget, so DB comes before both.
 const deps: WalletServiceDeps = {
   // Scoping parses submitted XDR with the server's configured passphrase, never
   // the request body's network field (security-audit V5).
-  networkPassphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
+  networkPassphrase: net.networkPassphrase,
   submitter: createUnconfiguredSubmitter(), // replaced below
 };
 let closeDb: (() => Promise<void>) | undefined;
@@ -77,20 +97,10 @@ deps.isReady = dbHandle ? () => dbHandle!.ping() : () => policy.action === "allo
 
 // FIX 3 budget: Postgres-backed when durable, otherwise a fail-closed stub that
 // refuses to fund (never sponsor/create unmetered). The network label is from
-// server config, never a request body (V5).
-// RA-10 class: the spend-budget ledger LABEL must not be inferred from a
-// passphrase that defaults to testnet — a mainnet service that forgot the
-// passphrase would meter its mainnet spend against the testnet budget line
-// (testnet + mainnet sharing one ceiling). Derive it from the EXPLICIT, required
-// STELLAR_NETWORK, cross-checked against the passphrase + RPC; an incoherent or
-// missing network refuses to boot (a service that can't tell which network it's
-// on must not spend on a funding path — V5). Keyed off server config, never a
-// request body (V5).
-const budgetNetwork = resolveNetwork({
-  network: process.env.STELLAR_NETWORK,
-  passphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
-  rpcUrl: process.env.STELLAR_RPC_URL || DEFAULTS.rpcUrl,
-});
+// server config, never a request body (V5). RA-10 class: it comes from the
+// EXPLICIT, cross-checked STELLAR_NETWORK resolved above, never inferred from a
+// passphrase that defaults to testnet.
+const budgetNetwork = net.network;
 let budget: SpendBudget;
 if (dbHandle) {
   const { createPgSpendBudget } = await import("@vellar/service-kit");
@@ -103,9 +113,42 @@ deps.budget = budget;
 // as the sponsor line — never the request body.
 deps.budgetNetwork = budgetNetwork;
 
+// Replay protection (approved design 1A). Durable reservations in Postgres when
+// there is a database (keyed on the server-config network, never the body); the
+// in-memory guard server.ts defaults to is single-process and dev-only, which the
+// persistence policy above already refuses in production.
+const { rpc } = await import("@stellar/stellar-sdk");
+const ledgerRpc = new rpc.Server(net.rpcUrl);
+// Refuse to boot if the RPC is on a different network than the one configured:
+// otherwise signature-expiration ledgers and sponsor fees would be judged against
+// the wrong chain. A mismatch always refuses; an unreachable RPC refuses in
+// production and only warns elsewhere (offline local dev).
+try {
+  await verifyRpcAtBoot(ledgerRpc, net.networkPassphrase, {
+    production: process.env.NODE_ENV === "production",
+    warn: (message) => console.warn(`[wallet-service] ${message}`),
+  });
+} catch (err) {
+  console.error(`[wallet-service] ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+deps.getLatestLedger = async () => (await ledgerRpc.getLatestLedger()).sequence;
+deps.maxAuthExpirationLedgers = (() => {
+  try {
+    return maxAuthExpirationLedgersFromEnv(process.env.MAX_AUTH_EXPIRATION_LEDGERS);
+  } catch (err) {
+    console.error(`[wallet-service] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+})();
+if (dbHandle) {
+  const { createPgReplayGuard } = await import("./db/pg-replay");
+  deps.replayGuard = createPgReplayGuard(dbHandle.db, budgetNetwork);
+}
+
 // Now build the submitter (sponsor path metered by the same budget).
-let submitter = config.relayer
-  ? (await import("./relayer-passkey")).createPasskeyServerSubmitter(config.relayer)
+let submitter = relayer
+  ? (await import("./relayer-passkey")).createPasskeyServerSubmitter(relayer)
   : createUnconfiguredSubmitter();
 
 if (config.sponsorSecretKey) {
@@ -114,8 +157,8 @@ if (config.sponsorSecretKey) {
   const { createHybridSubmitter, createSponsorSubmitter } = await import("./sponsor");
   submitter = createHybridSubmitter(
     createSponsorSubmitter({
-      rpcUrl: config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl,
-      networkPassphrase: config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
+      rpcUrl: net.rpcUrl,
+      networkPassphrase: net.networkPassphrase,
       secretKey: config.sponsorSecretKey,
       // Per-call fee cap; env override for the rare legit heavy op (C1/H1).
       maxFeeStroops: process.env.SPONSOR_MAX_FEE_STROOPS || undefined,
@@ -123,12 +166,27 @@ if (config.sponsorSecretKey) {
       budgetNetwork,
     }),
     submitter,
-    config.relayer?.networkPassphrase ?? DEFAULTS.networkPassphrase,
+    net.networkPassphrase,
   );
 }
 deps.submitter = submitter;
 
 const app = buildServer(deps);
+
+// Reservations only need to outlive their expiration ledger; drop the rest so
+// the table stays tiny. A failed purge is harmless (rows are just kept longer).
+const REPLAY_PURGE_INTERVAL_MS = 5 * 60 * 1000;
+if (deps.replayGuard) {
+  const guard = deps.replayGuard;
+  const purge = setInterval(() => {
+    deps
+      .getLatestLedger?.()
+      .then((ledger) => guard.purgeExpired(ledger))
+      .catch((err: unknown) => app.log.warn(err, "replay reservation purge failed"));
+  }, REPLAY_PURGE_INTERVAL_MS);
+  purge.unref();
+  app.addHook("onClose", async () => clearInterval(purge));
+}
 
 if (closeDb) {
   app.addHook("onClose", async () => closeDb?.());

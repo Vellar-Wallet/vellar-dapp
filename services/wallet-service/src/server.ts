@@ -21,6 +21,15 @@ import {
 } from "./repository";
 import { SubmissionError, type TransactionSubmitter } from "./relayer";
 import { assertScopedToKnownWallets, ScopeError } from "./scope";
+import {
+  createMemoryReplayGuard,
+  DEFAULT_MAX_AUTH_EXPIRATION_LEDGERS,
+  extractReplayKeys,
+  RELEASABLE_SUBMISSION_CODES,
+  replayFingerprint,
+  type ReplayGuard,
+  type ReplayKey,
+} from "./replay";
 import { assertDerivedContractId, DerivationMismatchError } from "./derivation";
 
 // Wallet API (idea.md §11). No POST /wallet/sign: signing is client-side via
@@ -102,6 +111,19 @@ export interface WalletServiceDeps {
    * meter (fails closed). Metering on the body would let a caller split spend
    * across the testnet/mainnet partitions and double the effective ceiling. */
   budgetNetwork?: BudgetNetwork;
+  /** Replay reservations for sponsored submissions (approved design 1A): one
+   * key per auth entry, (server-config network, address, nonce), reserved
+   * all-or-nothing BEFORE the submitter (so before consumeSponsorBudget). Defaults
+   * to an in-memory guard (dev/tests); production wires the Postgres guard.
+   * Active only when `networkPassphrase` is set, like funding-path scoping. */
+  replayGuard?: ReplayGuard;
+  /** Current ledger sequence from a TRUSTED RPC, used to cap how far ahead an
+   * auth entry may expire. Unset = cap disabled (dev/tests); index.ts always
+   * wires it. A lookup failure refuses the submission (cannot bound the window). */
+  getLatestLedger?: () => Promise<number>;
+  /** Max ledgers ahead of the current ledger an auth entry's
+   * signatureExpirationLedger may be. Defaults to 120 (~10 minutes). */
+  maxAuthExpirationLedgers?: number;
 }
 
 export function buildServer(deps: WalletServiceDeps): FastifyInstance {
@@ -110,6 +132,9 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
   const audit = deps.audit ?? createMemoryAuditLog();
   const now = deps.now ?? (() => new Date());
   const { submitter } = deps;
+  const replayGuard = deps.replayGuard ?? createMemoryReplayGuard();
+  const maxAuthExpirationLedgers =
+    deps.maxAuthExpirationLedgers ?? DEFAULT_MAX_AUTH_EXPIRATION_LEDGERS;
 
   const app = Fastify({ logger: true });
   registerHealth(app, "wallet-service", { isReady: deps.isReady });
@@ -143,8 +168,13 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     const at = now();
     const session = await sessions.find(id, at);
     if (!session) return undefined;
-    await sessions.touch(id, at, new Date(at.getTime() + SESSION_TTL_MS));
-    return session;
+    const slidExpiry = new Date(at.getTime() + SESSION_TTL_MS);
+    // touch is a no-op (false) if the session vanished or expired between find and
+    // here (revoked concurrently): that is absent, never an authorised use.
+    if (!(await sessions.touch(id, at, slidExpiry))) return undefined;
+    // Return the record AS SLID, so the caller never sees a stale lastActiveAt /
+    // expiresAt that disagrees with the store (RA-3 L-5).
+    return { ...session, lastActiveAt: at.toISOString(), expiresAt: slidExpiry.toISOString() };
   }
 
   app.post("/wallet/create", async (request, reply) => {
@@ -286,6 +316,64 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
       }
     }
 
+    // Replay protection (approved design 1A). Runs after scoping and BEFORE the
+    // submitter, so a replay never reaches consumeSponsorBudget and both the
+    // sponsor and relayer branches are covered. The identity comes from the signed
+    // auth entries and the server-config network, never the envelope or the body.
+    let replayKeys: ReplayKey[] = [];
+    if (deps.networkPassphrase) {
+      replayKeys = extractReplayKeys(signedXdr, deps.networkPassphrase);
+
+      if (deps.getLatestLedger && replayKeys.length > 0) {
+        let latest: number;
+        try {
+          latest = await deps.getLatestLedger();
+        } catch (err) {
+          request.log.error(err, "latest ledger unavailable; refusing submission");
+          return reply.code(503).send({
+            error: "ledger_unavailable",
+            message: "Cannot bound the signature window right now; try again shortly.",
+          });
+        }
+        const furthest = Math.max(...replayKeys.map((k) => k.signatureExpirationLedger));
+        if (furthest - latest > maxAuthExpirationLedgers) {
+          return reply.code(422).send({
+            error: "auth_expiration_too_far",
+            message:
+              `An authorization entry expires more than ${maxAuthExpirationLedgers} ledgers ` +
+              "ahead. Sign again with a shorter window.",
+            maxLedgers: maxAuthExpirationLedgers,
+          });
+        }
+      }
+
+      let reservation: Awaited<ReturnType<ReplayGuard["reserve"]>>;
+      try {
+        reservation = await replayGuard.reserve(replayKeys);
+      } catch (err) {
+        // Cannot record the reservation: refuse rather than risk an unmetered
+        // double submission (fail closed, as for the scope check).
+        request.log.error(err, "replay reservation failed; refusing submission");
+        recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+        return reply.code(503).send({
+          error: "persistence_unavailable",
+          message: "Cannot guard against replay right now; try again shortly.",
+        });
+      }
+      if (!reservation.ok) {
+        // Fingerprint only: the raw nonce is part of a signed credential.
+        await audit.record("tx.replay_rejected", {
+          network: deps.budgetNetwork ?? "unknown",
+          fingerprint: replayFingerprint(replayKeys),
+        });
+        recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
+        return reply.code(409).send({
+          error: "replay_detected",
+          message: "This signed transaction was already submitted.",
+        });
+      }
+    }
+
     try {
       const { hash } = await submitter.submit(signedXdr);
       await audit.record("tx.submitted", { network, txHash: hash });
@@ -294,6 +382,14 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     } catch (err) {
       const sub = err instanceof SubmissionError ? err : undefined;
       request.log.error(err, "transaction submission failed");
+      // Release the reservation ONLY when the tx definitely did not land, so a
+      // legitimate retry is not refused as a replay. An unknown outcome (a hash
+      // may have landed, an unrecognised code, a non-SubmissionError) keeps it.
+      if (replayKeys.length > 0 && sub && RELEASABLE_SUBMISSION_CODES.has(sub.code)) {
+        await replayGuard.release(replayKeys).catch((releaseErr: unknown) => {
+          request.log.error(releaseErr, "failed to release replay reservation");
+        });
+      }
       recordOutcome(domainMetrics.txSigned, "wallet-service", "failure", network);
       // Submission goes through the relayer/RPC path — a failure here is also an
       // RPC-degradation signal (§13 alerting: tx submission spikes/failures).
@@ -333,7 +429,8 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     if (!session || session.contractId !== contractId || session.network !== network) {
       return reply.code(401).send({ error: "unauthorized" });
     }
-    return reply.send({ sessions: await sessions.listByContract(contractId, network) });
+    // Judge expiry with the same injected clock as the bearer check (RA-3 L-1).
+    return reply.send({ sessions: await sessions.listByContract(contractId, network, now()) });
   });
 
   // Revoke a session on the caller's OWN account. The target id is in the BODY
