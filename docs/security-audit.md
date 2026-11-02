@@ -320,6 +320,29 @@ read oracle. Same build-box gating as H2.
   > in `runbooks/staging-and-promotion.md`, and that GitHub branch protection (required `ci` check, no
   > direct pushes) is on for `main` and for the `staging` branch the staging environment deploys from.
 
+  > **Finding (2026-11-03): the production database was migrated by builds that are not in the
+  > deploy history.** A read-only dry run of the migration runner against the production database
+  > (`pnpm migration:dry-run`, `BEGIN READ ONLY`) showed 7 recorded migrations:
+  >
+  > - 6 match files on `main` (wallet `0000` to `0003_submission_replay`, policy `0000`, verification
+  >   `0000`; policy `0001` is the same file as wallet `0001`).
+  > - 1 matches **no file on `main`**: hash `e9d72232674b`, which is dev's
+  >   `0003_add_activity_logs_actor_column` (dev PR #256, only on `dev`). A build containing dev code
+  >   therefore ran against the production database at some point.
+  > - `0003_submission_replay` (`main`, #736) is recorded and the `submission_replay` table exists
+  >   with 0 rows, yet the newest successful `vellar-backend` deployment in the Railway CLI is
+  >   2026-09-29, before #736 existed. So the main-line migration was also applied by something that
+  >   is not a listed deployment of that service.
+  >
+  > The timestamps that the migration table stores are the migration files' own journal times, not the
+  > time they were applied (drizzle records the file's timestamp), and `track_commit_timestamp` is off,
+  > so Postgres cannot say when either was applied. The cause is **unexplained**: the likely sources are
+  > a local or CI run holding the production `DATABASE_URL`, or a deploy the CLI does not list. This
+  > matters to M9 because the production database credential was used outside the deploy pipeline.
+  > Only `vellar-backend` has `DATABASE_URL` set among the Railway services. **Open for the owner:**
+  > check the Neon console query history around the two migrations, and rotate the database credential
+  > if its use cannot be accounted for.
+
 ---
 
 ## 🟢 LOW

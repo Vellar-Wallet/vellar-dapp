@@ -140,6 +140,29 @@ The same commit goes to staging, is verified there, then goes to production.
 5. **Rollback** is a redeploy of the previous production deployment in Railway. Migrations are
    forward-only (`CREATE TABLE`), so a rollback does not undo schema.
 
+## Porting dev migrations: the two `0003` files must not collide
+
+`main` and `dev` both have a wallet-service migration numbered `0003`, and **both are recorded in the
+production database**:
+
+| File                                  | Where  | Hash (first 12) | Recorded in production |
+| ------------------------------------- | ------ | --------------- | ---------------------- |
+| `0003_submission_replay`              | `main` | `3ac6f2ecf3a9`  | yes                    |
+| `0003_add_activity_logs_actor_column` | `dev`  | `e9d72232674b`  | yes                    |
+
+The runner decides by the **hash of the SQL text**, not by number or name. When dev's migrations are
+ported:
+
+1. **Never edit, rename-and-rewrite or renumber `0003_submission_replay`.** Its hash is recorded.
+2. Port dev's file under the **next free number** (for example `0004_add_activity_logs_actor_column`)
+   with **byte-identical SQL**, so its hash stays `e9d72232674b` and production sees it as already
+   applied. Do not wrap it in `IF NOT EXISTS` or otherwise change a character: a changed file is a
+   new hash, and the runner would try to apply it a second time.
+3. Update the journal and snapshot for the new number, then run `pnpm migration:dry-run` against the
+   production database (read-only) and confirm the ported file shows as **recorded**, not pending.
+4. Any other dev migration already applied to production must be checked the same way before it is
+   ported. A fresh database (staging) gets all of them in journal order.
+
 ## Known gaps
 
 - There is no automated deploy gate script on `main`. A `deploy-health-gate` exists on the `dev`
