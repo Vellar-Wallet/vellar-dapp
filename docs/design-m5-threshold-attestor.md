@@ -252,6 +252,9 @@ The cap originally rested on one assumption: a custom account's `__check_auth` c
 the real Soroban host. The contract's own tests call `__check_auth` directly and cannot answer that, so a
 throwaway probe was run through a real signed authorisation on the host. **The assumption is false.**
 
+**Verified on protocol 29** (testnet and mainnet both reported 29 on 2026-11-02). The probe is
+repeatable: `pnpm m5:probe` (PR #742); re-run it after any protocol upgrade.
+
 **Setup.** A minimal custom account (outside this repository, built with `cargo build --locked` against
 the repo's pinned `Cargo.lock`, wasm sha256 `01e2bc32a94b9637a455f9afd0cacd2e2546b00c6663aa87feeb52e1ec2ca85e`)
 deployed to testnet as `CB27QTZRE23ROOEWHTFPILKPNSQSWA5BM6CPXWKYREQERN2WJNHHLWAY`, funded from a fresh
@@ -278,12 +281,46 @@ the harness.
 
 - Proves: on protocol 29 a custom account's `__check_auth` can write instance and persistent storage,
   extend TTLs and publish contract events, and those effects persist when the transaction succeeds.
-- Does not prove: anything about signature verification (the probe checks none), behaviour under a
-  different protocol version, or that a write survives a transaction that later fails (the usual rollback
-  is expected and is the desired behaviour for the cap, but it was not tested here).
+- Does not prove: anything about signature verification (- Does not prove: anything about signature verification (the probe checks none) or behaviour under a
+  different protocol version.
+
 - Re-run the probe against the final contract in the testnet rehearsal, and again after any protocol
   upgrade, as an acceptance test. The coordinator must always simulate first so the footprint includes
   the keys `__check_auth` writes.
+
+**Follow-up (conditions on the in-`__check_auth` cap): cap rules, context rules and rollback, verified.**
+The probe was extended into a reference of the cap rules and re-run on the real host with a fresh
+throwaway key (`GALXXCCCXNRH2ZN5WMSVFI64X5D5UAJPJCYFP6NUQQRFE5KDCMLYAT5L`, wasm sha256 `d35c81e64638e4220aef78649bc0379ea22d9f179f7697b7d6ece9b1f9de0c14`). 37 on-chain checks passed, and
+21 unit tests pass. Every refusal was force-submitted so a FAILED transaction exists to look up.
+
+- **A revoke that is authorised and then fails in the registry call leaves the counter unchanged.** The
+  failure's headline error was the registry's own (`Error(Contract, #5)`), not an authorisation error, so
+  `__check_auth` had already accepted the revoke; the transaction FAILED on-chain and the signer's ring was
+  empty afterwards. A failed revoke therefore cannot burn a slot, so the cap cannot become its own DoS.
+- **The counter advances only for the exact context it authorises** (one `revoke(this account, record)` on
+  the bound registry). Each of these was refused by the host as `Auth InvalidAction` carrying `WrongContext`,
+  with the counter untouched: a different function on the bound registry, a `revoke` on a different registry
+  address, and an extra context in the same authorisation (a revoke that nests a second authorised call).
+  The unit tests add: two revokes in one authorisation, a good revoke that is not first, a wrong argument
+  count, a revoke authorising a different account, a contract-creation context, no context, and no bound
+  registry. Each asserts the ring is byte-for-byte unchanged.
+- The 4th single-signer revoke is refused with `CapReached`; a two-signature revoke still works after a
+  signer is exhausted and consumes no allowance; signer 1's allowance is independent of signer 0's.
+  The 17,279 and 17,280 ledger boundary is covered by the unit tests, because 24 hours of ledgers cannot be
+  waited out on-chain.
+
+| Check        | Scenario                                                                                | Result                                                | Transaction                                                        |
+| ------------ | --------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
+| cap          | signer 0 revoke #1                                                                      | accepted and applied                                  | `1a2fac152b6b7dc5f421feb3ddb48f97ef41026be622f0ebff7d948ab22f205a` |
+| cap          | signer 0 revoke #2                                                                      | accepted and applied                                  | `38e21d0fcebc36cffc6c84a70652c483adfa5178680accd4683d7e02f53f5b79` |
+| cap          | signer 0 revoke #3                                                                      | accepted and applied                                  | `332084016ce08aa745b00e283298e2af5d9d76c98d494d6771d5c4b21cea9941` |
+| cap          | signer 0 revoke #4 (over the cap)                                                       | refused by the host, force-submitted, FAILED on-chain | `3e8a13a2e3a0d11bc206c46bde7c3c4c6e1bafe1930a23f503ec4d0245cf37f6` |
+| cap          | two-signature revoke after exhaustion                                                   | accepted and applied                                  | `0da4b4cfd9536ed8609aa95918df1db38238fd2309b85cea0fd1b1a786107333` |
+| cap          | signer 1 revoke (independent allowance)                                                 | accepted and applied                                  | `a0178e893d473e00881cd2d6b4aff6c9cfe36b4957ce1a70749ace2f0d3aee4a` |
+| context rule | a different function on the bound registry (upsert)                                     | refused by the host, force-submitted, FAILED on-chain | `0cdfaa87bf86a5efc71f5d7e891e2b48c3b32e029fbc2bdf8a2d87fb88d23b72` |
+| context rule | revoke on a different registry address                                                  | refused by the host, force-submitted, FAILED on-chain | `6e1efab9fb0bdd48af623739e34352346c203d126b0b62a4890a6bff0607d448` |
+| context rule | an extra context in the same authorisation (revoke that nests a second authorised call) | refused by the host, force-submitted, FAILED on-chain | `1a99c718da8f3bacab22465efe92412b044cd4626db9f2b6296a1791913e33fc` |
+| rollback     | authorised, then the registry call fails                                                | refused by the host, force-submitted, FAILED on-chain | `186a49439cc1550b98e4656a6bab08d74ed162e709aab468a6efc2aa07ec605e` |
 
 **What changes in the design.**
 
@@ -293,7 +330,7 @@ the harness.
 - The existing `threshold-attestor` already calls `extend_ttl` in `__check_auth` (`renew_instance`); that
   is therefore fine on protocol 29, and it was not the bug it might have been.
 
-Acceptance tests for the cap are unchanged (the 4th single-signer revoke in the window is refused; per-signer
+Acceptance tests for the cap are implemented in `scripts/m5-probe` (unit tests and the on-chain runner) and are ported to the final contract's own tests. They are unchanged (the 4th single-signer revoke in the window is refused; per-signer
 allowances are independent; the 17,279 and 17,280 ledger boundary; a 2-of-3 revoke consumes no allowance; a
 refused attempt changes no counter), plus: a revoke that fails after authorisation rolls its counter back.
 
