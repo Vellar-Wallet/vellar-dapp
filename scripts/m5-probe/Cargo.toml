@@ -1,0 +1,25 @@
+[package]
+name = "vellar-m5-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "M5 probe and cap reference: what a custom account's __check_auth may do on the real Soroban host, and the single-signer revoke cap rules (docs/design-m5-threshold-attestor.md). NOT a production contract and NOT in the audited contracts workspace."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+soroban-sdk = "27.0.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "27.0.0", features = ["testutils"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+panic = "abort"
+codegen-units = 1
+lto = true
+
+# This crate is its own workspace root: it must not join contracts/Cargo.toml.
+[workspace]
