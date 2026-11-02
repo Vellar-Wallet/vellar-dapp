@@ -1313,6 +1313,11 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
    Confirm `autoDeploy` is OFF and GitHub branch protection is ON. `render.yaml` sets
    `autoDeploy:false` and CI has the audit gate, but the platform toggle + branch protection are
    dashboard settings.
+   _2026-11-02 (Railway CLI, read-only):_ the production backend runs on Railway, not Render. In
+   project `vellar` the `vellar-backend` service has **no connected GitHub repo** (it is deployed by
+   `railway up` upload; last deploy 2026-09-29 03:24 UTC), so a push to `main` cannot deploy it. The
+   auto-deploy half of this fact is therefore closed for the live backend; **GitHub branch protection
+   is still unverified**. A Render instance of the same backend is still live (see `render.yaml`).
 5. **RA-11-E — external SDK `/policies/deploy` handling** — _OWNER: SDK audit._ The `vellar-sdk` client
    for `/policies/deploy` (which gained 422/503 modes under L1) is not in this repo. Confirm it handles
    `422 no_instance`/`attach_mismatch` and `503 attach_unconfirmed` rather than assuming 2xx. Diff it
