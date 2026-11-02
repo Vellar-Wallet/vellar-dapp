@@ -964,6 +964,15 @@ own removal). No live bypass today; a test-coverage gap on a fund-lock-critical 
 > that _abandons_ the helper and inlines a `SignerLimits` map would still ship green. The wiring
 > assertion inside `createPolicySignerActions` is real and load-bearing; the residual gap is the thin
 > forwarding wrapper. Low — tracked as RA-11/L-3, a cheap follow-up on a fund-lock invariant.
+>
+> **L-3 CLOSED.** `apps/web/lib/connector-factory.test.ts` drives the real `getWalletRuntime()` with
+> `./policy-signer` deliberately NOT mocked and only the browser-bound edges faked (passkey-kit, HTTP
+> backend, config). It asserts that `runtime.attachPolicy` reaches `kit.addPolicy` with exactly four
+> positional args, `limits === undefined`, the `Persistent` store and `expiration === undefined`, and
+> that `runtime.detachPolicy` reaches `kit.remove` with exactly `SignerKey.Policy(id)`; neither path
+> touches `addEd25519` / `addSecp256r1`, and kit or backend failures surface instead of reporting a
+> hash. Proven to catch the regression the finding feared: temporarily inlining a `SignerLimits` map in
+> the factory fails the attach test (`expected Map{} to be undefined`).
 
 ### RA-7 — `isBlockedAddress` misses hex-form IPv4-mapped + NAT64 IPv6 ℹ️ Info `[my code]`
 
@@ -1088,8 +1097,8 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) i
 
 > **Status (RA-11): A/B/C/D CLOSED (branch `security/session-client-seam`), each with a test proven to
 > catch its bug; the seam-crossing test is the durable fix — it makes the whole class recur-proof for
-> the wallet session routes. E (external SDK) and the RA-6/L-3 delegation-edge gap remain as flagged
-> follow-ups.** Lesson recorded: **any server↔client contract change needs a seam-crossing test; a
+> the wallet session routes. E (external SDK) remains a flagged follow-up; the RA-6/L-3
+> delegation-edge gap is closed (`connector-factory.test.ts`).** Lesson recorded: **any server↔client contract change needs a seam-crossing test; a
 > mocked-fetch client test can only assert what the client does.**
 
 ### Re-audit bottom line
@@ -1101,7 +1110,7 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) i
   seam-crossing or bug-catching test (#`security/session-client-seam`).
 - **Closed by doc/config/deferral (NOT code-fixed):** M3, M4, M5, M8, M9 (see RA-8).
 - **Open / partial:** RA-11-E (`/policies/deploy` external `vellar-sdk`
-  client — unverifiable in-repo); RA-6/L-3 (connector-factory delegation-edge test — cheap follow-up);
+  client — unverifiable in-repo);
   RA-3's L-1/L-2/L-5 (list-route inject-clock seam, sibling-id exposure, stale-record display — all Low,
   acceptable-with-documentation).
 - **Mainnet: NO-GO** until the deferred prerequisites (M5 multisig attestor, V3 detach UI) are done, the
@@ -1165,7 +1174,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 | **RA-3**    | M1 open + stale doc                                      | Med  | closed-by-test (server #232 + client #234); L-1/L-2/L-5 residuals Low, accepted                   |
 | **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                           |
 | **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                   |
-| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion); L-3 delegation edge **open** (Low)                             |
+| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion + L-3 delegation edge, connector-factory.test.ts)                |
 | **RA-7**    | isBlockedAddress IPv6 gap                                | Info | closed-by-test (byte-level IPv6 range check, every encoding)                                      |
 | **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                           |
 | **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                       |
@@ -1206,7 +1215,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 fixed and test-backed (C1, H1–H3, RA-1, RA-2, RA-11-A/B). The gate is held by: the two deferred
 prerequisites (M5, V3), the two operator-owned V6 dashboard facts, the external-SDK confirmation
 (RA-11-E), and — conditioning every verdict — the unaudited `vellar-sdk`/`passkey-kit`. Testnet posture
-is sound today. The residual open items are Low/Info (I1, RA-6/L-3, RA-3/L-1/L-2/L-5) and are
+is sound today. The residual open items are Low/Info (I1, RA-3/L-1/L-2/L-5) and are
 acceptable-with-documentation, not go/no-go gates.
 
 ---
