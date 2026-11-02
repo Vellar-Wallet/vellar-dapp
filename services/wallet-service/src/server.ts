@@ -143,8 +143,13 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     const at = now();
     const session = await sessions.find(id, at);
     if (!session) return undefined;
-    await sessions.touch(id, at, new Date(at.getTime() + SESSION_TTL_MS));
-    return session;
+    const slidExpiry = new Date(at.getTime() + SESSION_TTL_MS);
+    // touch is a no-op (false) if the session vanished or expired between find and
+    // here (revoked concurrently): that is absent, never an authorised use.
+    if (!(await sessions.touch(id, at, slidExpiry))) return undefined;
+    // Return the record AS SLID, so the caller never sees a stale lastActiveAt /
+    // expiresAt that disagrees with the store (RA-3 L-5).
+    return { ...session, lastActiveAt: at.toISOString(), expiresAt: slidExpiry.toISOString() };
   }
 
   app.post("/wallet/create", async (request, reply) => {
@@ -333,7 +338,8 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     if (!session || session.contractId !== contractId || session.network !== network) {
       return reply.code(401).send({ error: "unauthorized" });
     }
-    return reply.send({ sessions: await sessions.listByContract(contractId, network) });
+    // Judge expiry with the same injected clock as the bearer check (RA-3 L-1).
+    return reply.send({ sessions: await sessions.listByContract(contractId, network, now()) });
   });
 
   // Revoke a session on the caller's OWN account. The target id is in the BODY

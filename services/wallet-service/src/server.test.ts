@@ -8,7 +8,13 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import { createMemoryAuditLog, createMemoryWalletRepository, type AuditLog } from "./repository";
+import {
+  createMemoryAuditLog,
+  createMemorySessionRepository,
+  createMemoryWalletRepository,
+  type AuditLog,
+  type SessionRepository,
+} from "./repository";
 import { createUnconfiguredSubmitter, SubmissionError, type TransactionSubmitter } from "./relayer";
 import { buildServer } from "./server";
 import { deriveWalletContractId } from "./derivation";
@@ -644,6 +650,106 @@ describe("session management (§5.1) — bearer capability (RA-3/M1)", () => {
     expect(expired.statusCode).toBe(401);
     expect(bogus.statusCode).toBe(401);
     expect(expired.json()).toEqual(bogus.json());
+  });
+
+  // RA-3 L-1: the list route must judge expiry with the SAME injected clock the
+  // bearer check uses. It used to fall back to the store's wall clock, so under
+  // an injected clock the two disagreed (and expiry on the list was untestable).
+  it("lists sessions as of the injected clock, not the wall clock (L-1)", async () => {
+    // 2026-08 is long past in real time: a wall-clock filter would call both
+    // sessions expired and return [].
+    const clock = new Date("2026-08-09T00:00:00.000Z");
+    app = buildServer({ submitter: workingSubmitter(), now: () => clock });
+    const create = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+    const connect = await app.inject({
+      method: "POST",
+      url: "/wallet/connect",
+      payload: { keyId: createBody.keyId, network: "testnet" },
+    });
+    const ids = [create.json().sessionId, connect.json().sessionId] as string[];
+
+    const res = await app.inject({
+      url: "/wallet/sessions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(ids[0]!),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(
+      res
+        .json()
+        .sessions.map((s: { id: string }) => s.id)
+        .sort(),
+    ).toEqual([...ids].sort());
+  });
+
+  it("omits a session that expired under the injected clock from the list (L-1)", async () => {
+    let clock = new Date("2026-08-09T00:00:00.000Z");
+    app = buildServer({ submitter: workingSubmitter(), now: () => clock });
+    const old = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+    const oldId = old.json().sessionId as string;
+    // 3 days later a second device connects; the first is never used again.
+    clock = new Date("2026-08-12T00:00:00.000Z");
+    const fresh = await app.inject({
+      method: "POST",
+      url: "/wallet/connect",
+      payload: { keyId: createBody.keyId, network: "testnet" },
+    });
+    const freshId = fresh.json().sessionId as string;
+    // 8 days after the first session's last use: it has expired, the second is live.
+    clock = new Date("2026-08-17T00:00:01.000Z");
+
+    const res = await app.inject({
+      url: "/wallet/sessions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(freshId),
+    });
+
+    expect(res.statusCode).toBe(200);
+    const listed = res.json().sessions.map((s: { id: string }) => s.id);
+    expect(listed).toEqual([freshId]);
+    expect(listed).not.toContain(oldId);
+  });
+
+  // RA-3 L-5: GET /wallet/session returned the record as it was BEFORE the
+  // authorised-use slide, so the caller saw a stale lastActiveAt / expiresAt
+  // that disagreed with what the store (and the list route) held.
+  it("GET /wallet/session shows the slid lastActiveAt and expiresAt, not the pre-slide values (L-5)", async () => {
+    let clock = new Date("2026-08-09T00:00:00.000Z");
+    app = buildServer({ submitter: workingSubmitter(), now: () => clock });
+    const create = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+    const sid = create.json().sessionId as string;
+
+    clock = new Date("2026-08-11T12:00:00.000Z");
+    const res = await app.inject({ url: "/wallet/session", headers: bearer(sid) });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().createdAt).toBe("2026-08-09T00:00:00.000Z");
+    expect(res.json().lastActiveAt).toBe("2026-08-11T12:00:00.000Z");
+    expect(res.json().expiresAt).toBe("2026-08-18T12:00:00.000Z");
+
+    // The list route reads the store; both views must now agree.
+    const list = await app.inject({
+      url: "/wallet/sessions?contractId=CCONTRACT&network=testnet",
+      headers: bearer(sid),
+    });
+    expect(list.json().sessions[0]).toMatchObject({
+      lastActiveAt: "2026-08-11T12:00:00.000Z",
+      expiresAt: "2026-08-18T12:00:00.000Z",
+    });
+  });
+
+  it("treats a session that vanishes between find and touch as absent (401), not as authorised (L-5)", async () => {
+    const real = createMemorySessionRepository();
+    const racing: SessionRepository = { ...real, touch: async () => false };
+    app = buildServer({ submitter: workingSubmitter(), sessions: racing });
+    const create = await app.inject({ method: "POST", url: "/wallet/create", payload: createBody });
+
+    const res = await app.inject({
+      url: "/wallet/session",
+      headers: bearer(create.json().sessionId as string),
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: "unauthorized" });
   });
 
   it("rejects a bad list query (400) before touching auth", async () => {
