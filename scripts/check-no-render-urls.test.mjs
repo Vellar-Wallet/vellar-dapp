@@ -37,6 +37,9 @@ describe("isCheckedPath", () => {
     "package-lock.json",
     "scripts/check-no-render-urls.mjs",
     "scripts/check-no-render-urls.test.mjs",
+    "packages/service-kit/src/facilitator-url.ts",
+    "packages/service-kit/src/facilitator-url.test.ts",
+    "packages/service-kit/src/facilitator-url.boot.test.ts",
   ]) {
     it(`does not check ${p}`, () => assert.equal(isCheckedPath(p), false));
   }

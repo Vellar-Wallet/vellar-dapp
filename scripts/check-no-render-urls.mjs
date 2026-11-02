@@ -10,8 +10,15 @@ import { pathToFileURL } from "node:url";
 
 const RENDER_HOST = /(^|[^a-z0-9-])([a-z0-9-]+\.)*onrender\.com\b/i;
 const LOCKFILES = new Set(["pnpm-lock.yaml", "package-lock.json", "yarn.lock"]);
-// This check names the host on purpose.
-const SELF = new Set(["scripts/check-no-render-urls.mjs", "scripts/check-no-render-urls.test.mjs"]);
+// These name the host on purpose: this check, and the code and tests that REFUSE a Render
+// FACILITATOR_URL at boot. Keep this list to exactly those files.
+const SELF = new Set([
+  "scripts/check-no-render-urls.mjs",
+  "scripts/check-no-render-urls.test.mjs",
+  "packages/service-kit/src/facilitator-url.ts",
+  "packages/service-kit/src/facilitator-url.test.ts",
+  "packages/service-kit/src/facilitator-url.boot.test.ts",
+]);
 
 /** Whether a repo-relative path is source this check should scan. */
 export function isCheckedPath(path) {
