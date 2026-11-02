@@ -50,13 +50,41 @@ describe("deployEnvViolations (staging)", () => {
     expect(deployEnvViolations(goodStaging())).toEqual([]);
   });
 
-  it("production and development have no violations whatever they contain", () => {
-    for (const DEPLOY_ENV of ["production", "development"]) {
-      expect(
-        deployEnvViolations({ DEPLOY_ENV, STELLAR_NETWORK: "mainnet", ALLOW_INMEMORY: "1" }),
-      ).toEqual([]);
-    }
+  it("production has no violations whatever it contains", () => {
+    expect(
+      deployEnvViolations({
+        DEPLOY_ENV: "production",
+        STELLAR_NETWORK: "mainnet",
+        ALLOW_INMEMORY: "1",
+      }),
+    ).toEqual([]);
     expect(deployEnvViolations({ STELLAR_NETWORK: "mainnet" })).toEqual([]); // unset = production
+  });
+
+  describe("development is never allowed on mainnet", () => {
+    it.each([
+      ["STELLAR_NETWORK=mainnet", { STELLAR_NETWORK: "mainnet" }],
+      [" Mainnet (case, whitespace)", { STELLAR_NETWORK: " Mainnet " }],
+      [
+        "the mainnet passphrase with STELLAR_NETWORK unset",
+        { STELLAR_NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015" },
+      ],
+    ])("refuses %s", (_label, extra) => {
+      const env = { DEPLOY_ENV: "development", ...extra };
+      expect(deployEnvViolations(env)).toEqual([expect.stringContaining("not allowed on mainnet")]);
+      expect(() => assertDeployEnvPolicy(env)).toThrow(DeployEnvPolicyError);
+    });
+
+    it("still allows development on testnet, with nothing set, and with escape hatches", () => {
+      expect(deployEnvViolations({ DEPLOY_ENV: "development" })).toEqual([]);
+      expect(
+        deployEnvViolations({
+          DEPLOY_ENV: "development",
+          STELLAR_NETWORK: "testnet",
+          ALLOW_INMEMORY: "1",
+        }),
+      ).toEqual([]);
+    });
   });
 
   describe("network is pinned to testnet", () => {

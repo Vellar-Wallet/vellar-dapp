@@ -17,7 +17,8 @@ import { flagIsSet } from "./deploy-env";
 //     operator sets INIT_DEPLOY_MARKER=1 AND the database is fresh (no tables at all),
 //     so a staging stack pointed at some existing database can neither write to it
 //     nor take it over;
-//   - 'development' (local, throwaway) is not checked.
+//   - 'development' (local, throwaway) never writes a marker, but it READS one and refuses a
+//     database marked 'production' (a development process must not run on a production stack).
 //
 // A mismatch is fatal: tryConnectDb rethrows DeploymentMarkerError instead of falling
 // back to in-memory storage.
@@ -94,7 +95,15 @@ export async function ensureDeploymentMarker(
   deployEnv: DeployEnv,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
-  if (deployEnv === "development") return;
+  if (deployEnv === "development") {
+    if ((await readMarker(client)) === "production") {
+      throw new DeploymentMarkerError(
+        "This process is DEPLOY_ENV=development but its database is marked 'production'. " +
+          "Refusing to boot: development must not run against the production database.",
+      );
+    }
+    return;
+  }
   const running: Tier = deployEnv;
 
   const existing = await readMarker(client);

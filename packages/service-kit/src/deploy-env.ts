@@ -10,7 +10,8 @@ import { resolveNetwork } from "./network-config";
 // of quietly spending mainnet funds.
 //
 // DEPLOY_ENV unset means production and adds NO rules, so existing deployments
-// are unaffected. The rules only constrain what staging may do.
+// are unaffected. The rules constrain what staging may do, and keep 'development'
+// (which skips the staging rules and the tier marker's write) off a mainnet stack.
 
 export type DeployEnv = "production" | "staging" | "development";
 
@@ -19,7 +20,7 @@ export class DeployEnvPolicyError extends Error {
   readonly violations: string[];
   constructor(violations: string[]) {
     super(
-      `DEPLOY_ENV=staging policy violated (${violations.length}): ` +
+      `DEPLOY_ENV policy violated (${violations.length}): ` +
         violations.map((v, i) => `${i + 1}) ${v}`).join(" "),
     );
     this.name = "DeployEnvPolicyError";
@@ -107,9 +108,27 @@ function corsViolations(env: NodeJS.ProcessEnv): string[] {
     : [];
 }
 
+const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";
+
+/** 'development' skips the staging guards, so it must never run against mainnet. */
+function developmentViolations(env: NodeJS.ProcessEnv): string[] {
+  const onMainnet =
+    env.STELLAR_NETWORK?.trim().toLowerCase() === "mainnet" ||
+    env.STELLAR_NETWORK_PASSPHRASE?.trim() === MAINNET_PASSPHRASE;
+  return onMainnet
+    ? [
+        "DEPLOY_ENV=development is not allowed on mainnet (STELLAR_NETWORK or " +
+          "STELLAR_NETWORK_PASSPHRASE points at mainnet). Development skips every staging guard; " +
+          "leave DEPLOY_ENV unset for production.",
+      ]
+    : [];
+}
+
 /** Every policy violation for this environment ([] when it is acceptable). */
 export function deployEnvViolations(env: NodeJS.ProcessEnv): string[] {
-  if (deployEnvFromEnv(env) !== "staging") return [];
+  const environment = deployEnvFromEnv(env);
+  if (environment === "development") return developmentViolations(env);
+  if (environment !== "staging") return [];
   return [
     ...networkViolations(env),
     ...databaseViolations(env),

@@ -178,12 +178,22 @@ describe.skipIf(!DATABASE_URL)("ensureDeploymentMarker against a real database",
   });
 
   describe("development", () => {
-    it("neither checks nor creates a marker", async () => {
+    it("never creates a marker, and allows an unmarked or staging database", async () => {
       const { url } = await freshDatabase();
       await ensure(url, "development");
       expect(await marker(url)).toBe("no-table");
+      const staging = await freshDatabase();
+      await ensure(staging.url, "staging", INIT);
+      await expect(ensure(staging.url, "development")).resolves.toBeUndefined();
+    });
+
+    it("REFUSES a database marked production, even on a read-only connection (writes nothing)", async () => {
+      const { url } = await freshDatabase();
       await ensure(url, "production");
-      await expect(ensure(url, "development")).resolves.toBeUndefined();
+      await expect(ensure(url, "development", NO_FLAG, true)).rejects.toThrow(
+        /development.*marked 'production'/,
+      );
+      expect(await marker(url)).toEqual(["production"]);
     });
   });
 
