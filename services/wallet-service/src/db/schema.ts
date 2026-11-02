@@ -61,3 +61,28 @@ export const spendLedger = pgTable(
   },
   (table) => [index("spend_ledger_line_network_at_idx").on(table.line, table.network, table.at)],
 );
+
+// Sponsored-submission replay reservations (approved design 1A; see src/replay.ts).
+// One row per address-credential auth entry in a submitted tx. The PRIMARY KEY
+// (network, address, nonce) is the replay identity and the arbiter of the
+// race: a duplicate INSERT conflicts in the database, so concurrent copies (on
+// any replica) cannot both reserve. `expiration_ledger` is the entry's
+// signatureExpirationLedger; rows below the current ledger are purged because the
+// host rejects those entries on its own. The nonce is an int64, kept as text so
+// values beyond 2^53 stay exact.
+export const submissionReplay = pgTable(
+  "submission_replay",
+  {
+    network: text("network").notNull(),
+    address: text("address").notNull(),
+    nonce: text("nonce").notNull(),
+    expirationLedger: bigint("expiration_ledger", { mode: "number" }).notNull(),
+    reservedAt: timestamp("reserved_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.network, table.address, table.nonce] }),
+    index("submission_replay_expiration_idx").on(table.network, table.expirationLedger),
+  ],
+);

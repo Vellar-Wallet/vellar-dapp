@@ -12,6 +12,7 @@ import {
 import type { DbHandle } from "./db/client";
 import { configFromEnv, DEFAULTS } from "./config";
 import { createUnconfiguredSubmitter } from "./relayer";
+import { maxAuthExpirationLedgersFromEnv } from "./replay";
 import { buildServer, type WalletServiceDeps } from "./server";
 
 // FIX 3 budget window + ceilings (confirmed). All env-overridable.
@@ -103,6 +104,26 @@ deps.budget = budget;
 // as the sponsor line — never the request body.
 deps.budgetNetwork = budgetNetwork;
 
+// Replay protection (approved design 1A). Durable reservations in Postgres when
+// there is a database (keyed on the server-config network, never the body); the
+// in-memory guard server.ts defaults to is single-process and dev-only, which the
+// persistence policy above already refuses in production.
+const { rpc } = await import("@stellar/stellar-sdk");
+const ledgerRpc = new rpc.Server(config.relayer?.rpcUrl ?? DEFAULTS.rpcUrl);
+deps.getLatestLedger = async () => (await ledgerRpc.getLatestLedger()).sequence;
+deps.maxAuthExpirationLedgers = (() => {
+  try {
+    return maxAuthExpirationLedgersFromEnv(process.env.MAX_AUTH_EXPIRATION_LEDGERS);
+  } catch (err) {
+    console.error(`[wallet-service] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+})();
+if (dbHandle) {
+  const { createPgReplayGuard } = await import("./db/pg-replay");
+  deps.replayGuard = createPgReplayGuard(dbHandle.db, budgetNetwork);
+}
+
 // Now build the submitter (sponsor path metered by the same budget).
 let submitter = config.relayer
   ? (await import("./relayer-passkey")).createPasskeyServerSubmitter(config.relayer)
@@ -129,6 +150,21 @@ if (config.sponsorSecretKey) {
 deps.submitter = submitter;
 
 const app = buildServer(deps);
+
+// Reservations only need to outlive their expiration ledger; drop the rest so
+// the table stays tiny. A failed purge is harmless (rows are just kept longer).
+const REPLAY_PURGE_INTERVAL_MS = 5 * 60 * 1000;
+if (deps.replayGuard) {
+  const guard = deps.replayGuard;
+  const purge = setInterval(() => {
+    deps
+      .getLatestLedger?.()
+      .then((ledger) => guard.purgeExpired(ledger))
+      .catch((err: unknown) => app.log.warn(err, "replay reservation purge failed"));
+  }, REPLAY_PURGE_INTERVAL_MS);
+  purge.unref();
+  app.addHook("onClose", async () => clearInterval(purge));
+}
 
 if (closeDb) {
   app.addHook("onClose", async () => closeDb?.());

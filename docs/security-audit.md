@@ -1151,6 +1151,69 @@ verification `log` field (RA-11-D) were orphaned; `/policies/deploy` (RA-11-E) i
 
 ---
 
+## Replay protection on the sponsor-submission path (idea.md §12, catalogue 1.2): CLOSED
+
+**What stopped a double submission before.** Nothing server-side on either branch of `/wallet/submit`.
+The sponsor branch discards the caller's envelope and rebuilds `{func, auth}` around the sponsor account
+with a fresh sequence, so the tx hash, source, sequence, fee and memo are not a stable identity. The
+only guard was the host's per-`(address, nonce)` check at apply time. A copy sent after the original
+landed failed simulation before any budget was spent (fine). A copy sent before it landed, whether
+concurrent or just fast, passed simulation, consumed sponsor budget with its real fee, was signed and
+sent, and failed only at apply, after the fee was charged: N concurrent copies cost N fees. The relayer
+branch had no server-side guard at all (our exposure there is relayer quota, not XLM).
+
+**Fix (approved design).**
+
+- **Identity is the signed auth entry, not the envelope.** One key per address-credential entry:
+  `(server-config network, credential address, nonce)`. Not a tx hash, because the sponsor rebuild makes
+  a hash trivially re-wrappable (same signed auth, different source, new hash). The network comes from
+  server config, never the request body (V5), so flipping the body's `network` label cannot evade it.
+- **Placement.** In the route after the scope gate and before `submitter.submit`, so a replay never
+  reaches `consumeSponsorBudget` and both the sponsor and relayer branches are covered.
+- **All-or-nothing.** A tx can carry several entries. They are reserved in ONE database transaction
+  (`INSERT ... ON CONFLICT DO NOTHING`, rolled back if any key was already reserved), so a replay that
+  shares one reserved entry cannot leave its other entries reserved and lock out their legitimate signer.
+  Keys are inserted in canonical `(address, nonce)` order so overlapping sets cannot deadlock.
+- **Refusal.** 409 `replay_detected`, audited as `tx.replay_rejected` with a short fingerprint of the
+  key set (never the raw nonce). A reservation that cannot be recorded returns 503 and nothing is
+  submitted (fail closed).
+- **Release policy.** The reservation is released only when the tx definitely did not land:
+  `sponsor_try_again_later`, `sponsor_submit_failed` (sendTransaction ERROR, rejected before inclusion),
+  `sponsor_bad_tx`, `sponsor_simulation_failed`, `sponsor_fee_too_high`, `sponsor_budget_exceeded`,
+  `relayer_not_configured`. Anything else keeps it: `tx_timeout`, `tx_failed`, any relayer error code
+  (opaque, so treated as unknown), an unrecognised code, or a non-`SubmissionError`. A retry after an
+  unknown outcome therefore needs a fresh signature.
+- **Related bug fixed.** `sendTransaction` status `TRY_AGAIN_LATER` used to fall through to polling a
+  hash the network never accepted, surfacing as a 60-second `tx_timeout` (an unknown outcome) for what is
+  a definite not-landed. It now returns the coded, releasable `sponsor_try_again_later`; `DUPLICATE` is
+  still polled.
+- **Retention and cap.** A reservation only has to outlive its `signatureExpirationLedger`, after which
+  the host rejects the entry at simulation before any spend. The route refuses (422
+  `auth_expiration_too_far`) any entry expiring more than `MAX_AUTH_EXPIRATION_LEDGERS` (default **120**,
+  about 10 minutes) ahead of the latest ledger read from the trusted RPC; if the ledger cannot be read
+  the submission is refused (503 `ledger_unavailable`). Expired rows are purged every 5 minutes.
+
+**Every shipped client signs inside the cap** (checked in code, not assumed): the web passkey flow uses
+the passkey-kit default (latest + 6 ledgers, about 30s); the extension signs at exactly latest + 60 from a
+trusted anchor (`signer-expiration.ts`, L4) and does not call this route itself; `vellar-sdk` x402 caps at
+58 and goes to the facilitator, not here. The residual risk is a third-party integrator who raises the
+kit's `timeoutInSeconds` past about 600s: they get the coded 422 rather than a silent failure.
+
+**Tests.** Unit (key extraction from kit-shaped V1/V2/delegates credentials, int64 nonces beyond 2^53 and
+negative, envelope independence, all-or-nothing, purge boundary), route (sequential and concurrent
+replays, re-wrapped envelopes, partial-overlap lockout, release versus keep per error code, fail-closed,
+the cap boundary at 120/121), sponsor (`TRY_AGAIN_LATER`/`DUPLICATE`/`ERROR` handling and the budget
+consumed exactly once through the real sponsor path), and real Postgres on independent pools (identical
+concurrent reservations, AB/BA overlap, partial overlap rolls back, per-network isolation, a
+deterministic check of the canonical insert order, and the route-level budget-once guarantee across two
+servers). Mutation-checked: removing the rollback or the canonical ordering fails the Postgres tests.
+
+**Not covered / accepted.** `/lifecycle/execute` and the facilitator have their own payment flows and
+are out of scope here. The in-memory guard (dev and tests) is single-process only; production runs the
+Postgres guard and the persistence policy refuses in-memory storage there.
+
+---
+
 ## Closing state — carry this into the SDK audit
 
 Single source of truth for where the dapp repo stands. Every finding, its final status, the remaining
