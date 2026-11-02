@@ -238,6 +238,14 @@ read oracle. Same build-box gating as H2.
   > `require_auth` on a G-account checks a single ed25519 signature and does not compose with
   > classic multisig thresholds.)
 
+  > **Status correction (2026-11-02): M5 is NOT resolved anywhere.** It stays OPEN and mainnet-blocking
+  > until a threshold attestor is wired into the worker's boot path, tested end to end, and on `main`.
+  > A threshold-attestor contract (`contracts/threshold-attestor`) and a submitter
+  > (`services/worker-service/src/threshold-submitter.ts`) exist on the `dev` branch only. On `dev` the
+  > submitter is imported by nothing except its own test (dead code), the worker still wires only the
+  > single-key attestor, and `dev`'s `docs/threshold-attestor-migration.md` calling M5 "fully resolved"
+  > is wrong. Existing code on `main` is unchanged: only the boot guard above holds the line.
+
 - **M6 — DB fallback fails open + health lies `[my code]`** — `service-kit/src/index.ts:49-64`,
   `wallet-service/src/index.ts:31-61`. No `DATABASE_URL` (or transient unreachability — Render
   free Postgres expires at 30 days) → silent in-memory repos, `/health` still returns
@@ -1253,7 +1261,7 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 | **M2**      | deploy-instance no spend cap                             | Med  | closed-by-test (deploy budget line)                                                                |
 | **M3**      | Spending-limit tumbling window allows 2×                 | Med  | closed-by-doc (tumbling documented; tests pin 2×)                                                  |
 | **M4**      | verified-recipient bricks w/o registry                   | Med  | deferred (product-gated + V3 recovery; no mainnet reg)                                             |
-| **M5**      | Attestation registry single-key oracle                   | Med  | **deferred** (boot guard only; multisig attestor TBD)                                              |
+| **M5**      | Attestation registry single-key oracle                   | Med  | **open** (boot guard only; not resolved anywhere until wired, tested, on main)                     |
 | **M6**      | DB fallback fails open + health lies                     | Med  | closed-by-test (readiness) + RA-4 (boot inversion)                                                 |
 | **M7**      | No reaper for stranded `building` rows                   | Med  | closed-by-test (reaper + dedup + queue cap)                                                        |
 | **M8**      | Stale fast-uri override                                  | Med  | closed-by-config (lockfile pin; no test)                                                           |
@@ -1292,7 +1300,9 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 
 1. **M5 — multisig / smart-account attestor** — _OWNER: contracts + backend._ Today only a boot guard
    refuses single-key-on-mainnet (`ALLOW_SINGLE_KEY_ATTESTOR` escape hatch). A real threshold attestor
-   must exist before any mainnet attestation registry goes live. Deferred by design.
+   must exist before any mainnet attestation registry goes live. **Not resolved anywhere**: a contract and
+   submitter exist on `dev` but are unwired dead code, so M5 stays open until the attestor is wired into
+   the worker boot path, tested, and on `main`.
 2. **V3 detach UI** — _OWNER: web._ The standalone-signer detach recovery exists in code + is invariant-
    tested (RA-6), but there is no wired UI to trigger `kit.remove(SignerKey.Policy)`. Needed before
    `verified_only` policies are offered on mainnet.
