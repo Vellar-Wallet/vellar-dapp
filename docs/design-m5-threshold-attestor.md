@@ -16,8 +16,8 @@ Mainnet attestor = a Soroban threshold account (`contracts/threshold-attestor`) 
 | Hand the registry to another attestor (`set_attestor`) | **2 of 3**        |
 | **Revoke ONE attestation record**                      | **1 of 3**        |
 
-Each signer may do this at most **3 times per rolling 24 hours** (17,280 ledgers), enforced in
-the contract; beyond that a revoke needs 2-of-3. A single signature may authorise **exactly one record revoked**: the authorisation must
+Each signer may do this at most **3 times per rolling 24 hours** (17,280 ledgers), verified in
+the probe and to be implemented in `threshold-attestor`; beyond that a revoke needs 2-of-3. A single signature may authorise **exactly one record revoked**: the authorisation must
 contain one call, `revoke`, on the bound registry, with one argument. A multi-call
 authorisation, any other function, or any other contract needs 2-of-3.
 
@@ -40,10 +40,19 @@ Controls (conditions of this design):
    not on a threshold. The contract also records which path authorised it (see below).
 3. **Re-attesting a wrongly revoked record is a documented 2-of-3 step** (runbook below).
 4. **A per-signer cap, decided: 3 single-signature revokes per rolling 24 hours (17,280
-   ledgers), enforced in the contract, not in the off-chain service.** The fourth within the window
+   ledgers), verified in the probe and to be implemented in `threshold-attestor`, not in the
+   off-chain service.** The fourth within the window
    from the same signer is refused on the 1-of-3 path and needs 2-of-3. Each signer has its own
    allowance: signer A's three do not consume signer B's. The ledger count is an approximation
    of 24 hours (ledger close time varies); the contract counts ledgers, not wall-clock time.
+
+   **Keying rule (security-critical).** The per-signer count must be keyed ONLY on the index
+   whose signature verified against `signers[index]` in this same `__check_auth` call, never on
+   any other value: not a claimed index in the signature payload, not an address argument, not a
+   caller-supplied field. The probe takes the index as a claim, which is acceptable for a probe
+   with no key material; the real contract must verify the signature for that index first and
+   only then read and advance that signer's counter. Otherwise one signer could spend another
+   signer's allowance, or dodge its own cap by claiming a different index.
 
    Acceptance tests (all in the contract's test suite and in the real-host rehearsal):
    - the 4th single-signer revoke inside the window is refused, and a 2-of-3 revoke of the same
@@ -241,7 +250,9 @@ boundary tests in `1bf77d6`).
 ## Decisions recorded
 
 1. N=3, attest, rotate and handoff 2-of-3, revoke 1-of-3 limited to one record per authorisation.
-2. Single-signer revoke cap: **3 per rolling 24 hours per signer, in the contract.**
+2. Single-signer revoke cap: **3 per rolling 24 hours per signer, verified in the probe; to be
+   implemented in `threshold-attestor`** (keyed on the index whose signature verified against
+   `signers[index]`, never on any other value).
 3. Signer C: held by **Chigozirim**, hardware wallet, offline, sealed seed backup kept separately
    (location not recorded here).
 4. Signer B: Hetzner Cloud proposed, in a separate account with the independence requirements above.
@@ -324,8 +335,8 @@ throwaway key (`GALXXCCCXNRH2ZN5WMSVFI64X5D5UAJPJCYFP6NUQQRFE5KDCMLYAT5L`, wasm 
 
 **What changes in the design.**
 
-- `revoke_record` is dropped. The 3-per-24-hours cap is enforced directly in `__check_auth` (see
-  "Contract changes"), which is simpler and keeps the registry's attestor authorisation in one place.
+- `revoke_record` is dropped. The 3-per-24-hours cap is to be implemented directly in `__check_auth` of
+  `threshold-attestor` (verified in the probe; see "Contract changes"), which is simpler and keeps the registry's attestor authorisation in one place.
 - The alert event for each single-signature revoke can be emitted from `__check_auth` itself.
 - The existing `threshold-attestor` already calls `extend_ttl` in `__check_auth` (`renew_instance`); that
   is therefore fine on protocol 29, and it was not the bug it might have been.
