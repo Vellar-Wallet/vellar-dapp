@@ -16,20 +16,20 @@ is **create a passkey, connect (find it again), sign**. This page has two halves
 
 14 passed. What it covers, and what it deliberately does not:
 
-| Scenario                                                                                                  | Covered | Notes                                                |
-| --------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
-| Platform authenticator detected                                                                           | yes     |                                                      |
-| Create: ES256 resident credential on the page's `rpId`                                                    | yes     | checks user handle, resident flag, P-256 key         |
-| Connect: discoverable `get` returns the user handle                                                       | yes     | also with two passkeys                               |
-| Sign: assertion verifies over `authData \|\| SHA-256(clientData)`, echoes the challenge, binds the `rpId` | yes     | verified in Node, not trusted from the browser       |
-| Sign: converts to the 64-byte low-S contract form                                                         | yes     |                                                      |
-| Counter increments per ceremony                                                                           | yes     |                                                      |
-| Duplicate registration -> `InvalidStateError` -> `credential-exists`                                      | yes     | via the real `normalizePasskeyError`                 |
-| UV required but not performed -> `NotAllowedError` -> `cancelled`                                         | yes     |                                                      |
-| Abandoned ceremony -> `AbortError` -> `aborted`                                                           | yes     |                                                      |
-| Real `/app`: Create registers a credential; dead backend ends in an error                                 | yes     | backend and RPC blocked                              |
-| Real `/app`: Sign in sends the credential id to `/wallet/connect`                                         | yes     |                                                      |
-| Deploying the smart account, funding, submitting a payment                                                | **no**  | needs a live backend; see the stale live specs below |
+| Scenario                                                                  | Covered | Notes                                                |
+| ------------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
+| Platform authenticator detected                                           | yes     |                                                      |
+| Create: ES256 resident credential on the page's `rpId`                    | yes     | checks user handle, resident flag, P-256 key         |
+| Connect: discoverable `get` returns the user handle                       | yes     | also with two passkeys                               |
+| Sign: assertion verifies, binds challenge and rpId                        | yes     | verified in Node, not trusted from the browser       |
+| Sign: converts to the 64-byte low-S contract form                         | yes     |                                                      |
+| Counter increments per ceremony                                           | yes     |                                                      |
+| Duplicate registration -> `InvalidStateError` -> `credential-exists`      | yes     | via the real `normalizePasskeyError`                 |
+| UV required but not performed -> `NotAllowedError` -> `cancelled`         | yes     |                                                      |
+| Abandoned ceremony -> `AbortError` -> `aborted`                           | yes     |                                                      |
+| Real `/app`: Create registers a credential; dead backend ends in an error | yes     | backend and RPC blocked                              |
+| Real `/app`: Sign in sends the credential id to `/wallet/connect`         | yes     |                                                      |
+| Deploying the smart account, funding, submitting a payment                | **no**  | needs a live backend; see the stale live specs below |
 
 ### Findings from building it
 
