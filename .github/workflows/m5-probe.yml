@@ -1,0 +1,51 @@
+name: M5 auth probe (testnet)
+
+# Re-checks, on the real Soroban testnet host, the assumptions the M5 threshold
+# attestor design rests on (docs/design-m5-threshold-attestor.md):
+#   - what a custom account's __check_auth may do (write, extend TTL, emit events);
+#   - the single-signer revoke cap rules on real authorisation contexts;
+#   - rollback when the registry call fails after authorisation.
+# It exits 1 if any assumption stops holding, so a protocol upgrade that changes the
+# behaviour fails here before anyone builds on it.
+#
+# NOTE: GitHub only runs scheduled workflows from the repository's DEFAULT branch.
+# Until this file is on that branch the schedule below is inert; run it by hand from
+# the Actions tab (workflow_dispatch) or locally with `pnpm m5:probe`.
+#
+# Testnet only: it creates a fresh throwaway key funded by friendbot, so it needs no
+# secrets. The script refuses to run against anything but the testnet passphrase.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # scripts/m5-probe/rust-toolchain.toml pins 1.94.0 and the wasm target; rustup
+      # installs them on first use. The build is `cargo build --locked` against the
+      # crate's own Cargo.lock.
+      - name: Unit tests for the cap rules
+        working-directory: scripts/m5-probe
+        run: cargo test --locked
+
+      - name: On-chain probe (testnet)
+        run: pnpm m5:probe
