@@ -8,7 +8,7 @@
 //
 // FIX 7 gated fail-closed on `NODE_ENV === "production"`. RA-4: NOTHING sets
 // NODE_ENV=production on the deploy targets (@vellar/all-in-one runs via
-// `tsx src/index.ts`; no render.yaml/railway.json/.env sets it), so that guard
+// `tsx src/index.ts`; no railway.json/.env sets it), so that guard
 // was inert and the instance silently degraded — fail-OPEN by default. A missing
 // env var meant "not production" meant "less safe."
 //

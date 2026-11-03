@@ -4,9 +4,14 @@ import {
   resolvePersistencePolicy,
   startService,
   tryConnectDb,
+  enforceDeployEnvPolicy,
 } from "@vellar/service-kit";
 import { configFromEnv } from "./config";
 import { buildServer, type VerificationServiceDeps } from "./server";
+
+// Staging tier policy (catalogue 1.4): DEPLOY_ENV=staging refuses to boot unless it is
+// testnet-pinned, on its own database, with every production escape hatch unset.
+enforceDeployEnvPolicy("verification-service");
 
 // @vellar/verification-service — accepts contract verification submissions, stores
 // VerificationRecords, and enqueues deterministic-rebuild jobs (idea.md §6.3,

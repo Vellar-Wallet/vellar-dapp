@@ -11,6 +11,7 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:workflows": "node --test \".github/workflows/*.test.mjs\" \"scripts/*.test.mjs\"",
+    "m5:probe": "node scripts/m5-probe/run-probe.mjs",
     "check:render-urls": "node scripts/check-no-render-urls.mjs",
     "migration:dry-run": "pnpm --filter @vellar/policy-service exec tsx ../../scripts/migration-dry-run.mts",
     "typecheck": "turbo run typecheck",
