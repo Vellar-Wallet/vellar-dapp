@@ -381,7 +381,9 @@ backfill-metadata.ts` also runs `migrate()` on `DATABASE_URL` even in its defaul
   > 3. **An unlisted Railway deployment** (the CLI shows none after 2026-09-29, and only one service
   >    holds the variable). Low likelihood.
   > 4. **The credential was exposed** (a log, a pasted URL, the backfill script's stdout) and used
-  >    elsewhere. No evidence in the repo.
+  >    elsewhere. No evidence in the repo. **Known exposure route on `dev`:** `backfill-metadata.ts`
+  >    prints the full `DATABASE_URL` to stdout (and migrates even in dry-run); anyone who ran it
+  >    and kept or shared the output has the credential in a log or terminal history.
   > 5. **A tool with Neon access ran the SQL** (Neon console or SQL editor, or an AI assistant with a
   >    Neon connector). Check the Neon query history for both migrations.
   >

@@ -163,6 +163,22 @@ ported:
 4. Any other dev migration already applied to production must be checked the same way before it is
    ported. A fresh database (staging) gets all of them in journal order.
 
+## Porting dev's `backfill-metadata.ts`: two required changes
+
+`services/verification-service/scripts/backfill-metadata.ts` exists only on `dev`. Before it is
+ported to `main`:
+
+1. **It must never print `DATABASE_URL`.** It currently logs the full connection string. Print the
+   host only (parse the URL and log `hostname`), never the user, password or path.
+2. **It must not migrate in dry-run mode.** It currently calls `migrate()` before it scans, even with
+   `--dry-run` (the default). A dry run must open the connection read only and touch no schema; only
+   a confirmed run may write, and it should not migrate at all (migrations belong to the service
+   boot, not to a backfill).
+
+Add a test for each: the output never contains the URL's credentials, and a dry run issues no DDL.
+This script is a credential-exposure route on `dev` (see the M9 incident entry in
+`security-audit.md`).
+
 ## Known gaps
 
 - There is no automated deploy gate script on `main`. A `deploy-health-gate` exists on the `dev`
