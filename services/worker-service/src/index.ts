@@ -1,7 +1,13 @@
 import pg from "pg";
 import Fastify from "fastify";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { domainMetrics, portFromEnv, registerHealth, registerMetrics } from "@vellar/service-kit";
+import {
+  domainMetrics,
+  portFromEnv,
+  registerHealth,
+  registerMetrics,
+  enforceDeployEnvPolicy,
+} from "@vellar/service-kit";
 import { configFromEnv, executorFromConfig } from "./config";
 import { createRpcArtifactResolver } from "./resolver";
 import { createPgJobStore } from "./pg-job-store";
@@ -9,6 +15,10 @@ import { startWorkerLoop, type WorkerMetrics } from "./loop";
 import { createAttestor, type Attestor } from "./attestor";
 import { assertAttestorSafeForNetwork } from "./attestor-guard";
 import { createRegistrySubmitter } from "./registry-submitter";
+
+// Staging tier policy (catalogue 1.4): DEPLOY_ENV=staging refuses to boot unless it is
+// testnet-pinned, on its own database, with every production escape hatch unset.
+enforceDeployEnvPolicy("worker-service");
 
 // @vellar/worker-service — the deterministic build worker (technical-doc.md §8.4).
 //

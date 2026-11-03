@@ -9,12 +9,17 @@ import {
   startService,
   tryConnectDb,
   type SpendBudget,
+  enforceDeployEnvPolicy,
 } from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
 import { configFromEnv } from "./config";
 import { createPolicyDeployer } from "./deploy";
 import { buildServer, type PolicyServiceDeps } from "./server";
 import { SPENDING_POLICY_WASM_HASH } from "./templates";
+
+// Staging tier policy (catalogue 1.4): DEPLOY_ENV=staging refuses to boot unless it is
+// testnet-pinned, on its own database, with every production escape hatch unset.
+enforceDeployEnvPolicy("policy-service");
 
 // FIX 3 deploy budget: 20 XLM / 20 deploys per 1h window, env-overridable.
 const BUDGET_WINDOW_MS = Number(process.env.BUDGET_WINDOW_MS) || 3_600_000;

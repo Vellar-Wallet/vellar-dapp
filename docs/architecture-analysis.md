@@ -23,7 +23,7 @@ workspace. The backend runs TypeScript directly via `tsx` — no build step in p
 **Languages & runtimes**
 
 - TypeScript 5.9, ESM throughout; pnpm `11.9.0`, Turborepo `2.5.4` — `package.json:4-21`, `pnpm-workspace.yaml:1-4`
-- Node ≥ 22 in `engines`, but `render.yaml` pins `NODE_VERSION=20` for the deployed backend — a direct conflict nothing enforces — `package.json:5-7`, `render.yaml:26-28`
+- Node ≥ 22 in `engines`; the deployed backend runs the root `Dockerfile` (Node 22) on Railway. _(`render.yaml` once pinned `NODE_VERSION=20`; it was removed with Render on 2026-11-02.)_ — `package.json:5-7`, `Dockerfile`
 - Rust 1.94.0, target `wasm32v1-none`, `soroban-sdk 27.0.0` — `contracts/rust-toolchain.toml:2-3`, `contracts/Cargo.toml:28`
 
 **Frameworks & libraries**
@@ -46,12 +46,13 @@ workspace. The backend runs TypeScript directly via `tsx` — no build step in p
 
 **Deploy topology (important)**
 
-Three deploy manifests coexist. `vercel.json` deploys only `apps/web`; `railway.json` and
-`render.yaml` both deploy the combined single-process `@vellar/all-in-one` backend
+Two deploy manifests exist. `vercel.json` deploys only `apps/web`; `railway.json` (with the root
+`Dockerfile`) deploys the combined single-process `@vellar/all-in-one` backend on Railway. _(A third,
+`render.yaml`, was removed on 2026-11-02 when Render was retired.)_ The combined backend
 (gateway + wallet + lifecycle + policy + verification in one Node process).
 **worker-service and permission-service are deployed nowhere.** With no worker in the hosted
 topology, contract-verification jobs sit in `status='submitted'` forever, and there is no
-on-chain attestor. — `services/all-in-one/package.json:12-18`, `render.yaml`, `railway.json`
+on-chain attestor. — `services/all-in-one/package.json:12-18`, `railway.json`
 
 ---
 

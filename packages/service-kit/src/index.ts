@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
+import { DeploymentMarkerError } from "./deployment-marker";
 
 // Shared bootstrap for services/* (technical-doc.md §6.3). Keeps health
 // checks and process lifecycle identical across services without copy-paste.
@@ -24,6 +25,20 @@ export {
   type Network,
   type NetworkInputs,
 } from "./network-config";
+export { horizonUrlFromEnv } from "./horizon-url";
+export {
+  ensureDeploymentMarker,
+  DeploymentMarkerError,
+  type MarkerClient,
+} from "./deployment-marker";
+export {
+  assertDeployEnvPolicy,
+  DeployEnvPolicyError,
+  deployEnvFromEnv,
+  deployEnvViolations,
+  enforceDeployEnvPolicy,
+  type DeployEnv,
+} from "./deploy-env";
 
 export {
   validatePublicResourceUrl,
@@ -112,6 +127,8 @@ export async function tryConnectDb<T>(
   try {
     return await connect();
   } catch (err) {
+    // A database that belongs to the other tier is never a reason to run in memory.
+    if (err instanceof DeploymentMarkerError) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     options.log.warn(
       `Could not connect to Postgres at ${redactDbUrl(options.databaseUrl)} (${reason}). ` +

@@ -7,6 +7,7 @@ import {
   startService,
   tryConnectDb,
   type SpendBudget,
+  enforceDeployEnvPolicy,
 } from "@vellar/service-kit";
 import type { DbHandle } from "./db/client";
 import { configFromEnv } from "./config";
@@ -14,6 +15,10 @@ import { networkSettingsFromEnv, verifyRpcAtBoot, type NetworkSettings } from ".
 import { createUnconfiguredSubmitter } from "./relayer";
 import { maxAuthExpirationLedgersFromEnv } from "./replay";
 import { buildServer, type WalletServiceDeps } from "./server";
+
+// Staging tier policy (catalogue 1.4): DEPLOY_ENV=staging refuses to boot unless it is
+// testnet-pinned, on its own database, with every production escape hatch unset.
+enforceDeployEnvPolicy("wallet-service");
 
 // FIX 3 budget window + ceilings (confirmed). All env-overridable.
 const BUDGET_WINDOW_MS = Number(process.env.BUDGET_WINDOW_MS) || 3_600_000; // 1h

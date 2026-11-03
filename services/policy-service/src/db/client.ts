@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
+import { deployEnvFromEnv, ensureDeploymentMarker } from "@vellar/service-kit";
 
 export type Db = NodePgDatabase;
 
@@ -26,14 +27,20 @@ export async function connectDb(databaseUrl: string): Promise<DbHandle> {
   // Session-level lock on a dedicated connection: pg_advisory_lock blocks
   // until any concurrent migrator finishes, then we migrate and release.
   const lockConn = await pool.connect();
+  let ready = false;
   try {
     await lockConn.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
+    // Refuse a database that belongs to the other tier BEFORE migrating or reading it.
+    await ensureDeploymentMarker(lockConn, deployEnvFromEnv(process.env), process.env);
     await migrate(db, {
       migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
     });
+    ready = true;
   } finally {
     await lockConn.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]).catch(() => {});
     lockConn.release();
+    // A refused database (tier marker) or a failed migration must not leak the pool.
+    if (!ready) await pool.end().catch(() => {});
   }
   return {
     db,

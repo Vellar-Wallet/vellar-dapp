@@ -5,6 +5,11 @@
 > do **not** travel with the repository. This file and [`docs/architecture-analysis.md`](architecture-analysis.md)
 > are therefore the **only** architecture/security context a clone receives. Read both.
 >
+> **Hosting note (2026-11-02):** everything deploys on **Railway**; Render is retired and `render.yaml` was
+> removed. Citations of `render.yaml` below describe what was true when each finding was written and are
+> kept as history. The live controls are in the M9, V6 and L2 entries and in
+> [`runbooks/staging-and-promotion.md`](runbooks/staging-and-promotion.md).
+>
 > **Method:** 10 deep investigators (one per priority hunt), each required to read the
 > mitigating code before reporting; every finding then adversarially re-verified against the
 > actual code (the verifier defaults to _refuting_). 21 findings surfaced — 16 confirmed at
@@ -238,6 +243,14 @@ read oracle. Same build-box gating as H2.
   > `require_auth` on a G-account checks a single ed25519 signature and does not compose with
   > classic multisig thresholds.)
 
+  > **Status correction (2026-11-02): M5 is NOT resolved anywhere.** It stays OPEN and mainnet-blocking
+  > until a threshold attestor is wired into the worker's boot path, tested end to end, and on `main`.
+  > A threshold-attestor contract (`contracts/threshold-attestor`) and a submitter
+  > (`services/worker-service/src/threshold-submitter.ts`) exist on the `dev` branch only. On `dev` the
+  > submitter is imported by nothing except its own test (dead code), the worker still wires only the
+  > single-key attestor, and `dev`'s `docs/threshold-attestor-migration.md` calling M5 "fully resolved"
+  > is wrong. Existing code on `main` is unchanged: only the boot guard above holds the line.
+
 - **M6 — DB fallback fails open + health lies `[my code]`** — `service-kit/src/index.ts:49-64`,
   `wallet-service/src/index.ts:31-61`. No `DATABASE_URL` (or transient unreachability — Render
   free Postgres expires at 30 days) → silent in-memory repos, `/health` still returns
@@ -260,7 +273,7 @@ read oracle. Same build-box gating as H2.
   `fast-uri@4: ">=4.1.2"`, regenerate lockfile, add `pnpm audit --audit-level=high` to CI.
 
 - **M9 — Deploy from `main` with tsx, no build/typecheck/audit gate `[my code]`** —
-  `services/all-in-one/package.json` (start = `tsx`, no build), `render.yaml:22-23`. Push-
+  `services/all-in-one/package.json` (start = `tsx`, no build), `railway.json`. Push-
   triggered; CI runs typecheck/test/build but is not wired as a deploy precondition and no
   in-repo branch protection enforces it. _Downgraded from High:_ requires push-to-main access
   (insider/token compromise); only committed target is testnet; the self-merge vector was
@@ -290,6 +303,106 @@ read oracle. Same build-box gating as H2.
   > Until the branch protection (item 1) is set, CI is a signal, not a gate — a maintainer can
   > still merge red. The repo-side changes make the gate _possible_; the dashboard settings make
   > it _binding_.
+
+  > **Status (2026-11-02): REOPENED, unverified on Railway.** The one control this entry counted,
+  > `autoDeploy: false` in `render.yaml`, no longer exists: Render is retired and the file is gone. On
+  > Railway the equivalent is a dashboard setting that no committed file can express, and **Railway
+  > auto-deploys a connected repo on push by default**. What the Railway CLI shows today (read-only):
+  >
+  > - `vellar-backend` (the all-in-one backend) has **no connected repo**; it was deployed by
+  >   `railway up` on 2026-09-29, so a push to `main` does not deploy it. That is the only evidence
+  >   and it can change the moment someone connects a repo.
+  > - `vellar-facilitator`, `vellar-facilitator-testnet`, both seller demos, `vellar-explorer` and
+  >   `vellar-admin-console` are each **connected to `main` of their own repo**, so a push there is
+  >   expected to deploy to production unless the dashboard says otherwise.
+  >
+  > **Stays open until the owner confirms** the dashboard deploy trigger for every service in the table
+  > in `runbooks/staging-and-promotion.md`, and that GitHub branch protection (required `ci` check, no
+  > direct pushes) is on for `main` and for the `staging` branch the staging environment deploys from.
+
+  > ### INCIDENT 2026-11-03: production database migrated outside the deploy history. **OPEN, UNDER INVESTIGATION**
+  >
+  > **Severity (provisional): Medium, pending cause.** Schema-only so far and the data is tiny, but the
+  > production database credential was used by something that is not a listed deployment, and the cause
+  > is unknown. Owner of the investigation: the repo owner. The findings section is theirs to fill.
+  >
+  > **What we know (read-only evidence, 2026-11-03):**
+  >
+  > - A read-only dry run of the migration runner against the production database (`pnpm migration:dry-run`, one `BEGIN READ ONLY` transaction) shows 7 recorded migrations. 6 match files on
+  >   `main`. 1 matches **no file on `main`**: hash `e9d72232674b`, dev's
+  >   `0003_add_activity_logs_actor_column` (dev PR #256, only on `dev`).
+  > - That dev migration **took effect**: `activity_logs` has the `actor` column in production.
+  > - Main's `0003_submission_replay` (#736) is also recorded, and `submission_replay` exists with 0 rows.
+  > - The newest successful `vellar-backend` deployment in the Railway CLI is 2026-09-29, before #736
+  >   existed. `vellar-backend` has no connected repo. Among the Railway services only `vellar-backend`
+  >   has `DATABASE_URL`.
+  > - The timestamps the migration table stores are the migration files' own journal times, not apply
+  >   times, and `track_commit_timestamp` is off, so Postgres cannot say when either was applied. Bounds
+  >   from the repo: the dev migration file did not exist before 2026-09-26 20:29 UTC (dev commit
+  >   21:20 UTC); main's migration file did not exist before 2026-11-02 13:45 UTC (merged 14:42 UTC).
+  >   So the main-line migration was applied **no earlier than 2026-11-02 13:45 UTC**.
+  > - The dev build that migrated production contained #256 but **not** dev's later verification
+  >   migration `0001_register_archive_table` (journal 2026-09-26 23:30 UTC, dev commit 23:32 UTC).
+  >   That migration is not recorded, although drizzle's migrator would have applied it had it been in
+  >   the build. So the build was dev at or near #256, or a branch containing #256 only.
+  > - Impact so far: the `actor` column and one empty table. Production holds 1 wallet, 1 session and 1
+  >   activity row. At the time of the check the only connection to the database was the checker's own.
+  > - Not found: the production database host or any connection string in any committed file, any
+  >   commit on any local or remote-tracking branch (775 commits searched), the local `.env*` files of
+  >   this machine and the sibling Vellar clones, or the CI workflows (CI uses a local service database).
+  >   Pull-request refs of forks were not searched.
+  >
+  > **Why this matters for M9:** any build that holds a `DATABASE_URL` migrates it at boot (full list in
+  > the next paragraph), so a deploy or a local run pointed at the production database changes its schema
+  > with no review. The deploy gate (M9) cannot see a run that is not a deployment.
+  >
+  > **Code paths that migrate whatever `DATABASE_URL` they are given.** On `main` and on `dev`:
+  > `wallet-service`, `policy-service` and `verification-service` each call `connectDb()` from their
+  > `index.ts` (through `tryConnectDb`) whenever `DATABASE_URL` is set, and `connectDb()` migrates
+  > under a shared advisory lock. `main` uses drizzle's timestamp migrator; `dev` uses the hash-based
+  > `applyMigrations`. `@vellar/all-in-one` imports all of them, so `pnpm --filter @vellar/all-in-one
+start` (and `dev`) migrate, and both load `../../.env` if it exists (`--env-file-if-exists`). The
+  > root `Dockerfile` and `railway.json` start the all-in-one. `lifecycle-service`, `api-gateway` and
+  > `worker-service` run no migrations. On `dev` only, `services/verification-service/scripts/
+backfill-metadata.ts` also runs `migrate()` on `DATABASE_URL` even in its default dry-run mode, and
+  > prints the full `DATABASE_URL` to stdout. No `package.json` script runs `drizzle-kit`
+  > migrate or push.
+  >
+  > **Hypotheses (none confirmed):**
+  >
+  > 1. **The still-live Render `vellar-backend` was pointed at the production database and migrated
+  >    on deploy.** It is a full all-in-one build, it was still answering on mainnet when last probed
+  >    (2026-11-02), and a Render service can deploy a branch such as `dev`, which fits a dev-era
+  >    migration. To check: the Render service's `DATABASE_URL` host (host only), its deploy history
+  >    against the two windows above, and which branch and commit it deployed.
+  > 2. **A developer machine or other automation ran a service or the backfill script with the
+  >    production `DATABASE_URL`** (for example from a `.env` file that `pnpm start` loads). This
+  >    machine's env files hold no production host. Other machines are unknown.
+  > 3. **An unlisted Railway deployment** (the CLI shows none after 2026-09-29, and only one service
+  >    holds the variable). Low likelihood.
+  > 4. **The credential was exposed** (a log, a pasted URL, the backfill script's stdout) and used
+  >    elsewhere. No evidence in the repo. **Known exposure route on `dev`:** `backfill-metadata.ts`
+  >    prints the full `DATABASE_URL` to stdout (and migrates even in dry-run); anyone who ran it
+  >    and kept or shared the output has the credential in a log or terminal history.
+  > 5. **A tool with Neon access ran the SQL** (Neon console or SQL editor, or an AI assistant with a
+  >    Neon connector). Check the Neon query history for both migrations.
+  >
+  > **Actions taken:**
+  >
+  > - 2026-11-03: read-only dry run against production, history and env-file search, migration-path
+  >   inventory, and this entry (all read-only; nothing was written to production).
+  > - 2026-11-03, by the owner (in progress): inspecting the Render service's environment and deploy
+  >   history, suspending the Render service, and rotating the production database credential. The
+  >   owner will merge the open PRs only after the rotation.
+  > - Not done by design: no PR is merged until the rotation completes.
+  >
+  > **Findings (owner to fill):** cause, evidence, when each migration was applied, what else the
+  > credential could have reached, and the date the incident is closed.
+  >
+  > **Follow-ups once the cause is known:** one database credential per environment with no sharing
+  > between Render and Railway; the backfill script must never migrate or print a connection string;
+  > consider a boot guard so a build refuses to migrate a database whose tier marker (#738) does not
+  > match its `DEPLOY_ENV`, which stops a stray build from migrating production once the marker exists.
 
 ---
 
@@ -579,11 +692,18 @@ request body's `network`.**
 
 ### V6 — Two infra facts remain gated on the dashboard
 
-From committed configs: neither `render.yaml` nor `railway.json` publishes any port beyond the
-injected `$PORT`, and neither sets an `autoDeploy`/branch/trigger field. **Provable from repo:**
-the repo never asks to expose 4001-4004. **NOT provable from repo (needs dashboard):** whether the
-platform edge firewalls the other bound listeners, and whether `autoDeploy` is on. Both manifests
-are testnet-only.
+Hosting is **Railway** (Render is retired). From committed configs: `railway.json` publishes no port
+beyond the injected `$PORT` and sets no deploy trigger. **Provable from the repo:** the all-in-one
+process binds wallet, lifecycle, policy and verification to loopback (`127.0.0.1`) and only the
+gateway listens on `$PORT`; the repo never asks to expose 4001-4004. **Not provable from the repo
+(dashboard only):** which services have a public domain, whether any TCP proxy exists, whether
+private networking is the only path between split services, and whether a deploy trigger is armed.
+
+**Target posture on Railway.** Only the gateway has a public domain. Every internal service uses
+Railway's private network (`<service>.railway.internal`) and has **no** public domain and **no** TCP
+proxy. Today the internal services share the gateway's container, so that holds by construction; it
+must be re-checked per service the moment any of them is split out (for example the worker-service or
+the attestor signers). The per-service checklist is in `runbooks/staging-and-promotion.md`.
 
 ### Revised mainnet-blocking order
 
@@ -1243,66 +1363,75 @@ mainnet blockers with owners, and the go/no-go conditions. As of merged `main` t
 
 ### Every finding
 
-| ID          | Title (short)                                            | Sev  | Final status                                                                                       |
-| ----------- | -------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------------------- |
-| **C1**      | Sponsor open fee-payer                                   | Crit | closed-by-test (route scope, #229; V2-hardened #231)                                               |
-| **H1**      | Unauthenticated 1-XLM/call DoS                           | High | closed-by-test (scope + spend budget, #229/#231)                                                   |
-| **H2**      | repoUrl SSRF (host git clone)                            | High | closed-by-test (FIX 6 guard + DNS pin)                                                             |
-| **H3**      | Blind SSRF → read primitive via public build log         | High | closed-by-test (private logs + sanitized statusDetail)                                             |
-| **M1**      | Session enumeration + revocation                         | Med  | closed-by-test (bearer capability, #232; client #234)                                              |
-| **M2**      | deploy-instance no spend cap                             | Med  | closed-by-test (deploy budget line)                                                                |
-| **M3**      | Spending-limit tumbling window allows 2×                 | Med  | closed-by-doc (tumbling documented; tests pin 2×)                                                  |
-| **M4**      | verified-recipient bricks w/o registry                   | Med  | deferred (product-gated + V3 recovery; no mainnet reg)                                             |
-| **M5**      | Attestation registry single-key oracle                   | Med  | **deferred** (boot guard only; multisig attestor TBD)                                              |
-| **M6**      | DB fallback fails open + health lies                     | Med  | closed-by-test (readiness) + RA-4 (boot inversion)                                                 |
-| **M7**      | No reaper for stranded `building` rows                   | Med  | closed-by-test (reaper + dedup + queue cap)                                                        |
-| **M8**      | Stale fast-uri override                                  | Med  | closed-by-config (lockfile pin; no test)                                                           |
-| **M9**      | Deploy from main, no CI gate                             | Med  | closed-by-config PARTIAL (audit gate + autoDeploy:false; branch-protection is dashboard — see V6)  |
-| **L1**      | /policies/deploy unverified `deployed` flag              | Low  | closed-by-test (on-chain attach decode, #230)                                                      |
-| **L2**      | Downstream 0.0.0.0 bind                                  | Low  | closed-by-config (loopback bind) + **V6 dashboard**                                                |
-| **L3**      | No web-app-origin allowlist on pair                      | Low  | closed-by-test (fail-closed allowlist, #230)                                                       |
-| **L4**      | Device signing trusts attacker rpcUrl for expiry         | Low  | closed-by-test (trusted RPC anchor + cap, #230)                                                    |
-| **L5**      | normalizeOrigin trailing-dot FQDNs                       | Low  | closed-by-test (#230)                                                                              |
-| **L6/L6b**  | Cleanup one-tx + unpaginated Horizon / "safe" copy       | Low  | closed-by-test (split + pagination) + copy (#230)                                                  |
-| **L7**      | 14 high dep advisories                                   | Low  | closed-by-config (overrides; audit gate)                                                           |
-| **I1**      | Markdown injection in bot comment                        | Info | closed-by-test (filenames rendered as one escaped code span; CI runs the workflow script)          |
-| **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                            |
-| **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                      |
-| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                    |
-| **V4**      | H2+L2 don't compose into spend (refuted)                 | —    | n/a (analysis; reachability tracked under H2/L2)                                                   |
-| **V5**      | `network` is a label, not routing input                  | —    | enforced (guards key off config; RA-11-B closed last gap)                                          |
-| **V6**      | Two infra facts gated on dashboard                       | —    | **open — OWNER: operator** (see blockers below)                                                    |
-| **RA-1**    | Scope gate V1-only; kit signs V2                         | High | closed-by-test (V2/delegate match, #231)                                                           |
-| **RA-2**    | Spend-budget INSERT not atomic                           | High | closed-by-test (advisory lock; real-PG concurrency)                                                |
-| **RA-3**    | M1 open + stale doc                                      | Med  | closed-by-test (server #232 + client #234); L-1, L-5 closed; L-2 open (Low, accepted, wire change) |
-| **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                            |
-| **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                    |
-| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion + L-3 delegation edge, connector-factory.test.ts)                 |
-| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | closed-by-test (byte-level IPv6 range check, every encoding)                                       |
-| **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                            |
-| **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                        |
-| **RA-10**   | Network classification from defaulted passphrase (class) | Med  | closed-by-test (explicit STELLAR_NETWORK ×3 svcs, #233)                                            |
-| **RA-11-A** | Session client orphaned by M1                            | High | closed-by-test (seam-crossing, #234)                                                               |
-| **RA-11-B** | Create budget metered on request body (V5)               | High | closed-by-test (config-keyed; all tryConsume audited)                                              |
-| **RA-11-C** | Cleanup wizard drops split chunks                        | Med  | closed-by-test (multi-chunk e2e, #234)                                                             |
-| **RA-11-D** | Verification log→statusDetail orphan (#229)              | Low  | closed-by-test (SDK type + UI, #234)                                                               |
-| **RA-11-E** | /policies/deploy client is external vellar-sdk           | Low  | **open — OWNER: SDK audit** (unverifiable in-repo)                                                 |
+| ID          | Title (short)                                            | Sev  | Final status                                                                                                |
+| ----------- | -------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------- |
+| **C1**      | Sponsor open fee-payer                                   | Crit | closed-by-test (route scope, #229; V2-hardened #231)                                                        |
+| **H1**      | Unauthenticated 1-XLM/call DoS                           | High | closed-by-test (scope + spend budget, #229/#231)                                                            |
+| **H2**      | repoUrl SSRF (host git clone)                            | High | closed-by-test (FIX 6 guard + DNS pin)                                                                      |
+| **H3**      | Blind SSRF → read primitive via public build log         | High | closed-by-test (private logs + sanitized statusDetail)                                                      |
+| **M1**      | Session enumeration + revocation                         | Med  | closed-by-test (bearer capability, #232; client #234)                                                       |
+| **M2**      | deploy-instance no spend cap                             | Med  | closed-by-test (deploy budget line)                                                                         |
+| **M3**      | Spending-limit tumbling window allows 2×                 | Med  | closed-by-doc (tumbling documented; tests pin 2×)                                                           |
+| **M4**      | verified-recipient bricks w/o registry                   | Med  | deferred (product-gated + V3 recovery; no mainnet reg)                                                      |
+| **M5**      | Attestation registry single-key oracle                   | Med  | **open** (boot guard only; not resolved anywhere until wired, tested, on main)                              |
+| **M6**      | DB fallback fails open + health lies                     | Med  | closed-by-test (readiness) + RA-4 (boot inversion)                                                          |
+| **M7**      | No reaper for stranded `building` rows                   | Med  | closed-by-test (reaper + dedup + queue cap)                                                                 |
+| **M8**      | Stale fast-uri override                                  | Med  | closed-by-config (lockfile pin; no test)                                                                    |
+| **M9**      | Deploy from main, no CI gate                             | Med  | **open (unverified on Railway)**: audit gate in CI; deploy trigger and branch protection are dashboard-only |
+| **L1**      | /policies/deploy unverified `deployed` flag              | Low  | closed-by-test (on-chain attach decode, #230)                                                               |
+| **L2**      | Downstream 0.0.0.0 bind                                  | Low  | closed-by-config (loopback bind); **V6 on Railway open**: only the gateway should be public                 |
+| **L3**      | No web-app-origin allowlist on pair                      | Low  | closed-by-test (fail-closed allowlist, #230)                                                                |
+| **L4**      | Device signing trusts attacker rpcUrl for expiry         | Low  | closed-by-test (trusted RPC anchor + cap, #230)                                                             |
+| **L5**      | normalizeOrigin trailing-dot FQDNs                       | Low  | closed-by-test (#230)                                                                                       |
+| **L6/L6b**  | Cleanup one-tx + unpaginated Horizon / "safe" copy       | Low  | closed-by-test (split + pagination) + copy (#230)                                                           |
+| **L7**      | 14 high dep advisories                                   | Low  | closed-by-config (overrides; audit gate)                                                                    |
+| **I1**      | Markdown injection in bot comment                        | Info | closed-by-test (filenames rendered as one escaped code span; CI runs the workflow script)                   |
+| **V1**      | /wallet/create derivation gate available                 | —    | closed-by-test (gate implemented, #229)                                                                     |
+| **V2**      | Relayer is a second unscoped funding source              | —    | closed-by-test (route-level scope, #229/#231)                                                               |
+| **V3**      | M4 is NOT permanent fund lock (refuted)                  | —    | invariant pinned (RA-6); detach UI **deferred**                                                             |
+| **V4**      | H2+L2 don't compose into spend (refuted)                 | —    | n/a (analysis; reachability tracked under H2/L2)                                                            |
+| **V5**      | `network` is a label, not routing input                  | —    | enforced (guards key off config; RA-11-B closed last gap)                                                   |
+| **V6**      | Two infra facts gated on dashboard                       | —    | **open — OWNER: operator** (see blockers below)                                                             |
+| **RA-1**    | Scope gate V1-only; kit signs V2                         | High | closed-by-test (V2/delegate match, #231)                                                                    |
+| **RA-2**    | Spend-budget INSERT not atomic                           | High | closed-by-test (advisory lock; real-PG concurrency)                                                         |
+| **RA-3**    | M1 open + stale doc                                      | Med  | closed-by-test (server #232 + client #234); L-1, L-5 closed; L-2 open (Low, accepted, wire change)          |
+| **RA-4**    | ALLOW_INMEMORY guard inert (NODE_ENV)                    | Med  | closed-by-test (inverted default, #233)                                                                     |
+| **RA-5**    | Cleanup pays before cancelling offers                    | Med  | closed-by-test (reorder #231; wizard walk #234)                                                             |
+| **RA-6**    | Detach invariant untested at wiring                      | Med  | closed-by-test (wiring assertion + L-3 delegation edge, connector-factory.test.ts)                          |
+| **RA-7**    | isBlockedAddress IPv6 gap                                | Info | closed-by-test (byte-level IPv6 range check, every encoding)                                                |
+| **RA-8**    | Audit hygiene (M3/M4/M5/M8/M9 not code-fixed)            | Info | informational (reflected in this table)                                                                     |
+| **RA-9**    | Fixture-defect pattern (code-shaped tests)               | Info | closed-by-test (kit-derived fixtures, #231)                                                                 |
+| **RA-10**   | Network classification from defaulted passphrase (class) | Med  | closed-by-test (explicit STELLAR_NETWORK ×3 svcs, #233)                                                     |
+| **RA-11-A** | Session client orphaned by M1                            | High | closed-by-test (seam-crossing, #234)                                                                        |
+| **RA-11-B** | Create budget metered on request body (V5)               | High | closed-by-test (config-keyed; all tryConsume audited)                                                       |
+| **RA-11-C** | Cleanup wizard drops split chunks                        | Med  | closed-by-test (multi-chunk e2e, #234)                                                                      |
+| **RA-11-D** | Verification log→statusDetail orphan (#229)              | Low  | closed-by-test (SDK type + UI, #234)                                                                        |
+| **RA-11-E** | /policies/deploy client is external vellar-sdk           | Low  | **open — OWNER: SDK audit** (unverifiable in-repo)                                                          |
 
 ### Remaining mainnet blockers (with owners)
 
 1. **M5 — multisig / smart-account attestor** — _OWNER: contracts + backend._ Today only a boot guard
    refuses single-key-on-mainnet (`ALLOW_SINGLE_KEY_ATTESTOR` escape hatch). A real threshold attestor
-   must exist before any mainnet attestation registry goes live. Deferred by design.
+   must exist before any mainnet attestation registry goes live. **Not resolved anywhere**: a contract and
+   submitter exist on `dev` but are unwired dead code, so M5 stays open until the attestor is wired into
+   the worker boot path, tested, and on `main`.
 2. **V3 detach UI** — _OWNER: web._ The standalone-signer detach recovery exists in code + is invariant-
    tested (RA-6), but there is no wired UI to trigger `kit.remove(SignerKey.Policy)`. Needed before
    `verified_only` policies are offered on mainnet.
-3. **V6 fact #1 — port exposure (L2 final severity)** — _OWNER: operator (dashboard)._ Confirm the
-   platform edge firewalls the internal 4001–4004 listeners. Repo binds loopback + publishes only
-   `$PORT`; whether the platform blocks the rest is a dashboard fact, not provable here.
-4. **V6 fact #2 — autoDeploy / branch protection (M9 final severity)** — _OWNER: operator (dashboard)._
-   Confirm `autoDeploy` is OFF and GitHub branch protection is ON. `render.yaml` sets
-   `autoDeploy:false` and CI has the audit gate, but the platform toggle + branch protection are
-   dashboard settings.
+3. **V6 fact #1 — public exposure on Railway (L2 final severity)** — _OWNER: operator (dashboard)._
+   Confirm that only the gateway has a public domain and that internal services use the private
+   network with no public domain and no TCP proxy. The all-in-one backend binds its internal
+   services to loopback, so nothing but the gateway is reachable today; whether Railway exposes
+   anything else is a dashboard fact, not provable from the repo. _2026-11-02 (Railway CLI):_ the
+   project has seven services, **all with a public service domain** (backend, facilitator,
+   facilitator-testnet, two seller demos, explorer, admin console). That is expected for the public
+   ones; the admin console and the facilitators' admin surfaces need an explicit auth check. **Open.**
+4. **V6 fact #2 — deploy trigger / branch protection (M9 final severity)** — _OWNER: operator
+   (dashboard)._ Confirm no push can deploy production unreviewed: the deploy trigger of every
+   service in the runbook table, and GitHub branch protection (required `ci` check, no direct pushes)
+   on `main` and `staging`. _2026-11-02 (Railway CLI, read-only):_ `vellar-backend` has no connected
+   repo (deployed by upload); the other six services are connected to `main` of their own repos. M9
+   is reopened as **unverified on Railway** (see M9). **Open.**
 5. **RA-11-E — external SDK `/policies/deploy` handling** — _OWNER: SDK audit._ The `vellar-sdk` client
    for `/policies/deploy` (which gained 422/503 modes under L1) is not in this repo. Confirm it handles
    `422 no_instance`/`attach_mismatch` and `503 attach_unconfirmed` rather than assuming 2xx. Diff it
