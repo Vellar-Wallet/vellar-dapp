@@ -13,7 +13,7 @@ const G2 = "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3";
 // real, valid value in the environment for that call to succeed.
 const PREVIOUS_RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 beforeAll(() => {
-  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend.onrender.com";
+  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend-production.up.railway.app";
 });
 afterAll(() => {
   if (PREVIOUS_RENDER_EXTERNAL_URL === undefined) {
@@ -365,7 +365,7 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
         const challengeB64 = res.headers["payment-required"] as string;
         const challenge = JSON.parse(Buffer.from(challengeB64, "base64").toString("utf8"));
         expect(challenge.resource.url).toBe(
-          "https://vellar-backend.onrender.com/lifecycle/execute",
+          "https://vellar-backend-production.up.railway.app/lifecycle/execute",
         );
         expect(challenge.resource.url).not.toContain("localhost");
       });

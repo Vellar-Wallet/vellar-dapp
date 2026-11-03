@@ -201,3 +201,17 @@ export function hostFromEnv(defaultHost: string, env: NodeJS.ProcessEnv = proces
   const raw = env.BIND_HOST;
   return raw && raw.trim() !== "" ? raw.trim() : defaultHost;
 }
+
+export {
+  applyMigrations,
+  describePlan,
+  pendingMigrations,
+  type ApplyOptions,
+  type ConsideredMigration,
+  type DescribedMigration,
+  type MigrationClient,
+  type MigrationPlan,
+  type PendingClassification,
+  type PendingMigration,
+} from "./migrations";
+export { facilitatorUrlFromEnv, FacilitatorUrlError } from "./facilitator-url";

@@ -35,7 +35,7 @@ const C_MISMATCH = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 // rather than relying on a CI-wide env var another package's tests don't expect.
 const PREVIOUS_RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 beforeAll(() => {
-  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend.onrender.com";
+  process.env.RENDER_EXTERNAL_URL = "https://vellar-backend-production.up.railway.app";
 });
 afterAll(() => {
   if (PREVIOUS_RENDER_EXTERNAL_URL === undefined) {

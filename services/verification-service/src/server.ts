@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
-import { registerHealth, registerMetrics, publicBaseUrlFromEnv } from "@vellar/service-kit";
+import {
+  registerHealth,
+  registerMetrics,
+  publicBaseUrlFromEnv,
+  facilitatorUrlFromEnv,
+} from "@vellar/service-kit";
 import type { VerificationRecord } from "@vellar/types";
 import { paymentMiddleware, x402ResourceServer } from "@x402/fastify";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
@@ -169,16 +174,17 @@ export interface VerificationServiceDeps {
    * last unmetered unauthenticated write path. Default 1000. */
   maxActiveQueue?: number;
   /** x402 facilitator client for the /verification/:contractId payment gate.
-   * Defaults to a real HTTPFacilitatorClient hitting vellar-facilitator.
+   * Defaults to a real HTTPFacilitatorClient at the URL in FACILITATOR_URL (required: the
+   * service refuses to boot without it; there is no built-in host).
    * Tests inject `fakeFacilitatorClient()` instead: x402ResourceServer.initialize()
    * (run on every buildServer() call) otherwise makes a real network call to the
-   * live facilitator per test, which is slow and flaky against a cold Render
-   * instance — see docs/decisions.md. */
+   * live facilitator per test, which is slow and flaky against a cold or remote
+   * facilitator. See docs/decisions.md. */
   x402FacilitatorClient?: FacilitatorClient;
 }
 
 /** getSupported() response captured from the live facilitator
- * (curl https://vellar-facilitator.onrender.com/supported, 2026-09-18) for use
+ * (the facilitator's /supported endpoint, captured 2026-09-18) for use
  * by fakeFacilitatorClient() below. Re-capture if the facilitator's supported
  * kinds/extensions change. */
 function capturedSupportedResponse(): SupportedResponse {
@@ -330,8 +336,7 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
   const x402PublicResourceUrl = `${publicBaseUrlFromEnv()}/verification/:contractId`;
 
   const x402FacilitatorClient =
-    deps.x402FacilitatorClient ??
-    new HTTPFacilitatorClient({ url: "https://vellar-facilitator-production.up.railway.app" });
+    deps.x402FacilitatorClient ?? new HTTPFacilitatorClient({ url: facilitatorUrlFromEnv() });
   const x402Server = new x402ResourceServer(x402FacilitatorClient)
     .register("stellar:pubnet", new ExactStellarScheme())
     .registerExtension(bazaarResourceServerExtension);
