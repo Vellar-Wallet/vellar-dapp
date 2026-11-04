@@ -30,7 +30,7 @@ start — pull requests that don't follow them will be closed.
    elsewhere in the codebase, say so on the issue before starting — a
    maintainer will make that change or explicitly widen your scope.
 
-4. **Only work on issues assigned to you.** If you want to pick something up,
+4. **Only work on issues that have been assigned to you.** If you want to pick something up,
    comment on the issue and wait to be assigned before starting. Unsolicited
    PRs for unassigned issues will be closed.
 
