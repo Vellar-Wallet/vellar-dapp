@@ -51,4 +51,4 @@ pnpm build
 ```
 
 New code is expected to come with tests. See the [README](README.md) for how to
-run the stack locally.
+run the stack.
