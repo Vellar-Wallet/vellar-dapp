@@ -3,7 +3,7 @@ import { hashArtifact, hashesMatch, normalizeHash } from "./artifact";
 import { BuildExecutorError, type BuildExecutor, type BuildInput } from "./executor";
 import { ArtifactResolveError, type ContractArtifactResolver } from "./resolver";
 import { isTransientFailure, type ErrorClassification } from "./error-classification";
-import { calculateBackoffDelay, BACKOFF_CONFIG } from "./backoff";
+import { BACKOFF_CONFIG, evaluateRetryBackoff, type RetryExhaustedReason } from "./backoff";
 import { compareWasm } from "./wasm-compare";
 import { isFirstPartyContract } from "./first-party";
 
@@ -48,6 +48,8 @@ export interface VerificationOutcome {
   retryDelayMs?: number;
   /** Number of retries this job has already attempted. */
   retryAttempt?: number;
+  /** Distinct terminal reason surfaced when cumulative retry budget is exhausted (#688). */
+  retryExhaustedReason?: RetryExhaustedReason;
 }
 
 /** Fixed, public guidance for build failures a submitter can act on. Static
@@ -70,6 +72,10 @@ export interface RunVerificationDeps {
   baseDelayMs?: number;
   /** Maximum delay cap in ms for exponential backoff. Defaults to BACKOFF_CONFIG.MAX_DELAY_MS. */
   maxDelayMs?: number;
+  /** Cumulative retry time already elapsed across prior attempts for this job in ms (#688). */
+  elapsedRetryMs?: number;
+  /** Ceiling on total cumulative retry time across all attempts for this job in ms (#688). */
+  maxRetryWindowMs?: number;
   /** Shared secret for job payload cryptographic signature verification (Phase 7). */
   jobSecret?: string;
 }
@@ -84,6 +90,10 @@ export interface RunVerificationDeps {
  * are marked as retryable with an exponential-backoff delay. Permanent failures
  * (contract not found, mismatched bytecode, config errors) are terminal and
  * not retried.
+ *
+ * ISSUE #688: Transient failures also enforce a configurable ceiling on total
+ * cumulative retry time (`maxRetryWindowMs`), surfacing a distinct
+ * `retry_window_exceeded` terminal outcome once the budget is exhausted.
  */
 export async function runVerification(
   job: VerificationJobInput,
@@ -92,6 +102,33 @@ export async function runVerification(
   const retryAttempt = deps.retryAttempt ?? 0;
   const baseDelayMs = deps.baseDelayMs ?? BACKOFF_CONFIG.BASE_DELAY_MS;
   const maxDelayMs = deps.maxDelayMs ?? BACKOFF_CONFIG.MAX_DELAY_MS;
+  const elapsedRetryMs = deps.elapsedRetryMs ?? 0;
+  const maxRetryWindowMs = deps.maxRetryWindowMs ?? BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS;
+
+  const applyTransientRetryPolicy = (
+    outcome: VerificationOutcome,
+    exhaustedStatusDetail: string,
+  ): VerificationOutcome => {
+    const decision = evaluateRetryBackoff(retryAttempt, {
+      baseDelayMs,
+      maxDelayMs,
+      maxRetryWindowMs,
+      elapsedMs: elapsedRetryMs,
+    });
+    if (decision.status === "retry") {
+      outcome.isRetryable = true;
+      outcome.retryDelayMs = decision.delayMs;
+      return outcome;
+    }
+    const nextDelayInfo =
+      decision.attemptedDelayMs !== undefined ? `, nextDelay=${decision.attemptedDelayMs}ms` : "";
+    outcome.isRetryable = false;
+    outcome.retryDelayMs = undefined;
+    outcome.retryExhaustedReason = decision.reason;
+    outcome.statusDetail = exhaustedStatusDetail;
+    outcome.log = `${outcome.log}\n\nRetry window exhausted (elapsed=${decision.elapsedMs}ms${nextDelayInfo}, maxRetryWindowMs=${decision.maxRetryWindowMs}ms).`;
+    return outcome;
+  };
 
   // 0. Verify job payload cryptographic signature (Phase 7 / Issue #421)
   if (deps.jobSecret) {
@@ -134,9 +171,12 @@ export async function runVerification(
         retryAttempt,
       };
 
-      // If transient, provide backoff delay for next retry
+      // If transient, evaluate backoff against cumulative retry ceiling (#688)
       if (isTransient) {
-        outcome.retryDelayMs = calculateBackoffDelay(retryAttempt, baseDelayMs, maxDelayMs);
+        return applyTransientRetryPolicy(
+          outcome,
+          `Could not resolve the deployed contract (${err.code}). Retry window exhausted.`,
+        );
       }
 
       return outcome;
@@ -165,9 +205,12 @@ export async function runVerification(
         retryAttempt,
       };
 
-      // If transient, provide backoff delay for next retry
+      // If transient, evaluate backoff against cumulative retry ceiling (#688)
       if (isTransient) {
-        outcome.retryDelayMs = calculateBackoffDelay(retryAttempt, baseDelayMs, maxDelayMs);
+        return applyTransientRetryPolicy(
+          outcome,
+          `Build failed (${err.code}). Retry window exhausted.`,
+        );
       }
 
       return outcome;
@@ -240,7 +283,10 @@ export async function runVerification(
         retryAttempt,
       };
       if (isTransient) {
-        outcome.retryDelayMs = calculateBackoffDelay(retryAttempt, baseDelayMs, maxDelayMs);
+        return applyTransientRetryPolicy(
+          outcome,
+          `Could not fetch the deployed wasm (${err.code}). Retry window exhausted.`,
+        );
       }
       return outcome;
     }

@@ -64,3 +64,179 @@ export const BACKOFF_CONFIG = Object.freeze({
   /** Total theoretical maximum retry window (sum of all max delays). */
   MAX_RETRY_WINDOW_MS: 120_000,
 } as const);
+
+/**
+ * Terminal reason surfaced when cumulative retry time exceeds the configured ceiling.
+ */
+export type RetryExhaustedReason = "retry_window_exceeded";
+
+/**
+ * Configuration for evaluating a retry attempt against both the per-attempt
+ * delay cap and the total cumulative retry-time ceiling for a job (#688).
+ */
+export interface RetryBackoffOptions {
+  /** Base delay for exponential backoff in ms (default: BACKOFF_CONFIG.BASE_DELAY_MS). */
+  baseDelayMs?: number;
+  /** Maximum per-attempt delay cap in ms (default: BACKOFF_CONFIG.MAX_DELAY_MS). */
+  maxDelayMs?: number;
+  /** Configurable ceiling on total cumulative retry time across all attempts in ms (default: BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS). */
+  maxRetryWindowMs?: number;
+  /** Cumulative retry time already elapsed across prior attempts for this job in ms (default: 0). */
+  elapsedMs?: number;
+}
+
+/**
+ * Distinct decision returned by `evaluateRetryBackoff` (#688):
+ * - `"retry"` when the job + scheduled backoff delay stay within `maxRetryWindowMs`
+ * - `"timeout_exhausted"` once cumulative retry time exceeds `maxRetryWindowMs`
+ */
+export type RetryBackoffDecision =
+  | {
+      readonly status: "retry";
+      readonly delayMs: number;
+      readonly cumulativeElapsedMs: number;
+      readonly remainingBudgetMs: number;
+      readonly maxRetryWindowMs: number;
+    }
+  | {
+      readonly status: "timeout_exhausted";
+      readonly reason: RetryExhaustedReason;
+      readonly elapsedMs: number;
+      readonly attemptedDelayMs?: number;
+      readonly maxRetryWindowMs: number;
+    };
+
+/**
+ * Stateful per-job tracker that accumulates elapsed retry time across multiple
+ * attempts and enforces the configurable total retry-time ceiling (#688).
+ */
+export interface RetryBudgetTracker {
+  /** Zero-based index of the next retry attempt to evaluate. */
+  readonly attempts: number;
+  /** Total cumulative retry time accrued by this job so far in milliseconds. */
+  readonly elapsedMs: number;
+  /** Configured ceiling on cumulative retry time for this job in milliseconds. */
+  readonly maxRetryWindowMs: number;
+  /** Records additional in-flight or wait time accrued by this job in milliseconds. */
+  recordElapsed(durationMs: number): number;
+  /**
+   * Evaluates the next retry attempt, optionally recording `additionalElapsedMs`
+   * accrued before scheduling the retry. Advances `elapsedMs` and `attempts`
+   * only when the retry fits within `maxRetryWindowMs`.
+   */
+  nextAttempt(additionalElapsedMs?: number): RetryBackoffDecision;
+}
+
+function validateNonNegativeWindow(name: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`${name} must be a finite non-negative number, got ${value}`);
+  }
+}
+
+function normalizeElapsedMs(rawElapsedMs: number): number {
+  if (!Number.isFinite(rawElapsedMs)) {
+    throw new RangeError(`elapsedMs must be a finite number, got ${rawElapsedMs}`);
+  }
+  return Math.max(0, rawElapsedMs);
+}
+
+/**
+ * Evaluates a single retry attempt against both the per-attempt cap (`maxDelayMs`)
+ * and the configurable ceiling on total cumulative retry time (`maxRetryWindowMs`).
+ *
+ * Even when every individual delay is well below `maxDelayMs`, once `elapsedMs`
+ * reaches `maxRetryWindowMs` — or `elapsedMs + delayMs` would exceed
+ * `maxRetryWindowMs` — a distinct `timeout_exhausted` decision is returned so
+ * callers stop retrying cleanly (#688).
+ */
+export function evaluateRetryBackoff(
+  attempt: number,
+  options: RetryBackoffOptions = {},
+): RetryBackoffDecision {
+  const baseDelayMs = options.baseDelayMs ?? BACKOFF_CONFIG.BASE_DELAY_MS;
+  const maxDelayMs = options.maxDelayMs ?? BACKOFF_CONFIG.MAX_DELAY_MS;
+  const maxRetryWindowMs = options.maxRetryWindowMs ?? BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS;
+  const elapsedMs = normalizeElapsedMs(options.elapsedMs ?? 0);
+
+  validateNonNegativeWindow("maxRetryWindowMs", maxRetryWindowMs);
+
+  if (elapsedMs >= maxRetryWindowMs) {
+    return {
+      status: "timeout_exhausted",
+      reason: "retry_window_exceeded",
+      elapsedMs,
+      maxRetryWindowMs,
+    };
+  }
+
+  const delayMs = calculateBackoffDelay(attempt, baseDelayMs, maxDelayMs);
+  const cumulativeElapsedMs = elapsedMs + delayMs;
+
+  if (cumulativeElapsedMs > maxRetryWindowMs) {
+    return {
+      status: "timeout_exhausted",
+      reason: "retry_window_exceeded",
+      elapsedMs,
+      attemptedDelayMs: delayMs,
+      maxRetryWindowMs,
+    };
+  }
+
+  return {
+    status: "retry",
+    delayMs,
+    cumulativeElapsedMs,
+    remainingBudgetMs: maxRetryWindowMs - cumulativeElapsedMs,
+    maxRetryWindowMs,
+  };
+}
+
+/**
+ * Creates a stateful retry-budget tracker for one job across multiple attempts (#688).
+ */
+export function createRetryBudgetTracker(
+  options: Omit<RetryBackoffOptions, "elapsedMs"> & { initialElapsedMs?: number } = {},
+): RetryBudgetTracker {
+  const baseDelayMs = options.baseDelayMs ?? BACKOFF_CONFIG.BASE_DELAY_MS;
+  const maxDelayMs = options.maxDelayMs ?? BACKOFF_CONFIG.MAX_DELAY_MS;
+  const maxRetryWindowMs = options.maxRetryWindowMs ?? BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS;
+
+  validateNonNegativeWindow("maxRetryWindowMs", maxRetryWindowMs);
+  let elapsedMs = normalizeElapsedMs(options.initialElapsedMs ?? 0);
+  let attempts = 0;
+
+  const recordElapsed = (durationMs: number): number => {
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      throw new RangeError(`durationMs must be a finite non-negative number, got ${durationMs}`);
+    }
+    elapsedMs += durationMs;
+    return elapsedMs;
+  };
+
+  return {
+    get attempts() {
+      return attempts;
+    },
+    get elapsedMs() {
+      return elapsedMs;
+    },
+    maxRetryWindowMs,
+    recordElapsed,
+    nextAttempt(additionalElapsedMs = 0): RetryBackoffDecision {
+      if (additionalElapsedMs !== 0) {
+        recordElapsed(additionalElapsedMs);
+      }
+      const decision = evaluateRetryBackoff(attempts, {
+        baseDelayMs,
+        maxDelayMs,
+        maxRetryWindowMs,
+        elapsedMs,
+      });
+      if (decision.status === "retry") {
+        elapsedMs = decision.cumulativeElapsedMs;
+        attempts += 1;
+      }
+      return decision;
+    },
+  };
+}
