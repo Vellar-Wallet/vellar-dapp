@@ -83,10 +83,20 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
         "verification.execute",
         traceCtx,
         async () => {
+          const elapsedRetryMs =
+            deps.elapsedRetryMs ??
+            (retryAttempt !== undefined && retryAttempt > 0 && job.submittedAtMs !== undefined
+              ? Math.max(0, Date.now() - job.submittedAtMs)
+              : undefined);
           return await runVerification(job, {
             executor: deps.executor,
             resolver: deps.resolver,
             retryAttempt,
+            baseDelayMs: deps.baseDelayMs,
+            maxDelayMs: deps.maxDelayMs,
+            elapsedRetryMs,
+            maxRetryWindowMs: deps.maxRetryWindowMs,
+            jobSecret: deps.jobSecret,
           });
         },
         { recordId: job.recordId, contractId: job.contractId },

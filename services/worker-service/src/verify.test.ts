@@ -669,4 +669,121 @@ describe("Verification with Retry Backoff (Issue #295)", () => {
       },
     );
   });
+
+  describe("cumulative retry time ceiling (#688)", () => {
+    const transientResolver = {
+      async resolveDeployedHash(): Promise<never> {
+        throw new ArtifactResolveError("upstream 503", "rpc_error");
+      },
+    };
+
+    it("keeps transient failure retryable when cumulative elapsed + delay fits within maxRetryWindowMs", async () => {
+      const spy = vi.spyOn(Math, "random").mockReturnValue(0.5);
+      try {
+        const outcome = await runVerification(repoJob, {
+          executor: stubBuildExecutor(),
+          resolver: transientResolver,
+          retryAttempt: 1,
+          baseDelayMs: 2_000,
+          maxDelayMs: 30_000,
+          elapsedRetryMs: 3_000,
+          maxRetryWindowMs: 10_000,
+        });
+
+        expect(outcome.status).toBe("failed");
+        expect(outcome.isRetryable).toBe(true);
+        expect(outcome.retryDelayMs).toBe(2_000);
+        expect(outcome.retryExhaustedReason).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("surfaces a distinct retry_window_exceeded terminal outcome when cumulative time exceeds ceiling despite small per-attempt delays", async () => {
+      const spy = vi.spyOn(Math, "random").mockReturnValue(1);
+      try {
+        let cumulativeElapsedMs = 0;
+        const maxDelayMs = 30_000;
+        const maxRetryWindowMs = 10_000;
+
+        // Attempt 0: individual delay 4_000ms (<< 30_000ms cap), cumulative = 4_000ms <= 10_000ms
+        const first = await runVerification(repoJob, {
+          executor: stubBuildExecutor(),
+          resolver: transientResolver,
+          retryAttempt: 0,
+          baseDelayMs: 4_000,
+          maxDelayMs,
+          elapsedRetryMs: cumulativeElapsedMs,
+          maxRetryWindowMs,
+        });
+        expect(first.isRetryable).toBe(true);
+        expect(first.retryDelayMs).toBe(4_000);
+        expect(first.retryDelayMs!).toBeLessThan(maxDelayMs);
+        cumulativeElapsedMs += first.retryDelayMs!;
+
+        // Attempt 1: individual delay 8_000ms (still << 30_000ms cap),
+        // but 4_000 + 8_000 = 12_000ms > 10_000ms ceiling => terminal timeout_exhausted!
+        const second = await runVerification(repoJob, {
+          executor: stubBuildExecutor(),
+          resolver: transientResolver,
+          retryAttempt: 1,
+          baseDelayMs: 4_000,
+          maxDelayMs,
+          elapsedRetryMs: cumulativeElapsedMs,
+          maxRetryWindowMs,
+        });
+        expect(second.status).toBe("failed");
+        expect(second.isRetryable).toBe(false);
+        expect(second.retryDelayMs).toBeUndefined();
+        expect(second.retryExhaustedReason).toBe("retry_window_exceeded");
+        expect(second.statusDetail).toBe(
+          "Could not resolve the deployed contract (rpc_error). Retry window exhausted.",
+        );
+        expect(second.log).toContain(
+          "Retry window exhausted (elapsed=4000ms, nextDelay=8000ms, maxRetryWindowMs=10000ms).",
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("keeps public statusDetail sanitized (H3) when transient build failure exhausts retry window", async () => {
+      const resolver = {
+        async resolveDeployedHash(): Promise<string> {
+          return "11".repeat(32);
+        },
+      };
+      const executor = {
+        async build(): Promise<never> {
+          throw new BuildExecutorError(
+            "failed fetching https://git.internal.local/secret",
+            "dependency_fetch_failed",
+            "fatal: 10.0.0.42 unreachable",
+          );
+        },
+      };
+
+      const outcome = await runVerification(repoJob, {
+        executor,
+        resolver,
+        retryAttempt: 2,
+        elapsedRetryMs: 120_000,
+        maxRetryWindowMs: 120_000,
+      });
+
+      expect(outcome.status).toBe("failed");
+      expect(outcome.isRetryable).toBe(false);
+      expect(outcome.retryDelayMs).toBeUndefined();
+      expect(outcome.retryExhaustedReason).toBe("retry_window_exceeded");
+      expect(outcome.statusDetail).toBe(
+        "Build failed (dependency_fetch_failed). Retry window exhausted.",
+      );
+      expect(outcome.statusDetail).not.toContain("will be retried");
+      expect(outcome.statusDetail).not.toContain("git.internal.local");
+      expect(outcome.statusDetail).not.toContain("10.0.0.42");
+      expect(outcome.log).toContain(
+        "Retry window exhausted (elapsed=120000ms, maxRetryWindowMs=120000ms).",
+      );
+    });
+  });
 });

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { calculateBackoffDelay, BACKOFF_CONFIG } from "./backoff";
+import {
+  calculateBackoffDelay,
+  BACKOFF_CONFIG,
+  createRetryBudgetTracker,
+  evaluateRetryBackoff,
+} from "./backoff";
 
 describe("calculateBackoffDelay — exponential backoff with full jitter", () => {
   describe("backoff calculation", () => {
@@ -224,5 +229,139 @@ describe("theoretical retry window", () => {
     // Check that they don't bunch up at start
     const delaysOver500ms = delays.filter((d) => d > 500).length;
     expect(delaysOver500ms).toBeGreaterThan(0);
+  });
+});
+
+describe("cumulative retry ceiling (#688)", () => {
+  it("schedules a retry when elapsed + delay stays within maxRetryWindowMs", () => {
+    const spy = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    try {
+      const decision = evaluateRetryBackoff(1, {
+        baseDelayMs: 1_000,
+        maxDelayMs: 30_000,
+        maxRetryWindowMs: 10_000,
+        elapsedMs: 3_000,
+      });
+
+      expect(decision).toEqual({
+        status: "retry",
+        delayMs: 1_000, // 0.5 * min(30_000, 1_000 * 2^1) = 1_000
+        cumulativeElapsedMs: 4_000,
+        remainingBudgetMs: 6_000,
+        maxRetryWindowMs: 10_000,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("immediately returns timeout_exhausted when elapsedMs already meets or exceeds ceiling", () => {
+    const decision = evaluateRetryBackoff(0, {
+      baseDelayMs: 1_000,
+      maxDelayMs: 30_000,
+      maxRetryWindowMs: 15_000,
+      elapsedMs: 15_000,
+    });
+
+    expect(decision).toEqual({
+      status: "timeout_exhausted",
+      reason: "retry_window_exceeded",
+      elapsedMs: 15_000,
+      maxRetryWindowMs: 15_000,
+    });
+  });
+
+  it("surfaces timeout_exhausted when individual delays are well below maxDelayMs but cumulative time exceeds ceiling", () => {
+    // Every individual attempt delay is 4_000ms — well under maxDelayMs (30_000ms) —
+    // yet cumulative elapsed retry time across attempts exceeds maxRetryWindowMs (10_000ms).
+    const spy = vi.spyOn(Math, "random").mockReturnValue(1);
+    try {
+      const tracker = createRetryBudgetTracker({
+        baseDelayMs: 4_000,
+        maxDelayMs: 30_000,
+        maxRetryWindowMs: 10_000,
+      });
+
+      // Attempt 0: delay = 4_000ms (<= 30_000ms cap), cumulative = 4_000ms (<= 10_000ms ceiling)
+      const first = tracker.nextAttempt();
+      expect(first.status).toBe("retry");
+      if (first.status === "retry") {
+        expect(first.delayMs).toBe(4_000);
+        expect(first.delayMs).toBeLessThan(30_000);
+        expect(first.cumulativeElapsedMs).toBe(4_000);
+      }
+
+      // Attempt 1 with baseDelayMs=4_000 capped via custom options? No: 4_000 * 2^1 = 8_000ms,
+      // still well below maxDelayMs (30_000ms), while 4_000 + 8_000 = 12_000ms > 10_000ms ceiling!
+      const second = tracker.nextAttempt();
+      expect(second).toEqual({
+        status: "timeout_exhausted",
+        reason: "retry_window_exceeded",
+        elapsedMs: 4_000,
+        attemptedDelayMs: 8_000,
+        maxRetryWindowMs: 10_000,
+      });
+      if (second.status === "timeout_exhausted") {
+        expect(second.attemptedDelayMs).toBeLessThan(30_000);
+      }
+      // Tracker preserves elapsedMs and attempts without scheduling the overflowing retry
+      expect(tracker.attempts).toBe(1);
+      expect(tracker.elapsedMs).toBe(4_000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("tracks both in-flight execution duration and small per-attempt delays across multiple attempts", () => {
+    const spy = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    try {
+      const tracker = createRetryBudgetTracker({
+        baseDelayMs: 2_000,
+        maxDelayMs: 30_000,
+        maxRetryWindowMs: 9_000,
+      });
+
+      // Attempt 0: 1_500ms in-flight + 1_000ms backoff = 2_500ms cumulative
+      const r0 = tracker.nextAttempt(1_500);
+      expect(r0).toMatchObject({ status: "retry", delayMs: 1_000, cumulativeElapsedMs: 2_500 });
+
+      // Attempt 1: 2_000ms in-flight + 2_000ms backoff = 6_500ms cumulative
+      const r1 = tracker.nextAttempt(2_000);
+      expect(r1).toMatchObject({ status: "retry", delayMs: 2_000, cumulativeElapsedMs: 6_500 });
+
+      // Attempt 2: 1_000ms in-flight -> elapsed=7_500ms; next delay=4_000ms (still << 30_000ms cap),
+      // 7_500 + 4_000 = 11_500ms > 9_000ms ceiling => timeout_exhausted!
+      const r2 = tracker.nextAttempt(1_000);
+      expect(r2).toEqual({
+        status: "timeout_exhausted",
+        reason: "retry_window_exceeded",
+        elapsedMs: 7_500,
+        attemptedDelayMs: 4_000,
+        maxRetryWindowMs: 9_000,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("defaults maxRetryWindowMs to BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS and validates inputs", () => {
+    const spy = vi.spyOn(Math, "random").mockReturnValue(0.25);
+    try {
+      const decision = evaluateRetryBackoff(0, { elapsedMs: -50 });
+      expect(decision.status).toBe("retry");
+      expect(decision.maxRetryWindowMs).toBe(BACKOFF_CONFIG.MAX_RETRY_WINDOW_MS);
+      if (decision.status === "retry") {
+        expect(decision.cumulativeElapsedMs).toBe(decision.delayMs);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(() => evaluateRetryBackoff(0, { maxRetryWindowMs: -1 })).toThrow(RangeError);
+    expect(() => evaluateRetryBackoff(0, { maxRetryWindowMs: Number.NaN })).toThrow(RangeError);
+    expect(() => evaluateRetryBackoff(0, { elapsedMs: Number.POSITIVE_INFINITY })).toThrow(
+      RangeError,
+    );
+    expect(() => createRetryBudgetTracker({ maxRetryWindowMs: -100 })).toThrow(RangeError);
   });
 });
