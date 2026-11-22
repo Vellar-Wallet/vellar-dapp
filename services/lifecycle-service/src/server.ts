@@ -11,6 +11,7 @@ import {
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
 import { buildCleanupPlan, isClassicAccountId } from "./planner";
+import { createNoOpAuditLog, type AuditLog } from "./audit";
 import { paymentMiddleware, x402ResourceServer } from "@x402/fastify";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server";
@@ -39,6 +40,8 @@ function isCachedAccountReader(reader: AccountReader): reader is CachedAccountRe
 export interface LifecycleServiceDeps {
   reader: AccountReader;
   networkPassphrase?: string;
+  /** Audit log for mutating lifecycle actions (#764). Defaults to no-op. */
+  audit?: AuditLog;
   /** x402 facilitator client for the /lifecycle/execute payment gate. Defaults
    * to a real HTTPFacilitatorClient hitting vellar-facilitator. Tests inject
    * `fakeFacilitatorClient()` instead: x402ResourceServer.initialize() (run on
@@ -115,6 +118,7 @@ function validatePair(accountId: string, destination: string): string | undefine
 }
 
 export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
+  const audit = deps.audit ?? createNoOpAuditLog();
   const app = Fastify({ logger: true });
   registerTracing(app, "lifecycle-service");
   registerHealth(app, "lifecycle-service");
@@ -263,21 +267,31 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
     }
     const { accountId, destination } = parsed.data;
-    const invalid = validatePair(accountId, destination);
-    if (invalid) return reply.code(400).send({ error: invalid });
+    const validationError = validatePair(accountId, destination);
+    if (validationError) {
+      return reply.code(400).send({ error: validationError });
+    }
 
     const account = await deps.reader.getAccount(accountId);
     if (!account) return reply.code(404).send({ error: "account_not_found" });
-
     const plan = buildCleanupPlan(account, destination);
     if ("error" in plan) {
       return reply.code(400).send({ error: plan.error, message: plan.message, plan });
     }
 
-    return reply.send({
-      steps: buildCleanupSteps(account, destination, passphrase),
-      plan,
+    const steps = buildCleanupSteps(account, plan, destination, passphrase);
+    const mergeStep = buildMergeStep(account, destination, passphrase);
+    const allSteps = mergeStep ? [...steps, mergeStep] : steps;
+
+    // Mutating action: audit the execution plan generation (#764).
+    await audit.record("lifecycle.execute_planned", {
+      accountId,
+      destination,
+      stepCount: allSteps.length,
+      mergeReady: plan.mergeReady,
     });
+
+    return reply.send({ steps: allSteps, plan });
   });
 
   // MergePreflightValidator (idea.md §6.4): re-inspects and refuses to build
@@ -306,6 +320,11 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
       return reply.code(409).send({ error: "not_merge_ready", plan });
     }
     const step = buildMergeStep(account, destination, passphrase);
+    await audit.record("lifecycle.merge_planned", {
+      accountId,
+      destination,
+      mergeReady: plan.mergeReady,
+    });
     if (isCachedAccountReader(deps.reader)) {
       deps.reader.invalidate(accountId);
       deps.reader.invalidate(destination);

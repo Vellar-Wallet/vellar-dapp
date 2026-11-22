@@ -236,6 +236,15 @@ const submitBodySchema = z
     }
   });
 
+export interface ContractExistsLookup {
+  /**
+   * Returns true when the contract exists on the configured network.
+   * A well-formed contract id that is absent on the configured network
+   * (never deployed, or deployed on a different network) must return false.
+   */
+  exists(contractId: string): Promise<boolean>;
+}
+
 export interface VerificationServiceDeps {
   records?: VerificationRepository;
   queue?: BuildJobQueue;
@@ -244,6 +253,10 @@ export interface VerificationServiceDeps {
    * with 429 (M7 queue-depth cap). This is the real anti-flood control on the
    * last unmetered unauthenticated write path. Default 1000. */
   maxActiveQueue?: number;
+  /** Optional on-chain existence check. When provided, submit rejects a
+   * well-formed contract id that does not exist on the configured network
+   * before any build work is enqueued (#767). */
+  contractLookup?: ContractExistsLookup;
   /** x402 facilitator client for the /verification/:contractId payment gate.
    * Defaults to a real HTTPFacilitatorClient hitting vellar-facilitator.
    * Tests inject `fakeFacilitatorClient()` instead: x402ResourceServer.initialize()
@@ -354,6 +367,31 @@ export function buildServer(deps: VerificationServiceDeps = {}): FastifyInstance
         status: active?.status ?? "submitted",
         record: active ? toPublic(active) : undefined,
       });
+    }
+
+    // #767: a syntactically valid contract id that does not exist on the
+    // configured network (never deployed, or deployed on a different network)
+    // must fail fast with a clear not_found-style error before any build work
+    // starts. This runs before queue-depth/dedup checks to avoid wasted work.
+    if (deps.contractLookup) {
+      let exists = false;
+      try {
+        exists = await deps.contractLookup.exists(input.contractId);
+      } catch (err) {
+        request.log.warn({ err, contractId: input.contractId }, "contract existence lookup failed");
+        return reply.code(503).send({
+          error: "contract_lookup_unavailable",
+          message:
+            "Could not verify contract existence on the configured network. Try again later.",
+        });
+      }
+      if (!exists) {
+        return reply.code(404).send({
+          error: "contract_not_found",
+          message:
+            "No contract was found for this id on the configured network. It may be undeployed or deployed on a different network.",
+        });
+      }
     }
 
     // Queue-depth cap (M7): this is the last unmetered unauthenticated write path
