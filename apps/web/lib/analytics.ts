@@ -13,6 +13,7 @@
 
 import crypto from "crypto";
 import type { CreateWalletInput, Network } from "@vellar/types";
+import { hasAnalyticsConsent } from "./analytics-consent";
 
 /**
  * Event context includes metadata automatically attached to all events.
@@ -89,6 +90,10 @@ export function createAnalyticsTracker() {
     properties?: Record<string, unknown>,
     context?: Partial<EventContext>,
   ) {
+    // Do not queue pre-consent analytics. Dropping instead of buffering
+    // prevents replaying user activity after consent is granted later.
+    if (!hasAnalyticsConsent()) return;
+
     const event: AnalyticsEvent = {
       name,
       properties,
@@ -113,6 +118,10 @@ export function createAnalyticsTracker() {
    */
   async function flush() {
     if (eventQueue.length === 0) return;
+    if (!hasAnalyticsConsent()) {
+      eventQueue.splice(0);
+      return;
+    }
 
     const events = eventQueue.splice(0); // Drain the queue
 

@@ -12,6 +12,7 @@ import {
   type WalletConnector,
 } from "vellar-sdk";
 import { createRealConnector, getRealPaymentClient, getRealSwapClient } from "./connector-factory";
+import { getSafeLocalStorage } from "./safe-storage";
 import type { SwapClient } from "./swap/client";
 
 interface WalletContextValue {
@@ -37,14 +38,12 @@ export function WalletProvider({
   /** Test seam: inject a fake swap client. */
   swaps?: SwapClient;
 }) {
-  const [store] = useState(() =>
-    createSessionStore(
-      // SSR renders with an inert adapter; the browser store restores from localStorage.
-      typeof window === "undefined"
-        ? createMemoryStorageAdapter()
-        : createWebStorageAdapter(window.localStorage),
-    ),
-  );
+  const [store] = useState(() => {
+    // SSR renders with an inert adapter. In browsers, localStorage access can
+    // throw (private mode / restricted storage), so fall back to memory.
+    const storage = getSafeLocalStorage();
+    return createSessionStore(storage ? createWebStorageAdapter(storage) : createMemoryStorageAdapter());
+  });
 
   useEffect(() => {
     void store.getState().restore();

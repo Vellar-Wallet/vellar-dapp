@@ -49,6 +49,18 @@ describe("ensureServerSession (#469: reconnect via derivation skipped /wallet/co
     ).rejects.toBe(err);
   });
 
+  it("clears stale server session id when lookup reports expired/revoked session", async () => {
+    const err = Object.assign(new Error("Session expired"), { status: 401, code: "SESSION_EXPIRED" });
+    const stale = { ...base, serverSessionId: "srv-stale" };
+    const out = await ensureServerSession({ ...stale, serverSessionId: undefined }, {
+      lookupContractId: async () => {
+        throw err;
+      },
+    });
+    expect(out.serverSessionId).toBeUndefined();
+    expect(out.accountId).toBe(WALLET);
+  });
+
   it("does nothing without a keyId (no passkey to look up)", async () => {
     const lookupContractId = vi.fn();
     const { keyId: _omit, ...noKey } = base;
