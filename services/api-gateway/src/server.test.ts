@@ -500,3 +500,146 @@ describe("api-gateway structured request logging", () => {
     }
   });
 });
+
+describe("api-gateway CORS_ORIGIN enforcement (#769)", () => {
+  it("rejects a request from a different origin than configured CORS_ORIGIN", async () => {
+    const app = buildServer({
+      walletServiceUrl: "http://127.0.0.1:1",
+      corsOrigin: "https://app.vellar.wallet",
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: "OPTIONS",
+        url: "/wallet/connect",
+        headers: {
+          origin: "https://evil.example",
+          "access-control-request-method": "POST",
+        },
+      });
+      expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allows a request from the configured CORS_ORIGIN", async () => {
+    const app = buildServer({
+      walletServiceUrl: "http://127.0.0.1:1",
+      corsOrigin: "https://app.vellar.wallet",
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: "OPTIONS",
+        url: "/wallet/connect",
+        headers: {
+          origin: "https://app.vellar.wallet",
+          "access-control-request-method": "POST",
+        },
+      });
+      expect(res.headers["access-control-allow-origin"]).toBe("https://app.vellar.wallet");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("uses deliberate documented defaults when CORS_ORIGIN is unset", async () => {
+    const previous = process.env.CORS_ORIGIN;
+    delete process.env.CORS_ORIGIN;
+    const app = buildServer({ walletServiceUrl: "http://127.0.0.1:1" });
+    await app.ready();
+    try {
+      const allowed = await app.inject({
+        method: "OPTIONS",
+        url: "/wallet/connect",
+        headers: {
+          origin: "http://localhost:3000",
+          "access-control-request-method": "POST",
+        },
+      });
+      expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+
+      const rejected = await app.inject({
+        method: "OPTIONS",
+        url: "/wallet/connect",
+        headers: {
+          origin: "https://evil.example",
+          "access-control-request-method": "POST",
+        },
+      });
+      expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.CORS_ORIGIN;
+      else process.env.CORS_ORIGIN = previous;
+      await app.close();
+    }
+  });
+});
+
+describe("api-gateway tenant identity headers (#770)", () => {
+  it("rejects conflicting x-tenant-id and x-session-id values", async () => {
+    const upstream = Fastify();
+    upstream.post("/wallet/connect", async () => ({ ok: true }));
+    await upstream.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = upstream.server.address() as AddressInfo;
+
+    const app = buildServer({
+      walletServiceUrl: `http://127.0.0.1:${port}`,
+      rateLimitMax: 1000,
+      tenantBucketCapacity: 1,
+      tenantBucketRefillRate: 0.001,
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/wallet/connect",
+        headers: {
+          "content-type": "application/json",
+          "x-tenant-id": "tenant-a",
+          "x-session-id": "tenant-b",
+        },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({
+        error: { code: "conflicting_tenant_identity" },
+      });
+    } finally {
+      await app.close();
+      await upstream.close();
+    }
+  });
+
+  it("accepts matching x-tenant-id and x-session-id values", async () => {
+    const upstream = Fastify();
+    upstream.post("/wallet/connect", async () => ({ ok: true }));
+    await upstream.listen({ port: 0, host: "127.0.0.1" });
+    const { port } = upstream.server.address() as AddressInfo;
+
+    const app = buildServer({
+      walletServiceUrl: `http://127.0.0.1:${port}`,
+      rateLimitMax: 1000,
+      tenantBucketCapacity: 10,
+      tenantBucketRefillRate: 1,
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/wallet/connect",
+        headers: {
+          "content-type": "application/json",
+          "x-tenant-id": "tenant-a",
+          "x-session-id": "tenant-a",
+        },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await app.close();
+      await upstream.close();
+    }
+  });
+});

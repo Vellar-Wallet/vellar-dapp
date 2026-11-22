@@ -157,3 +157,100 @@ describe("Threshold Attestor Submitter & Key Management (#422)", () => {
     });
   });
 });
+
+  describe("M-of-N submission shape and failure modes (#772)", () => {
+    const registryContractId = "CBZVS2ETJKCIMRRWUHTZFVMWDACJNYUZ54JIXUJCHXNBFNXELKTSWHGP";
+    const thresholdAttestorContractId = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
+    function setupMockServer() {
+      const relayer = Keypair.random();
+      const getAccount = vi.fn().mockResolvedValue(new Account(relayer.publicKey(), "100"));
+      const prepareTransaction = vi.fn().mockImplementation((tx) => tx);
+      const sendTransaction = vi
+        .fn()
+        .mockResolvedValue({ status: "PENDING", hash: "tx_mock_hash_772" });
+      const getTransaction = vi.fn().mockResolvedValue({ status: "SUCCESS" });
+      const getLatestLedger = vi.fn().mockResolvedValue({ sequence: 5000 });
+      const simulateTransaction = vi.fn().mockResolvedValue({
+        result: { retval: xdr.ScVal.scvVoid() },
+      });
+      return {
+        relayer,
+        getAccount,
+        prepareTransaction,
+        sendTransaction,
+        getTransaction,
+        getLatestLedger,
+        simulateTransaction,
+      };
+    }
+
+    it("builds and sends M-of-N co-signed auth entry, not single-signer shape", async () => {
+      const server = setupMockServer();
+      const s1 = Keypair.random();
+      const s2 = Keypair.random();
+      const s3 = Keypair.random();
+      const km = new ThresholdKeyManager([s1.secret(), s2.secret(), s3.secret()]);
+      const submitter = createThresholdSubmitter({
+        rpcUrl: "http://localhost:8000",
+        networkPassphrase: "Test SDF Network ; September 2015",
+        registryContractId,
+        thresholdAttestorContractId,
+        relayerSecretKey: server.relayer.secret(),
+        keyManager: km,
+        attestThreshold: 2,
+        revokeThreshold: 1,
+        server,
+      });
+
+      await submitter.upsert(
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        6000,
+      );
+
+      expect(server.sendTransaction).toHaveBeenCalledTimes(1);
+      const sentTx = server.sendTransaction.mock.calls[0]![0];
+      const op = sentTx.operations[0] as any;
+      expect(op.auth).toHaveLength(1);
+      const authEntry = op.auth[0];
+      const creds = authEntry.credentials().address();
+      expect(creds.signature().switch().name).toBe("scvMap");
+      const sigMap = creds.signature().map();
+      const signaturesEntry = sigMap!.find((e: any) => e.key().sym().toString() === "signatures");
+      const signatures = signaturesEntry!.val().vec();
+      expect(signatures).toHaveLength(2);
+      const indices = signatures.map((s: any) => {
+        const entries = s.map();
+        const idx = entries.find((e: any) => e.key().sym().toString() === "signer_index");
+        return idx.val().u32();
+      });
+      expect(indices).toEqual([0, 1]);
+    });
+
+    it("fails clearly when fewer than M of N signatures are available", async () => {
+      const server = setupMockServer();
+      const s1 = Keypair.random();
+      const km = new ThresholdKeyManager([s1.secret()]); // only 1 signer configured
+      const submitter = createThresholdSubmitter({
+        rpcUrl: "http://localhost:8000",
+        networkPassphrase: "Test SDF Network ; September 2015",
+        registryContractId,
+        thresholdAttestorContractId,
+        relayerSecretKey: server.relayer.secret(),
+        keyManager: km,
+        attestThreshold: 2,
+        revokeThreshold: 1,
+        server,
+      });
+
+      await expect(
+        submitter.upsert(
+          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          6000,
+        ),
+      ).rejects.toThrow(/Cannot produce 2 signatures with only 1 configured signers/);
+      expect(server.sendTransaction).not.toHaveBeenCalled();
+    });
+  });

@@ -37,3 +37,24 @@ describe("assertAttestorSafeForNetwork (M5 hard guard)", () => {
     ).toThrow(/escape hatch is hard-gated in production/i);
   });
 });
+
+  it("treats unset NODE_ENV on mainnet as requiring explicit opt-in (safer non-production path)", () => {
+    // NODE_ENV unset is common in local/CI shells; do not silently allow mainnet single-key.
+    expect(() =>
+      assertAttestorSafeForNetwork({
+        network: "mainnet",
+        allowSingleKey: false,
+        nodeEnv: undefined,
+      }),
+    ).toThrow(/single-key attestor/i);
+  });
+
+  it("allows unset NODE_ENV on mainnet only with explicit allowSingleKey override", () => {
+    expect(() =>
+      assertAttestorSafeForNetwork({
+        network: "mainnet",
+        allowSingleKey: true,
+        nodeEnv: undefined,
+      }),
+    ).not.toThrow();
+  });
