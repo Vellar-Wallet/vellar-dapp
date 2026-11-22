@@ -267,7 +267,17 @@ export async function processDeploymentJob(
     }
 
     const enforcement = policy.manifest.enforcement;
-    if (enforcement.kind !== "policy-contract" || !enforcement.constructorArgs) {
+    // A policy-contract enforcement needs real constructor args to deploy.
+    // `!constructorArgs` alone only rejects null/undefined: an empty array or
+    // object is truthy in JavaScript, so it would slip past this guard and
+    // fail later inside constructorScVals() with an opaque BigInt(undefined)
+    // error. There is no zero-argument policy contract, so reject empty args
+    // here deliberately rather than by accident of JS truthiness.
+    if (
+      enforcement.kind !== "policy-contract" ||
+      !enforcement.constructorArgs ||
+      Object.keys(enforcement.constructorArgs).length === 0
+    ) {
       throw new TerminalDeployError(`Policy is not contract-enforced: ${job.policy_id}`);
     }
 

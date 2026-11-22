@@ -235,19 +235,48 @@ export function paginateAuditEvents(
   return {
     events: page,
     hasMore,
-    nextCursor: hasMore && last ? encodeAuditCursor(last.at, last.id) : undefined,
+    // Bind the cursor to the actor it was issued for. Without this, a cursor
+    // from wallet A is just an (at, id) pair and replays silently against
+    // wallet B's history (issue #762).
+    nextCursor: hasMore && last ? encodeAuditCursor(last.at, last.id, filter.actor) : undefined,
   };
 }
 
-export function encodeAuditCursor(at: string, id: string): AuditCursor {
-  return Buffer.from(`${at}:${id}`, "utf8").toString("base64url");
+export interface DecodedAuditCursor {
+  at: string;
+  id: string;
+  /** The wallet the cursor was issued for, when the caller was actor-scoped. */
+  actor?: string;
 }
 
-export function decodeAuditCursor(cursor: AuditCursor): { at: string; id: string } {
+export function encodeAuditCursor(at: string, id: string, actor?: string): AuditCursor {
+  return Buffer.from(JSON.stringify({ at, id, actor }), "utf8").toString("base64url");
+}
+
+export function decodeAuditCursor(cursor: AuditCursor): DecodedAuditCursor {
   const decoded = Buffer.from(cursor, "base64url").toString("utf8");
-  const sep = decoded.lastIndexOf(":");
-  if (sep <= 0 || sep === decoded.length - 1) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded);
+  } catch {
+    // Legacy cursors (before actor binding) were "<at>:<id>". Keep reading
+    // them so an in-flight pagination session isn't broken by the format
+    // change; they carry no actor, so no cross-wallet check is possible.
+    const sep = decoded.lastIndexOf(":");
+    if (sep <= 0 || sep === decoded.length - 1) {
+      throw new Error("malformed audit cursor");
+    }
+    return { at: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
+  }
+  if (!parsed || typeof parsed !== "object") {
     throw new Error("malformed audit cursor");
   }
-  return { at: decoded.slice(0, sep), id: decoded.slice(sep + 1) };
+  const { at, id, actor } = parsed as { at?: unknown; id?: unknown; actor?: unknown };
+  if (typeof at !== "string" || at.length === 0 || typeof id !== "string" || id.length === 0) {
+    throw new Error("malformed audit cursor");
+  }
+  if (actor !== undefined && typeof actor !== "string") {
+    throw new Error("malformed audit cursor");
+  }
+  return actor === undefined ? { at, id } : { at, id, actor };
 }

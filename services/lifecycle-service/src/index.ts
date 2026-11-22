@@ -9,6 +9,7 @@ const [, auditLog] = initializeAuditLog("memory");
 
 const app = buildServer({
   reader: createCachedAccountReader(createHorizonAccountReader(horizonUrl)),
+  audit: auditLog,
 });
 await startService(app, {
   port: portFromEnv("LIFECYCLE_SERVICE_PORT", 4002),

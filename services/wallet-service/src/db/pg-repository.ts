@@ -209,7 +209,7 @@ export function createPgAuditLog(db: Db): AuditLog {
       return {
         events,
         hasMore,
-        nextCursor: hasMore && last ? encodeAuditCursor(last.at, last.id) : undefined,
+        nextCursor: hasMore && last ? encodeAuditCursor(last.at, last.id, filter.actor) : undefined,
       };
     },
   };

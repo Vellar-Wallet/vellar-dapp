@@ -15,6 +15,7 @@ import {
   createMemoryAuditLog,
   createMemorySessionRepository,
   createMemoryWalletRepository,
+  decodeAuditCursor,
   DuplicateWalletError,
   type AuditLog,
   type SessionRecord,
@@ -772,6 +773,25 @@ export function buildServer(deps: WalletServiceDeps): FastifyInstance {
     const session = await resolveSessionCapability(request);
     if (!session || session.contractId !== contractId || session.network !== network) {
       return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    // A cursor is bound to the wallet that produced it (issue #762). Replaying
+    // a cursor from wallet A against wallet B's history must fail loudly
+    // rather than silently paginate B's events from an arbitrary offset.
+    if (after) {
+      let cursorActor: string | undefined;
+      try {
+        cursorActor = decodeAuditCursor(after).actor;
+      } catch {
+        return reply
+          .code(400)
+          .send({ error: "invalid_cursor", message: "cursor is not a valid pagination cursor" });
+      }
+      if (cursorActor !== undefined && cursorActor !== contractId) {
+        return reply
+          .code(400)
+          .send({ error: "invalid_cursor", message: "cursor was issued for a different wallet" });
+      }
     }
 
     let page;

@@ -82,8 +82,25 @@ describe("paginateAuditEvents (issue #256 keyset pagination)", () => {
     expect(decodeAuditCursor(cursor)).toEqual({ at: "2024-01-01T00:00:01.000Z", id: "abc-123" });
   });
 
+  it("carries the wallet a page was issued for, so a replay can be rejected (#762)", () => {
+    const cursor = encodeAuditCursor("2024-01-01T00:00:01.000Z", "abc-123", "CWALLETA");
+    expect(decodeAuditCursor(cursor)).toEqual({
+      at: "2024-01-01T00:00:01.000Z",
+      id: "abc-123",
+      actor: "CWALLETA",
+    });
+  });
+
   it("decodeAuditCursor throws (not silently returns garbage) on a malformed cursor", () => {
     expect(() => decodeAuditCursor("not-a-real-cursor")).toThrow();
+  });
+
+  it("decodeAuditCursor still reads a legacy unbound cursor", () => {
+    const legacy = Buffer.from("2024-01-01T00:00:01.000Z:abc-123", "utf8").toString("base64url");
+    expect(decodeAuditCursor(legacy)).toEqual({
+      at: "2024-01-01T00:00:01.000Z",
+      id: "abc-123",
+    });
   });
 });
 
