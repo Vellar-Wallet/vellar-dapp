@@ -76,9 +76,11 @@ Outside the scope of #427/#429; recorded so they are not lost.
 - `processDeploymentJob` (policy-service) deploys without consuming the M2 deploy
   budget. It is not wired into any route or process today; if it is, route it
   through `deployPolicyInstance`, which enforces the budget.
-- `registerAdminDLQRoutes` treats every caller as `"default-admin"` when no
-  `getAdminUser` is supplied. Also unwired today; wiring it requires a real admin
-  identity.
+- ~~`registerAdminDLQRoutes` treats every caller as `"default-admin"` when no
+  `getAdminUser` is supplied.~~ Fixed (#746): `getAdminUser` is now required and
+  registration throws `MissingAdminUserResolverError` without it. It is wired
+  through `buildServer` only when `dlqStore` and `jobStore` are both supplied,
+  and `index.ts` supplies neither today.
 - policy-service signs CSRF tokens with a hard-coded fallback secret when
   `CSRF_SECRET` is unset; production should refuse to boot without one.
 - lifecycle-service has an audit-log module but its server takes no audit

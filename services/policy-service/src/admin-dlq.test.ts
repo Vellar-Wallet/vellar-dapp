@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
-import { registerAdminDLQRoutes } from "./admin-dlq";
+import { registerAdminDLQRoutes, MissingAdminUserResolverError } from "./admin-dlq";
+import { buildServer } from "./server";
 import { createMemoryDLQStore } from "./dlq-store";
 import { InMemoryDeployJobStore, MAX_RETRIES } from "./policy-deploy-worker";
 import { createMemoryPolicyRepository } from "./server";
@@ -530,6 +531,54 @@ describe("Admin DLQ API", () => {
   });
 
   describe("Authentication", () => {
+    it("refuses to register without a getAdminUser resolver (#746)", () => {
+      const bare = Fastify();
+
+      expect(() =>
+        registerAdminDLQRoutes(bare, { dlqStore, jobStore, policyRepo } as never),
+      ).toThrow(MissingAdminUserResolverError);
+    });
+
+    it("does not register any admin route when the resolver is missing (#746)", async () => {
+      const bare = Fastify();
+
+      try {
+        registerAdminDLQRoutes(bare, { dlqStore, jobStore, policyRepo } as never);
+      } catch {
+        // expected
+      }
+      await bare.ready();
+
+      const res = await bare.inject({ method: "GET", url: "/admin/dlq" });
+      expect(res.statusCode).toBe(404);
+      await bare.close();
+    });
+
+    it("buildServer throws at boot when DLQ deps are supplied without getAdminUser (#746)", () => {
+      expect(() => buildServer({ dlqStore, jobStore })).toThrow(MissingAdminUserResolverError);
+    });
+
+    it("attributes requeue audit entries to the resolved admin, not a default id (#746)", async () => {
+      const entry = await dlqStore.insert({
+        original_job_id: "job-746",
+        policy_id: "policy-746",
+        job_type: "policy_deploy",
+        payload: { wallet: "GABC", network: "testnet" },
+        last_error: "boom",
+        failure_count: MAX_RETRIES + 1,
+        first_failed_at: new Date().toISOString(),
+        last_failed_at: new Date().toISOString(),
+      });
+
+      const res = await app.inject({ method: "POST", url: `/admin/dlq/${entry.id}/requeue` });
+      expect(res.statusCode).toBe(201);
+
+      const trail = await dlqStore.getAuditTrail(entry.id);
+      expect(trail.length).toBeGreaterThan(0);
+      expect(trail.every((e) => e.actor === "admin-user-1")).toBe(true);
+      expect(trail.some((e) => e.actor === "default-admin")).toBe(false);
+    });
+
     it("denies access without admin user", async () => {
       const appNoAuth = Fastify();
 

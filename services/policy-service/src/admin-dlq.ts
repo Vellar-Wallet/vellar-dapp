@@ -21,8 +21,24 @@ export interface AdminDLQDeps {
   policyRepo: PolicyRepository;
   /** Optional metric for requeue tracking */
   dlqMetrics?: Pick<DLQMetrics, "dlq_requeue_total">;
-  /** Admin user extractor from request; returns user id or undefined if not admin */
-  getAdminUser?: (request: FastifyRequest) => string | undefined;
+  /**
+   * Admin user extractor from request; returns user id or undefined if not admin.
+   *
+   * Required: there is deliberately no default identity. Every admin action is
+   * audited against the id returned here, so a missing extractor must fail at
+   * registration rather than silently attribute actions to a shared account.
+   */
+  getAdminUser: (request: FastifyRequest) => string | undefined;
+}
+
+/** Thrown by {@link registerAdminDLQRoutes} when no admin identity resolver is supplied. */
+export class MissingAdminUserResolverError extends Error {
+  constructor() {
+    super(
+      "registerAdminDLQRoutes requires a getAdminUser function; refusing to register admin DLQ routes without an admin identity resolver",
+    );
+    this.name = "MissingAdminUserResolverError";
+  }
 }
 
 /**
@@ -52,11 +68,16 @@ function redactDLQRecord(record: DLQRecord): Partial<DLQRecord> {
 export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps): void {
   const { dlqStore, jobStore, policyRepo, dlqMetrics, getAdminUser } = deps;
 
+  // Guard against untyped callers / JS: fail at boot, never fall back to a shared identity.
+  if (typeof getAdminUser !== "function") {
+    throw new MissingAdminUserResolverError();
+  }
+
   /**
    * Verify admin authentication.
    */
   async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<string> {
-    const userId = getAdminUser ? getAdminUser(request) : "default-admin"; // Allow test without auth
+    const userId = getAdminUser(request);
     if (!userId) {
       return reply.code(403).send({ error: "unauthorized", message: "Admin access required" });
     }
