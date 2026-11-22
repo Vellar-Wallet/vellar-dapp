@@ -353,6 +353,74 @@ describe("Policy Deployment Worker", () => {
       expect(job?.status).not.toBe("completed");
       expect(job?.last_error).toMatch(/not contract-enforced/);
     });
+
+    it("enforces M2 deploy budget when processing a queued deployment (#766)", async () => {
+      await seedPolicy({ kind: "policy-contract", wasmHash: "wasm", constructorArgs: ARGS });
+      seedJob();
+      const tryConsume = vi.fn().mockResolvedValue({ ok: false });
+
+      await processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics, {
+        budget: { tryConsume } as any,
+        budgetNetwork: "testnet",
+      });
+
+      expect(tryConsume).toHaveBeenCalled();
+      expect(deployer.deployInstance).not.toHaveBeenCalled();
+      expect((await jobStore.get("job-1"))?.status).not.toBe("completed");
+    });
+  });
+
+  describe("deployment path budget invariant (#766)", () => {
+    it("enforces budget when deployPolicyInstance and queued processDeploymentJob race the same policy", async () => {
+      const WALLET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+      const OWNER = "CAFK7NMQOT7G2SKMREDUII3EOK4APIY54WIK6CVGY72XWFE76YFRDF67";
+      const ARGS = { dailyLimitStroops: "1000000000", windowSeconds: 86400 };
+      await policyRepo.insert({
+        id: "policy-race",
+        createdAt: new Date().toISOString(),
+        status: "generated",
+        definition: {
+          version: "1",
+          type: "spending_limit",
+          owners: [OWNER],
+          spendingLimits: { dailyXlm: "100" },
+        },
+        policyHash: "hash",
+        manifest: { template: "spending_limit", enforcement: { kind: "policy-contract", wasmHash: "w", constructorArgs: ARGS }, network: "testnet" },
+      });
+      const now = new Date().toISOString();
+      jobStore.addJob({
+        id: "job-race",
+        policy_id: "policy-race",
+        wallet: WALLET,
+        network: "testnet",
+        status: "pending",
+        retry_count: 0,
+        created_at: now,
+        updated_at: now,
+      });
+
+      let consumed = 0;
+      const tryConsume = vi.fn().mockImplementation(async () => {
+        if (consumed >= 1) return { ok: false };
+        consumed += 1;
+        return { ok: true };
+      });
+      const budget = { tryConsume } as any;
+      const record = await policyRepo.find("policy-race");
+      expect(record).toBeDefined();
+
+      const { deployPolicyInstance } = await import("./deployment");
+      const [direct, queued] = await Promise.allSettled([
+        deployPolicyInstance({ policies: policyRepo, deployer, budget, budgetNetwork: "testnet" } as any, record!, WALLET),
+        processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics, { budget, budgetNetwork: "testnet" }),
+      ]);
+
+      // Budget checked by both paths; at most one on-chain deploy succeeds.
+      expect(tryConsume).toHaveBeenCalled();
+      expect(deployer.deployInstance.mock.calls.length).toBeLessThanOrEqual(1);
+      expect([direct.status, queued.status]).toContain("fulfilled");
+    });
   });
 
   describe("Failure classification: retryable vs terminal (#528)", () => {

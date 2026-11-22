@@ -9,8 +9,9 @@
  * - Handle concurrent failures safely (DB transaction + row-level locks)
  */
 
-import { retryWithJitter } from "@vellar/service-kit";
+import { retryWithJitter, type BudgetNetwork, type SpendBudget } from "@vellar/service-kit";
 import { summarizeError, type DLQStore, type DLQRecord } from "./dlq-store";
+import { deployPolicyInstance, type DeploymentDeps } from "./deployment";
 import type { PolicyDeployer } from "./deploy";
 import type { PolicyRepository, PolicyRecord } from "./server";
 
@@ -235,9 +236,18 @@ export function computeBackoff(retryCount: number): number {
   });
 }
 
+export interface ProcessDeploymentJobOptions {
+  budget?: SpendBudget;
+  budgetNetwork?: BudgetNetwork;
+  now?: () => Date;
+}
+
 /**
  * Worker function to process one deployment job.
  * Returns true if a job was processed, false if no jobs available.
+ *
+ * Routes deployment through deployPolicyInstance so M2 deploy budget and
+ * record-update semantics are enforced regardless of entry path (#766).
  */
 export async function processDeploymentJob(
   jobStore: DeployJobStore,
@@ -245,6 +255,7 @@ export async function processDeploymentJob(
   deployer: PolicyDeployer,
   dlqStore: DLQStore,
   dlqMetrics?: DLQMetrics,
+  options: ProcessDeploymentJobOptions = {},
 ): Promise<boolean> {
   const job = await jobStore.claim();
   if (!job) return false;
@@ -259,12 +270,21 @@ export async function processDeploymentJob(
     if (enforcement.kind !== "policy-contract" || !enforcement.constructorArgs) {
       throw new TerminalDeployError(`Policy is not contract-enforced: ${job.policy_id}`);
     }
-    const result = await deployer.deployInstance({
-      wallet: job.wallet,
-      constructorArgs: enforcement.constructorArgs,
-    });
 
-    await jobStore.markCompleted(job.id, result.contractId, result.txHash);
+    const deps: DeploymentDeps = {
+      policies: policyRepo,
+      deployer,
+      budget: options.budget,
+      budgetNetwork: options.budgetNetwork,
+      now: options.now,
+    };
+    const { contractId, record } = await deployPolicyInstance(deps, policy, job.wallet);
+    const txHash = record.instance?.txHash;
+    if (!txHash) {
+      throw new Error("Deployment completed without txHash");
+    }
+
+    await jobStore.markCompleted(job.id, contractId, txHash);
     return true;
   } catch (err) {
     await jobStore.handleFailure(job.id, err, dlqStore, dlqMetrics);

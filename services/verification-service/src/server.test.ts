@@ -217,6 +217,90 @@ describe("POST /verification/submit", () => {
   });
 });
 
+describe("POST /verification/submit — contract existence check (#767)", () => {
+  it("rejects a well-formed contractId with no on-chain contract before any build work", async () => {
+    const records = createMemoryVerificationRepository();
+    const { queue, jobs } = recordingQueue();
+    app = buildServer({
+      records,
+      queue,
+      x402FacilitatorClient: fakeFacilitatorClient(),
+      contractLookup: { exists: async () => false },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/verification/submit",
+      payload: validRepoSubmission,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({
+      error: "contract_not_found",
+    });
+    expect(jobs).toHaveLength(0);
+    expect(await records.findByContract(C1)).toEqual([]);
+  });
+
+  it("treats a contractId missing on the configured network as not found (including cross-network ids)", async () => {
+    // The lookup is configured for the service's active network; a contract
+    // that exists on another network is reported as absent by the lookup.
+    const { app, jobs } = build({
+      contractLookup: {
+        exists: async (contractId) => {
+          expect(contractId).toBe(C1);
+          return false; // e.g. exists on testnet, service configured for mainnet
+        },
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/verification/submit",
+      payload: validRepoSubmission,
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe("contract_not_found");
+    expect(jobs).toHaveLength(0);
+  });
+
+  it("enqueues normally when the contract exists on the configured network", async () => {
+    const { app, jobs } = build({
+      contractLookup: { exists: async () => true },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/verification/submit",
+      payload: validRepoSubmission,
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(jobs).toHaveLength(1);
+  });
+
+  it("fails fast with 503 when existence lookup cannot be completed", async () => {
+    const { app, jobs } = build({
+      contractLookup: {
+        exists: async () => {
+          throw new Error("rpc unavailable");
+        },
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/verification/submit",
+      payload: validRepoSubmission,
+    });
+
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("contract_lookup_unavailable");
+    expect(jobs).toHaveLength(0);
+  });
+});
+
 describe("POST /verification/submit — queue controls (M7)", () => {
   async function submit(app: FastifyInstance, contractId = C1) {
     return app.inject({

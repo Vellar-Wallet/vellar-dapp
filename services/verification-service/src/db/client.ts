@@ -7,6 +7,8 @@ export type Db = NodePgDatabase;
 
 export interface DbHandle {
   db: Db;
+  /** Exposed for integration tests that need raw transaction control (#768). */
+  pool: pg.Pool;
   close(): Promise<void>;
 }
 
@@ -36,6 +38,7 @@ export async function connectDb(databaseUrl: string): Promise<DbHandle> {
   }
   return {
     db,
+    pool,
     close: () => pool.end(),
   };
 }
