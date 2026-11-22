@@ -332,5 +332,21 @@ describe("SendPayment", () => {
       expect(screen.queryByTestId("review-memo-warning")).toBeNull();
       expect(dialog.textContent).toContain("12345678");
     });
+
+    it("does not show memo-required warning for Soroban contract destinations (#810)", async () => {
+      const contractDest = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+      const preparePayment = vi.fn().mockResolvedValue({
+        review: { from: FROM, to: contractDest, token: xlm, amount: 25_000_000n, network: "testnet" },
+        confirm: vi.fn(),
+      });
+      renderSend({ preparePayment });
+
+      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: contractDest } });
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+      fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+      await screen.findByRole("dialog", { name: /review payment/i });
+      expect(screen.queryByTestId("review-memo-warning")).toBeNull();
+    });
   });
 });

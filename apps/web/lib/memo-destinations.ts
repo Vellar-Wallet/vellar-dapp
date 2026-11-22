@@ -15,9 +15,12 @@ export const MEMO_REQUIRED_DESTINATIONS: readonly string[] = [
 export function isMemoRequiredDestination(destination?: string | null): boolean {
   if (!destination) return false;
   const d = destination.trim().toUpperCase();
+  // Soroban contract addresses (C...) have a different memo model; do not apply
+  // classic account memo-required heuristics to them.
+  if (/^C[A-Z0-9]{55}$/.test(d)) return false;
   if (MEMO_REQUIRED_DESTINATIONS.includes(d)) return true;
-  // Heuristic: addresses with MEMO tag indicators or known exchange tag format
-  if (/^G[A-Z0-9]{55}$/.test(d) && (d.endsWith("MEMO") || d.includes("EXCHANGE"))) {
+  // Heuristic: classic G... account addresses with MEMO tag indicators or known exchange tag format
+  if (d.startsWith("G") && (d.endsWith("MEMO") || d.includes("EXCHANGE"))) {
     return true;
   }
   return false;

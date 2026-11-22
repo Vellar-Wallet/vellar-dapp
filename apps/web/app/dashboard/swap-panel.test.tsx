@@ -147,9 +147,30 @@ describe("SwapPanel", () => {
     expect(status.textContent).toMatch(/received 0\.42 USDC/);
     expect(status.textContent).toMatch(/6 XLM/);
     expect(status.textContent).toMatch(/remains unswapped/i);
+    expect(status.textContent).not.toMatch(/dust threshold/i);
     // Distinct from a full fill and from a rejection.
     expect(screen.queryByText(/Swap confirmed/i)).toBeNull();
     expect(screen.queryByText(/fully rejected/i)).toBeNull();
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a dust residual partial fill differently from a meaningful residual", async () => {
+    // 10 XLM in, only 1 stroop remains unswapped: residual is dust.
+    const swaps = swapClient({
+      readOutcome: vi.fn(async () => ({
+        status: "success" as const,
+        amounts: [99_999_999n, 10_540_792n],
+      })),
+    });
+    const { onSuccess } = renderSwap(swaps);
+    await quoteAndReview();
+    fireEvent.click(screen.getByRole("button", { name: /confirm with passkey/i }));
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toMatch(/partially filled/i);
+    expect(status.textContent).toMatch(/0\.0000001 XLM/);
+    expect(status.textContent).toMatch(/remains unswapped/i);
+    expect(status.textContent).toMatch(/dust threshold/i);
     expect(onSuccess).toHaveBeenCalledTimes(1);
   });
 
@@ -263,6 +284,17 @@ describe("classifySwapFill", () => {
       filledIn: 40_000_000n,
       residualIn: 60_000_000n,
       received: 4_200_000n,
+    });
+  });
+
+  it("classifies a dust residual as a partial_dust fill", () => {
+    expect(
+      classifySwapFill({ status: "success", amounts: [99_999_999n, 10_540_792n] }, AMOUNT_IN, 7),
+    ).toEqual({
+      kind: "partial_dust",
+      filledIn: 99_999_999n,
+      residualIn: 1n,
+      received: 10_540_792n,
     });
   });
 
