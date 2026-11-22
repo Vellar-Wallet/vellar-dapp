@@ -9,6 +9,45 @@ import { getSupportedTokens, TESTNET_NATIVE_SAC, MAINNET_NATIVE_SAC } from "./to
 // Balance data for the dashboard. The RPC reader (and stellar-sdk with it)
 // loads lazily on first use, keeping it off the onboarding path.
 
+type BalanceLike = TokenBalance & {
+  amount?: bigint | number | string;
+  balance?: bigint | number | string;
+  available?: bigint | number | string;
+  sellingLiabilities?: bigint | number | string;
+  selling_liabilities?: bigint | number | string;
+};
+
+function toBigInt(value: unknown): bigint | undefined {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value)) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    try {
+      return BigInt(value.trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export function normalizeTokenBalance<T extends BalanceLike>(balance: T): T {
+  const raw = toBigInt(balance.amount) ?? toBigInt(balance.balance);
+  if (raw === undefined) return balance;
+
+  const explicitAvailable = toBigInt(balance.available);
+  const sellingLiabilities =
+    toBigInt(balance.sellingLiabilities) ?? toBigInt(balance.selling_liabilities) ?? 0n;
+  const available =
+    explicitAvailable ?? (raw > sellingLiabilities ? raw - sellingLiabilities : 0n);
+
+  return {
+    ...balance,
+    amount: available,
+  };
+}
+
 export async function fetchBalances(accountId: string, network?: Network): Promise<TokenBalance[]> {
   const config = walletConfig();
   const currentNetwork: Network =
@@ -68,7 +107,8 @@ export async function fetchBalances(accountId: string, network?: Network): Promi
     }
   }
 
-  return createBalanceService(safeReader, tokensToQuery).getBalances(accountId);
+  const balances = await createBalanceService(safeReader, tokensToQuery).getBalances(accountId);
+  return balances.map((balance) => normalizeTokenBalance(balance as BalanceLike));
 }
 
 export function useBalances(accountId: string | undefined, network?: Network) {

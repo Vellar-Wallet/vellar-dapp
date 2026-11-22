@@ -7,12 +7,14 @@ import {
   type EventContext,
   type AnalyticsEvent,
 } from "./analytics";
+import { setAnalyticsConsent } from "./analytics-consent";
 
 describe("createAnalyticsTracker", () => {
   beforeEach(() => {
     // Clear localStorage and mocks before each test
     localStorage.clear();
     vi.clearAllMocks();
+    setAnalyticsConsent("granted");
   });
 
   afterEach(() => {
@@ -26,6 +28,36 @@ describe("createAnalyticsTracker", () => {
     expect(tracker1.pageSessionId).toBeDefined();
     expect(tracker2.pageSessionId).toBeDefined();
     expect(tracker1.pageSessionId).not.toBe(tracker2.pageSessionId);
+  });
+
+  describe("consent gating", () => {
+    it("does not emit or queue events before consent is granted", async () => {
+      setAnalyticsConsent("denied");
+      localStorage.setItem("vellar.analytics.consent", "unset");
+      localStorage.removeItem("vellar.analytics.consent");
+      const tracker = createAnalyticsTracker();
+
+      tracker.emit("test.event", { prop: "value" }, { network: "testnet" });
+      await tracker.flush();
+
+      expect(tracker.getQueue()).toHaveLength(0);
+      expect(localStorage.getItem("vellar.analytics.events")).toBeNull();
+    });
+
+    it("does not replay pre-consent events after consent is granted", () => {
+      localStorage.removeItem("vellar.analytics.consent");
+      const tracker = createAnalyticsTracker();
+
+      tracker.emit("wallet.funnel.start", undefined, { network: "testnet" });
+      expect(tracker.getQueue()).toHaveLength(0);
+
+      setAnalyticsConsent("granted");
+      tracker.emit("wallet.funnel.completed", undefined, { network: "testnet" });
+
+      const events = tracker.getQueue();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.name).toBe("wallet.funnel.completed");
+    });
   });
 
   describe("emit", () => {
@@ -213,6 +245,7 @@ describe("Wallet creation funnel events", () => {
     tracker = createAnalyticsTracker();
     localStorage.clear();
     vi.clearAllMocks();
+    setAnalyticsConsent("granted");
   });
 
   afterEach(() => {
@@ -394,6 +427,7 @@ describe("Sign-in (connect wallet) events", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    setAnalyticsConsent("granted");
     getAnalyticsTracker().getQueue().splice(0);
   });
 
@@ -474,6 +508,7 @@ describe("Privacy and security constraints", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    setAnalyticsConsent("granted");
     getAnalyticsTracker().getQueue().splice(0);
   });
 
