@@ -48,7 +48,20 @@ export function isTransientSubmissionFailure(error: unknown): boolean {
       code === "sponsor_fee_too_high" ||
       code === "sponsor_budget_exceeded" ||
       code === "relayer_not_configured" ||
-      code === "tx_failed"
+      code === "tx_failed" ||
+      code === "tx_bad_seq_future" ||
+      code === "tx_too_far_in_future"
+    ) {
+      return false;
+    }
+
+    // Sequence number too far in the future indicates a client-side sequencing bug.
+    // Unlike stale/too-low sequence races, retrying will not make the future sequence valid.
+    if (
+      (code === "tx_bad_seq" || code === "submission_failed" || code === "sponsor_submit_failed") &&
+      (message.includes("too far in the future") ||
+        message.includes("sequence number too high") ||
+        message.includes("future sequence"))
     ) {
       return false;
     }

@@ -7,6 +7,7 @@ export type Db = NodePgDatabase;
 
 export interface DbHandle {
   db: Db;
+  pool: pg.Pool;
   close(): Promise<void>;
   /** Cheap liveness check for the DB-aware /health probe (FIX 7). Resolves true
    * when the pool can round-trip a query, false when the connection is down —
@@ -40,6 +41,7 @@ export async function connectDb(databaseUrl: string): Promise<DbHandle> {
   }
   return {
     db,
+    pool,
     close: () => pool.end(),
     ping: async () => {
       try {
