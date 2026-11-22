@@ -66,7 +66,9 @@
  *   financial transactions.
  */
 
+import { eq } from "drizzle-orm";
 import type { Db } from "../db/client";
+import { transactionSubmissions } from "../db/schema";
 import type { TransactionSubmitter } from "../relayer";
 import {
   checkTransactionStatus,
@@ -159,13 +161,8 @@ export async function runSubmissionWorkerTick(deps: SubmissionWorkerDeps): Promi
 
     const submitted = await deps.db
       .select()
-      .from(require("../db/schema").transactionSubmissions)
-      .where(
-        require("drizzle-orm").eq(
-          require("../db/schema").transactionSubmissions.status,
-          "submitted",
-        ),
-      )
+      .from(transactionSubmissions)
+      .where(eq(transactionSubmissions.status, "submitted"))
       .limit(batchSize);
 
     for (const record of submitted) {
