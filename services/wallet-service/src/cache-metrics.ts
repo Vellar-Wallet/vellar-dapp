@@ -30,6 +30,14 @@ export interface CacheGetResult<T = unknown> {
   value?: T;
 }
 
+export interface CacheRequestContext {
+  /**
+   * Prevents double-counting when the same logical caller-facing request retries
+   * and touches cache again. The context should be scoped to one request.
+   */
+  counted?: Set<string>;
+}
+
 /**
  * Cache storage interface that can be wrapped with metrics.
  */
@@ -38,7 +46,11 @@ export interface CacheOperation {
    * Get a value from the cache by key. Returns { hit: true, value: <T> } on hit,
    * { hit: false } on miss.
    */
-  get<T = unknown>(resource: CacheResourceType, key: string): Promise<CacheGetResult<T>>;
+  get<T = unknown>(
+    resource: CacheResourceType,
+    key: string,
+    context?: CacheRequestContext,
+  ): Promise<CacheGetResult<T>>;
 
   /**
    * Set a value in the cache. May overwrite an existing key.
@@ -119,11 +131,23 @@ export function createCacheMetricsWrapper(cache: CacheOperation): CacheOperation
     cacheMisses.inc({ resource }, 0);
   }
   return {
-    async get<T = unknown>(resource: CacheResourceType, key: string): Promise<CacheGetResult<T>> {
-      const result = await cache.get<T>(resource, key);
+    async get<T = unknown>(
+      resource: CacheResourceType,
+      key: string,
+      context?: CacheRequestContext,
+    ): Promise<CacheGetResult<T>> {
+      const result = await cache.get<T>(resource, key, context);
 
-      // Normalize resource label and increment appropriate counter
       const normalizedResource = validateResourceLabel(resource);
+      // One logical caller-facing request should not double-count cache outcomes.
+      // Only dedupe when an explicit request context is provided.
+      const dedupeKey = normalizedResource;
+      if (context?.counted) {
+        if (context.counted.has(dedupeKey)) {
+          return result;
+        }
+        context.counted.add(dedupeKey);
+      }
 
       try {
         if (result.hit) {
@@ -131,10 +155,9 @@ export function createCacheMetricsWrapper(cache: CacheOperation): CacheOperation
         } else {
           cacheMisses.inc({ resource: normalizedResource });
         }
-      } catch (err) {
+      } catch {
         // Metric recording must be best-effort and non-blocking; silently drop errors
         // so cache misses or backend failures in the metrics layer never break cache ops.
-        // In production, consider logging this via a logger if available.
       }
 
       return result;

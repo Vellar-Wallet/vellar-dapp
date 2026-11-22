@@ -156,12 +156,28 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
         updated_at: new Date().toISOString(),
       });
 
+      // Re-read after claiming to avoid acting on an entry evicted/archived by retention.
+      const claimedRecord = await dlqStore.find(dlqId, { includeArchived: true });
+      if (!claimedRecord) {
+        return reply.code(404).send({ error: "not_found", message: "DLQ entry not found" });
+      }
+      if (claimedRecord.archived) {
+        await dlqStore.update(dlqId, {
+          requeue_in_progress: false,
+          updated_at: new Date().toISOString(),
+        });
+        return reply.code(409).send({
+          error: "archived",
+          message: "Cannot requeue an archived DLQ entry",
+        });
+      }
+
       // Extract payload and create new job
-      const payload = (dlqRecord.payload ?? {}) as Record<string, unknown>;
+      const payload = (claimedRecord.payload ?? {}) as Record<string, unknown>;
       const newJobId = randomUUID();
       const newJob: DeployJob = {
         id: newJobId,
-        policy_id: dlqRecord.policy_id,
+        policy_id: claimedRecord.policy_id,
         wallet: (payload.wallet as string) ?? "",
         network: (payload.network as "testnet" | "mainnet") ?? "testnet",
         status: "pending",
@@ -178,7 +194,7 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
 
       const now = new Date().toISOString();
       await dlqStore.update(dlqId, {
-        requeue_count: dlqRecord.requeue_count + 1,
+        requeue_count: claimedRecord.requeue_count + 1,
         last_requeued_at: now,
         last_requeued_by: userId,
         requeue_in_progress: false,
@@ -186,7 +202,7 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
       });
 
       if (dlqMetrics?.dlq_requeue_total) {
-        dlqMetrics.dlq_requeue_total.inc({ job_type: dlqRecord.job_type });
+        dlqMetrics.dlq_requeue_total.inc({ job_type: claimedRecord.job_type });
       }
 
       await dlqStore.recordAudit({
@@ -194,9 +210,9 @@ export function registerAdminDLQRoutes(app: FastifyInstance, deps: AdminDLQDeps)
         event_type: "dlq_requeue",
         actor: userId,
         metadata: {
-          original_job_id: dlqRecord.original_job_id,
+          original_job_id: claimedRecord.original_job_id,
           new_job_id: newJobId,
-          policy_id: dlqRecord.policy_id,
+          policy_id: claimedRecord.policy_id,
         },
       });
 

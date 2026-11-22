@@ -553,4 +553,40 @@ describe("Admin DLQ API", () => {
       await appNoAuth.close();
     });
   });
+
+  describe("retention eviction race (#792)", () => {
+    it("returns 404 and does not enqueue when entry is evicted before requeue", async () => {
+      const entry = await dlqStore.insert({
+        original_job_id: "job-evicted",
+        policy_id: "policy-evicted",
+        job_type: "policy_deploy",
+        payload: { wallet: "W1", network: "testnet" },
+        last_error: "Error",
+        failure_count: 6,
+        first_failed_at: new Date().toISOString(),
+        last_failed_at: new Date().toISOString(),
+      });
+
+      const originalFind = dlqStore.find.bind(dlqStore);
+      let findCalls = 0;
+      (dlqStore as any).find = async (id: string, options?: any) => {
+        findCalls += 1;
+        const rec = await originalFind(id, options);
+        if (id === entry.id && rec && findCalls === 2) {
+          await dlqStore.update(id, { archived: true, updated_at: new Date().toISOString() });
+          return undefined;
+        }
+        return rec;
+      };
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/admin/dlq/${entry.id}/requeue`,
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe("not_found");
+      expect(await dlqStore.list({ includeArchived: true })).toMatchObject({ total: 1 });
+    });
+  });
 });

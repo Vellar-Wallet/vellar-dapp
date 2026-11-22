@@ -321,4 +321,42 @@ describe.skipIf(!DATABASE_URL)("pg repositories", () => {
       await app.close();
     });
   });
+
+  describe("read during in-progress schema migration (#789)", () => {
+    it("behaves predictably when a concurrent migration locks reads", async () => {
+      const repo = createPgWalletRepository(handle.db);
+      await repo.insert({
+        keyId: "key-migr",
+        contractId: "C-MIGR",
+        network: "testnet",
+        createdAt: "2026-07-16T10:00:00.000Z",
+      });
+
+      const admin = await handle.pool.connect();
+      try {
+        await admin.query("BEGIN");
+        await admin.query("LOCK TABLE wallets IN ACCESS EXCLUSIVE MODE");
+
+        const read = repo.findByKeyId("key-migr", "testnet");
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("read blocked by migration lock")), 150),
+        );
+
+        await expect(Promise.race([read, timeout])).rejects.toThrow(/read blocked by migration lock/);
+
+        await admin.query("ROLLBACK");
+        await expect(repo.findByKeyId("key-migr", "testnet")).resolves.toEqual({
+          keyId: "key-migr",
+          contractId: "C-MIGR",
+          network: "testnet",
+          createdAt: "2026-07-16T10:00:00.000Z",
+        });
+      } finally {
+        try {
+          await admin.query("ROLLBACK");
+        } catch {}
+        admin.release();
+      }
+    });
+  });
 });

@@ -199,3 +199,29 @@ describe("Cache Metrics", () => {
     });
   });
 });
+
+  describe("request-scoped dedupe accounting", () => {
+    it("counts a miss+retry-hit as one logical outcome for the request", async () => {
+      __resetMetricsForTest();
+      const mockCache: CacheOperation = {
+        get: vi
+          .fn()
+          .mockResolvedValueOnce({ hit: false })
+          .mockResolvedValueOnce({ hit: true, value: "cached-after-retry" }),
+        set: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+      };
+      const wrapped = createCacheMetricsWrapper(mockCache);
+      const requestContext = { counted: new Set<string>() };
+
+      const first = await wrapped.get("balance", "acct1", requestContext);
+      const result = first.hit ? first : await wrapped.get("balance", "acct1", requestContext);
+      expect(result).toEqual({ hit: true, value: "cached-after-retry" });
+
+      const metrics = await metricsRegistry().metrics();
+      const miss = Number(metrics.match(/wallet_service_cache_misses_total\{resource="balance"\} (\d+)/)?.[1] ?? "0");
+      const hit = Number(metrics.match(/wallet_service_cache_hits_total\{resource="balance"\} (\d+)/)?.[1] ?? "0");
+      // One logical caller-facing request: no double-counting across retry.
+      expect(miss + hit).toBe(1);
+    });
+  });
