@@ -114,6 +114,18 @@ stellar contract invoke \
 
 At this point, single key `GB4G5MGE…` has lost all administrative and writing authority over the registry.
 
+#### One-time handoff and future re-assignment (#774)
+
+The handoff above is deliberately one-way for the ORIGINAL single key. `set_attestor` always requires the auth of the CURRENT attestor. After the handoff that is the threshold attestor contract, not `GB4G5MGE…`. Any later `set_attestor` call signed by the old key is rejected, and the registry's attestor is left unchanged. This is covered by `second_set_attestor_by_original_key_is_rejected_after_handoff` in `contracts/attestation-registry/src/test.rs`.
+
+There is no global one-time lock on the `set_attestor` function itself. A legitimate future rotation is still possible and is performed by whoever is the attestor at that moment:
+
+1. The CURRENT attestor authorises the rotation. While the threshold attestor is installed, this means satisfying its own M-of-N `__check_auth` (2-of-3 by default), not a single key. The worker service submits the call through `ThresholdSubmitter`.
+2. Invoke `set_attestor` with the replacement address, signed by that current attestor.
+3. Verify with the `attestor` query shown above that the registry now reports the replacement.
+
+The contract tests in `contracts/threshold-attestor/src/test.rs` pin down the authorization threshold, and `reassignment_after_handoff_requires_current_attestor_auth` in the registry tests demonstrates a successful rotation by the current attestor after a handoff. Operationally, treat any `set_attestor` signed by `GB4G5MGE…` after migration as an incident: it can no longer succeed, and a successful-looking request indicates a misconfigured source key or an obsolete deployment.
+
 ### Step 3: Configure Worker Service
 
 In `services/worker-service`, configure the environment to use `ThresholdSubmitter`:
