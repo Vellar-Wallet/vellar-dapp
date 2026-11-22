@@ -79,6 +79,54 @@ describe("Verify page — explorer", () => {
     expect(screen.queryByText("Unverified")).toBeNull();
   });
 
+  it("transitions from empty state when a first verification submission completes while open", async () => {
+    historyMock.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "r-new",
+        contractId: C1,
+        sourceType: "repo",
+        repoUrl: "https://github.com/x/y",
+        commitHash: "a1b2c3d",
+        toolchainVersion: "1.81.0",
+        status: "submitted",
+        createdAt: "2026-07-18T00:00:00.000Z",
+        updatedAt: "2026-07-18T00:00:00.000Z",
+      },
+    ]);
+    submitMock.mockResolvedValue({
+      id: "r-new",
+      contractId: C1,
+      sourceType: "repo",
+      status: "submitted",
+      toolchainVersion: "1.81.0",
+      createdAt: "2026-07-18T00:00:00.000Z",
+      updatedAt: "2026-07-18T00:00:00.000Z",
+    });
+
+    render(<Verify />);
+    fireEvent.change(screen.getByLabelText("Contract address"), { target: { value: C1 } });
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    await screen.findByTestId("verify-empty-state");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Submit for verification" }));
+    fireEvent.change(screen.getByLabelText("Contract address"), { target: { value: C1 } });
+    fireEvent.change(screen.getByLabelText("Repository URL"), {
+      target: { value: "https://github.com/x/y" },
+    });
+    fireEvent.change(screen.getByLabelText("Commit hash"), { target: { value: "a1b2c3d" } });
+    fireEvent.change(screen.getByLabelText("Toolchain version"), { target: { value: "1.81.0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit for verification" }));
+
+    await screen.findByText("Submission received");
+    fireEvent.click(screen.getByRole("tab", { name: "Check a contract" }));
+
+    await waitFor(() => expect(historyMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("verify-empty-state")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText(/1 verification attempt/i)).toBeDefined();
+    });
+  });
+
   it("treats a failed attempt differently from zero history", async () => {
     historyMock.mockResolvedValue([
       {

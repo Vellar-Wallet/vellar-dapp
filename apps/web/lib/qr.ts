@@ -16,12 +16,65 @@ import qrcode from "qrcode-generator";
  */
 export const QR_SCAN_SAFE_MAX_BYTES = 1024;
 
+export const LOW_CONTRAST_RATIO_THRESHOLD = 3;
+
+function srgbToLinear(channel: number): number {
+  const c = channel / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function luminance(hex: string): number {
+  const normalized = hex.replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    throw new Error("QR contrast colors must be 6-digit hex values");
+  }
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
+}
+
+export function contrastRatio(foreground: string, background: string): number {
+  const l1 = luminance(foreground);
+  const l2 = luminance(background);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+export function isLowContrastQrRendering(
+  foreground = "#000000",
+  background = "#ffffff",
+  threshold = LOW_CONTRAST_RATIO_THRESHOLD,
+): boolean {
+  return contrastRatio(foreground, background) < threshold;
+}
+
 /**
  * True when `payload` would encode past the scan-reliability ceiling and
  * should be flagged in the UI (shortened, or shown with a density warning).
  */
 export function isDenseQrPayload(payload: string): boolean {
   return payload.length > QR_SCAN_SAFE_MAX_BYTES;
+}
+
+export function qrScanReliabilityWarning(options: {
+  payload: string;
+  foreground?: string;
+  background?: string;
+}): string | null {
+  const dense = isDenseQrPayload(options.payload);
+  const lowContrast = isLowContrastQrRendering(options.foreground, options.background);
+  if (dense && lowContrast) {
+    return "QR code may be hard to scan: payload is dense and rendering contrast is low.";
+  }
+  if (dense) {
+    return "QR code may be hard to scan: payload is too dense for reliable scanning.";
+  }
+  if (lowContrast) {
+    return "QR code may be hard to scan: rendering contrast is too low.";
+  }
+  return null;
 }
 
 /** Dark-module matrix for `payload` (row-major, true = dark). */

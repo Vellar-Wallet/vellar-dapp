@@ -25,6 +25,20 @@ type Tab = "explore" | "submit";
 
 export default function Verify() {
   const [tab, setTab] = useState<Tab>("explore");
+  const [exploredContractId, setExploredContractId] = useState("");
+  const [records, setRecords] = useState<PublicVerificationRecord[] | null>(null);
+
+  async function refreshExplored(contractId: string) {
+    const normalized = contractId.trim();
+    if (!isContractId(normalized)) return;
+    if (normalized !== exploredContractId.trim()) return;
+    try {
+      const history = await getVerificationHistory(normalized);
+      setRecords(history);
+    } catch {
+      // Keep the current explorer state; explicit lookup surfaces errors.
+    }
+  }
 
   return (
     <AppShell>
@@ -47,7 +61,16 @@ export default function Verify() {
           </TabButton>
         </div>
 
-        {tab === "explore" ? <Explorer /> : <SubmitForm />}
+        {tab === "explore" ? (
+          <Explorer
+            contractId={exploredContractId}
+            onContractIdChange={setExploredContractId}
+            records={records}
+            onRecordsChange={setRecords}
+          />
+        ) : (
+          <SubmitForm onSubmitted={(contractId) => void refreshExplored(contractId)} />
+        )}
       </div>
     </AppShell>
   );
@@ -76,9 +99,17 @@ function TabButton({
 
 // --- Explorer ----------------------------------------------------------------
 
-function Explorer() {
-  const [contractId, setContractId] = useState("");
-  const [records, setRecords] = useState<PublicVerificationRecord[] | null>(null);
+function Explorer({
+  contractId,
+  onContractIdChange,
+  records,
+  onRecordsChange,
+}: {
+  contractId: string;
+  onContractIdChange: (value: string) => void;
+  records: PublicVerificationRecord[] | null;
+  onRecordsChange: (records: PublicVerificationRecord[] | null) => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -86,7 +117,7 @@ function Explorer() {
 
   async function lookup() {
     setError(null);
-    setRecords(null);
+    onRecordsChange(null);
     if (!valid) {
       setError("Enter a valid contract address (starts with C).");
       return;
@@ -94,7 +125,7 @@ function Explorer() {
     setLoading(true);
     try {
       const history = await getVerificationHistory(contractId.trim());
-      setRecords(history);
+      onRecordsChange(history);
     } catch (err) {
       setError(err instanceof VerificationApiError ? err.message : "Lookup failed. Try again.");
     } finally {
@@ -111,7 +142,7 @@ function Explorer() {
           aria-label="Contract address"
           placeholder="C… contract address"
           value={contractId}
-          onChange={(e) => setContractId(e.target.value)}
+          onChange={(e) => onContractIdChange(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && lookup()}
           className="lpa-input min-w-[260px] flex-1 font-[family-name:var(--lp-mono)]"
         />
@@ -234,7 +265,7 @@ function RecordCard({ record }: { record: PublicVerificationRecord }) {
 
 // --- Submit form -------------------------------------------------------------
 
-function SubmitForm() {
+function SubmitForm({ onSubmitted }: { onSubmitted: (contractId: string) => void }) {
   const [sourceType, setSourceType] = useState<"repo" | "upload">("repo");
   const [contractId, setContractId] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
@@ -270,6 +301,7 @@ function SubmitForm() {
     try {
       const record = await submitVerification(input);
       setResult(record);
+      onSubmitted(contractId.trim());
     } catch (err) {
       setError(err instanceof VerificationApiError ? err.message : "Submission failed. Try again.");
     } finally {

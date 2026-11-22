@@ -4,7 +4,14 @@ import jsQR from "jsqr";
 import { Networks } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
 import { assetsFor } from "./assets";
-import { isDenseQrPayload, QR_SCAN_SAFE_MAX_BYTES, qrMatrix, qrPath } from "./qr";
+import {
+  isDenseQrPayload,
+  isLowContrastQrRendering,
+  QR_SCAN_SAFE_MAX_BYTES,
+  qrMatrix,
+  qrPath,
+  qrScanReliabilityWarning,
+} from "./qr";
 import { buildPayUri } from "./sep7";
 
 const C_ADDR = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
@@ -103,5 +110,50 @@ describe("isDenseQrPayload — scan-reliability threshold", () => {
     const payload = "A".repeat(QR_SCAN_SAFE_MAX_BYTES);
     expect(isDenseQrPayload(payload)).toBe(false);
     expect(decode(qrMatrix(payload))).toBe(payload);
+  });
+});
+
+describe("qrScanReliabilityWarning — contrast and density", () => {
+  it("warns for low-contrast rendering even when payload size is small", () => {
+    expect(isLowContrastQrRendering("#777777", "#888888")).toBe(true);
+    expect(
+      qrScanReliabilityWarning({
+        payload: C_ADDR,
+        foreground: "#777777",
+        background: "#888888",
+      }),
+    ).toMatch(/contrast is too low/i);
+  });
+
+  it("warns for dense payloads with sufficient contrast", () => {
+    const payload = "A".repeat(QR_SCAN_SAFE_MAX_BYTES + 1);
+    expect(
+      qrScanReliabilityWarning({
+        payload,
+        foreground: "#000000",
+        background: "#ffffff",
+      }),
+    ).toMatch(/payload is too dense/i);
+  });
+
+  it("warns when both density and contrast are problematic", () => {
+    const payload = "A".repeat(QR_SCAN_SAFE_MAX_BYTES + 1);
+    expect(
+      qrScanReliabilityWarning({
+        payload,
+        foreground: "#777777",
+        background: "#888888",
+      }),
+    ).toMatch(/dense and rendering contrast is low/i);
+  });
+
+  it("returns null for small payload with sufficient contrast", () => {
+    expect(
+      qrScanReliabilityWarning({
+        payload: C_ADDR,
+        foreground: "#000000",
+        background: "#ffffff",
+      }),
+    ).toBeNull();
   });
 });

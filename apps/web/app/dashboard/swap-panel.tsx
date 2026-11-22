@@ -38,12 +38,26 @@ type Flow =
 type DoneOutcome =
   | { kind: "success"; received: bigint | null }
   | { kind: "partial"; filledIn: bigint; residualIn: bigint; received: bigint }
+  | { kind: "partial_dust"; filledIn: bigint; residualIn: bigint; received: bigint }
   | { kind: "rejected" }
   | { kind: "failed" }
   | { kind: "unconfirmed" };
 
+const DUST_THRESHOLD_BY_DECIMALS: Record<number, bigint> = {
+  7: 10n, // 0.0000010
+  6: 1n, // 0.000001
+};
+
+export function dustThresholdForDecimals(decimals: number): bigint {
+  return DUST_THRESHOLD_BY_DECIMALS[decimals] ?? 1n;
+}
+
 /** Classify the on-chain result against what the user asked for. */
-export function classifySwapFill(result: SwapOutcome, amountIn: bigint): DoneOutcome {
+export function classifySwapFill(
+  result: SwapOutcome,
+  amountIn: bigint,
+  sourceDecimals?: number,
+): DoneOutcome {
   if (result.status === "failed") return { kind: "failed" };
   if (result.status !== "success") return { kind: "success", received: null };
   const received = result.amounts[result.amounts.length - 1] ?? null;
@@ -54,7 +68,13 @@ export function classifySwapFill(result: SwapOutcome, amountIn: bigint): DoneOut
   // amountIn was swapped. Receiving less than expectedOut with the full input
   // sold is slippage, not a partial fill.
   if (filledIn < amountIn) {
-    return { kind: "partial", filledIn, residualIn: amountIn - filledIn, received };
+    const residualIn = amountIn - filledIn;
+    const dustThreshold =
+      sourceDecimals === undefined ? null : dustThresholdForDecimals(sourceDecimals);
+    if (dustThreshold !== null && residualIn > 0n && residualIn <= dustThreshold) {
+      return { kind: "partial_dust", filledIn, residualIn, received };
+    }
+    return { kind: "partial", filledIn, residualIn, received };
   }
   return { kind: "success", received };
 }
@@ -148,7 +168,11 @@ export function SwapPanel({
     try {
       const swaps = await getSwaps();
       const raw = await swaps.readOutcome(hash);
-      outcome = classifySwapFill(raw, prepared.review.amountIn);
+      outcome = classifySwapFill(
+        raw,
+        prepared.review.amountIn,
+        prepared.review.sell.decimals,
+      );
     } catch {
       outcome = { kind: "success", received: null };
     }
@@ -242,7 +266,7 @@ export function SwapPanel({
                 : " Check your balance for the exact amount received."}
             </p>
           )}
-          {flow.outcome.kind === "partial" && (
+          {(flow.outcome.kind === "partial" || flow.outcome.kind === "partial_dust") && (
             <div className="lpa-well flex flex-col gap-1.5" role="status">
               <p className="lpa-ok m-0! font-bold">Swap partially filled</p>
               <p className="m-0!">
@@ -280,6 +304,12 @@ export function SwapPanel({
                 )}{" "}
                 remains unswapped in {flow.prepared.review.sell.symbol}.
               </p>
+              {flow.outcome.kind === "partial_dust" && (
+                <p className="m-0! text-xs text-[var(--lp-ink-soft)]">
+                  The residual is below the practical dust threshold for {flow.prepared.review.sell.symbol}
+                  {" "}and may not be worth moving again due to fees.
+                </p>
+              )}
             </div>
           )}
           {flow.outcome.kind === "rejected" && (
