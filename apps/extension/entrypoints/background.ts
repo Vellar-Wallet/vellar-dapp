@@ -249,14 +249,15 @@ export function createBackgroundRuntime(options: BackgroundRuntimeOptions): Back
     if (entry.request.method === "sign_transaction") {
       try {
         const store = createIdbDeviceKeyStore();
-        const pair = await store.get();
-        if (!pair) {
+        const stored = await store.get();
+        if (!stored?.pair || stored.walletAddress !== wallet.address) {
           requestManager.finishResolving(
             id,
-            errorPayload("disconnected", "No device signer — re-pair the extension"),
+            errorPayload("disconnected", "No device signer for this wallet, re-pair the extension"),
           );
           return true;
         }
+        const pair = stored.pair;
         const rawPublicKey = Uint8Array.from(
           (await devicePublicKeyHex(pair)).match(/../g)!.map((b) => parseInt(b, 16)),
         );
@@ -280,14 +281,15 @@ export function createBackgroundRuntime(options: BackgroundRuntimeOptions): Back
     if (entry.request.method === "sign_auth_entry") {
       try {
         const store = createIdbDeviceKeyStore();
-        const pair = await store.get();
-        if (!pair) {
+        const stored = await store.get();
+        if (!stored?.pair || stored.walletAddress !== wallet.address) {
           requestManager.finishResolving(
             id,
-            errorPayload("disconnected", "No device signer — re-pair the extension"),
+            errorPayload("disconnected", "No device signer for this wallet, re-pair the extension"),
           );
           return true;
         }
+        const pair = stored.pair;
         const rawPublicKey = Uint8Array.from(
           (await devicePublicKeyHex(pair)).match(/../g)!.map((b) => parseInt(b, 16)),
         );
@@ -314,14 +316,15 @@ export function createBackgroundRuntime(options: BackgroundRuntimeOptions): Back
     if (entry.request.method === "sign_message") {
       try {
         const store = createIdbDeviceKeyStore();
-        const pair = await store.get();
-        if (!pair) {
+        const stored = await store.get();
+        if (!stored?.pair || stored.walletAddress !== wallet.address) {
           requestManager.finishResolving(
             id,
-            errorPayload("disconnected", "No device signer — re-pair the extension"),
+            errorPayload("disconnected", "No device signer for this wallet, re-pair the extension"),
           );
           return true;
         }
+        const pair = stored.pair;
         const signedMessage = await signMessageBytes({
           message: entry.request.params.message,
           deviceKeyPair: pair,
@@ -362,7 +365,7 @@ export function createBackgroundRuntime(options: BackgroundRuntimeOptions): Back
       walletWasmHash,
       webAppOrigin: entry.origin,
     });
-    const pair = await ensureDeviceKey(createIdbDeviceKeyStore());
+    const pair = await ensureDeviceKey(createIdbDeviceKeyStore(), address);
     entry.resolve({
       method: "pair",
       result: { devicePublicKeyHex: await devicePublicKeyHex(pair) },

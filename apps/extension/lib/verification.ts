@@ -45,3 +45,21 @@ export function classifyContractTrust(
   if (result.status === "unverified" && result.recordId === undefined) return "no_record";
   return result.status;
 }
+
+/**
+ * Runs the approval-screen trust lookup and maps a failed request to the
+ * badge's error state. A 503 from verification-service means "unknown right
+ * now", never "unverified", so the user is not shown a misleading negative
+ * trust signal at the exact moment they are approving (#814). The client is
+ * injectable so this failure mode is unit-testable.
+ */
+export async function lookupContractTrust(
+  contractId: string,
+  client: Pick<ReturnType<typeof verificationClient>, "getStatus"> = verificationClient(),
+): Promise<TrustBadgeStatus> {
+  try {
+    return classifyContractTrust(await client.getStatus(contractId), false);
+  } catch {
+    return classifyContractTrust(undefined, true);
+  }
+}

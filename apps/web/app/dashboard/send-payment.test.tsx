@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PaymentClient, PreparedPayment } from "vellar-sdk";
+import type { PaymentClient, PreparedPayment, TokenInfo } from "vellar-sdk";
 import { WalletProvider } from "@/lib/wallet-context";
 import { SendPayment, knownBalance } from "./send-payment";
 
@@ -155,13 +155,14 @@ describe("SendPayment", () => {
       payments: PaymentClient,
       amount: bigint,
       onSuccess = vi.fn(),
+      token: TokenInfo = xlm,
     ): { onSuccess: typeof onSuccess; rerender: (amount: bigint) => void } {
       const ui = (balance: bigint) => (
         <WalletProvider payments={payments}>
           <SendPayment
             from={FROM}
-            token={xlm}
-            availableTokens={[{ ...xlm, amount: balance }]}
+            token={token}
+            availableTokens={[{ ...token, amount: balance }]}
             network="testnet"
             onSuccess={onSuccess}
           />
@@ -223,6 +224,90 @@ describe("SendPayment", () => {
       expect(knownBalance(xlm, [{ ...xlm, amount: 5n }])).toBe(5n);
       expect(knownBalance({ ...xlm, amount: 7n }, [])).toBe(7n);
       expect(knownBalance(xlm, [])).toBeNull();
+    });
+
+    // #812: the inline check works in the token's raw base units, so a token
+    // with more than 7 decimals must be compared at its own precision. A
+    // 7-decimal rounding or truncation here would either reject valid small
+    // amounts or let an amount through that exceeds the real balance.
+    describe("with more than 7 decimal places (#812)", () => {
+      const highPrecision: TokenInfo = {
+        symbol: "HIP",
+        contractId: "CHIGHPRECISION",
+        decimals: 9,
+      };
+
+      it("lets a payment within a high-precision balance through to review", async () => {
+        const preparePayment = vi.fn().mockResolvedValue(prepared());
+        // 3 HIP available (3e9 base units), sending 2.5 HIP (2.5e9 base units).
+        renderWithBalances({ preparePayment }, 3_000_000_000n, vi.fn(), highPrecision);
+
+        fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+        fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+        fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+        await screen.findByRole("dialog", { name: /review payment/i });
+        expect(preparePayment).toHaveBeenCalledWith({
+          from: FROM,
+          to: TO,
+          token: highPrecision,
+          amount: 2_500_000_000n,
+        });
+      });
+
+      it("blocks an amount over a high-precision balance before the passkey step", async () => {
+        const preparePayment = vi.fn();
+        // 1 HIP available (1e9 base units), sending 2.5 HIP (2.5e9 base units).
+        renderWithBalances({ preparePayment }, 1_000_000_000n, vi.fn(), highPrecision);
+
+        fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+        fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
+        fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert.textContent).toMatch(/insufficient .*balance/i);
+        expect(alert.textContent).toMatch(/1 HIP/);
+        expect(preparePayment).not.toHaveBeenCalled();
+        expect(screen.queryByRole("dialog", { name: /review payment/i })).toBeNull();
+      });
+
+      it("accepts a sub-stroop amount that only fits above 7 decimals", async () => {
+        const preparePayment = vi.fn().mockResolvedValue(prepared());
+        // 0.000000001 HIP is 1 base unit at 9 decimals but rounds to 0 at 7.
+        // With 2 base units available it is a valid payment.
+        renderWithBalances({ preparePayment }, 2n, vi.fn(), highPrecision);
+
+        fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+        fireEvent.change(screen.getByLabelText(/amount/i), {
+          target: { value: "0.000000001" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+        await screen.findByRole("dialog", { name: /review payment/i });
+        expect(preparePayment).toHaveBeenCalledWith({
+          from: FROM,
+          to: TO,
+          token: highPrecision,
+          amount: 1n,
+        });
+      });
+
+      it("blocks a sub-stroop amount that exceeds a tiny high-precision balance", async () => {
+        const preparePayment = vi.fn();
+        // Only 1 base unit available; sending 2 would be blocked, not rounded
+        // down to zero and wrongly allowed through.
+        renderWithBalances({ preparePayment }, 1n, vi.fn(), highPrecision);
+
+        fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: TO } });
+        fireEvent.change(screen.getByLabelText(/amount/i), {
+          target: { value: "0.000000002" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: /review payment/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert.textContent).toMatch(/insufficient .*balance/i);
+        expect(preparePayment).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -295,12 +380,20 @@ describe("SendPayment", () => {
     it("surfaces a destination-tag warning when sending to a memo-required destination without a memo", async () => {
       const memoRequiredDest = "GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSBR54EB4YAWBDMW7SJBOMIB6J";
       const preparePayment = vi.fn().mockResolvedValue({
-        review: { from: FROM, to: memoRequiredDest, token: xlm, amount: 25000000n, network: "testnet" },
+        review: {
+          from: FROM,
+          to: memoRequiredDest,
+          token: xlm,
+          amount: 25000000n,
+          network: "testnet",
+        },
         confirm: vi.fn(),
       });
       renderSend({ preparePayment });
 
-      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: memoRequiredDest } });
+      fireEvent.change(screen.getByLabelText(/recipient/i), {
+        target: { value: memoRequiredDest },
+      });
       fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
 
       expect(screen.getByTestId("memo-warning")).toBeDefined();
@@ -315,12 +408,20 @@ describe("SendPayment", () => {
     it("does not show destination-tag warning when memo is supplied for a memo-required destination", async () => {
       const memoRequiredDest = "GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSBR54EB4YAWBDMW7SJBOMIB6J";
       const preparePayment = vi.fn().mockResolvedValue({
-        review: { from: FROM, to: memoRequiredDest, token: xlm, amount: 25000000n, network: "testnet" },
+        review: {
+          from: FROM,
+          to: memoRequiredDest,
+          token: xlm,
+          amount: 25000000n,
+          network: "testnet",
+        },
         confirm: vi.fn(),
       });
       renderSend({ preparePayment });
 
-      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: memoRequiredDest } });
+      fireEvent.change(screen.getByLabelText(/recipient/i), {
+        target: { value: memoRequiredDest },
+      });
       fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "2.5" } });
       fireEvent.change(screen.getByLabelText(/memo/i), { target: { value: "12345678" } });
 
@@ -336,7 +437,13 @@ describe("SendPayment", () => {
     it("does not show memo-required warning for Soroban contract destinations (#810)", async () => {
       const contractDest = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
       const preparePayment = vi.fn().mockResolvedValue({
-        review: { from: FROM, to: contractDest, token: xlm, amount: 25_000_000n, network: "testnet" },
+        review: {
+          from: FROM,
+          to: contractDest,
+          token: xlm,
+          amount: 25_000_000n,
+          network: "testnet",
+        },
         confirm: vi.fn(),
       });
       renderSend({ preparePayment });

@@ -4,9 +4,17 @@
 // not by anything reading storage. The key store seam is IndexedDB in the
 // browser (CryptoKey objects are structured-cloneable) and memory in tests.
 
+/** A stored key is bound to the wallet it was generated for. A load that
+ * succeeds but carries a different wallet address is a wallet mismatch, not a
+ * usable key, and must never sign for the newly paired wallet (#816). */
+export interface StoredDeviceKey {
+  pair: CryptoKeyPair;
+  walletAddress: string;
+}
+
 export interface DeviceKeyStore {
-  get(): Promise<CryptoKeyPair | undefined>;
-  set(pair: CryptoKeyPair): Promise<void>;
+  get(): Promise<StoredDeviceKey | undefined>;
+  set(pair: CryptoKeyPair, walletAddress: string): Promise<void>;
   clear(): Promise<void>;
 }
 
@@ -25,8 +33,12 @@ export function bytesToHex(bytes: Uint8Array): string {
  *  - "load_failed" `store.get()` itself threw (corrupted storage, quota, wipe).
  *  - "invalid"     a value was loaded but fails a basic integrity check (e.g.
  *                  wrong shape/algorithm) — distinct from a clean absence.
+ *  - "wallet_mismatch" a valid key was loaded but it is bound to a different
+ *                  wallet than the one currently paired (stale state from
+ *                  before a re-pair). Signing with it would use the wrong
+ *                  identity, so it needs the same recovery path as "invalid".
  */
-export type DeviceKeyStatus = "ok" | "missing" | "load_failed" | "invalid";
+export type DeviceKeyStatus = "ok" | "missing" | "load_failed" | "invalid" | "wallet_mismatch";
 
 export interface DeviceKeyCheck {
   status: DeviceKeyStatus;
@@ -54,29 +66,47 @@ function isValidDeviceKeyPair(value: unknown): value is CryptoKeyPair {
  * `{ status: "load_failed" }` so the popup can show a recovery path instead
  * of crashing or silently rendering as if nothing were paired.
  */
-export async function checkDeviceKeyStatus(store: DeviceKeyStore): Promise<DeviceKeyCheck> {
-  let value: CryptoKeyPair | undefined;
+export async function checkDeviceKeyStatus(
+  store: DeviceKeyStore,
+  walletAddress?: string,
+): Promise<DeviceKeyCheck> {
+  let stored: StoredDeviceKey | undefined;
   try {
-    value = await store.get();
+    stored = await store.get();
   } catch {
     return { status: "load_failed" };
   }
-  if (value === undefined) return { status: "missing" };
-  if (!isValidDeviceKeyPair(value)) return { status: "invalid" };
-  return { status: "ok", pair: value };
+  if (stored === undefined) return { status: "missing" };
+  if (!isValidDeviceKeyPair(stored.pair)) return { status: "invalid" };
+  // A successful load is not enough: a key left over from a previous pairing
+  // would sign with the old identity. Only compare when the caller knows the
+  // currently paired address, so a pre-pairing probe still reports "ok".
+  if (walletAddress !== undefined && stored.walletAddress !== walletAddress) {
+    return { status: "wallet_mismatch" };
+  }
+  return { status: "ok", pair: stored.pair };
 }
 
-/** Returns the existing device key or generates a fresh non-extractable one. */
-export async function ensureDeviceKey(store: DeviceKeyStore): Promise<CryptoKeyPair> {
+/**
+ * Returns the device key bound to `walletAddress`, generating a fresh
+ * non-extractable one when nothing usable is stored. A key bound to another
+ * wallet is never reused: re-pairing must rotate the local signer (#816).
+ */
+export async function ensureDeviceKey(
+  store: DeviceKeyStore,
+  walletAddress: string,
+): Promise<CryptoKeyPair> {
   const existing = await store.get();
-  if (existing) return existing;
+  if (existing && existing.walletAddress === walletAddress && isValidDeviceKeyPair(existing.pair)) {
+    return existing.pair;
+  }
   // "verify" lands on the public key (needed for self-checks); the private
   // key gets only "sign" and stays non-extractable.
   const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, false, [
     "sign",
     "verify",
   ])) as CryptoKeyPair;
-  await store.set(pair);
+  await store.set(pair, walletAddress);
   return pair;
 }
 
@@ -100,13 +130,13 @@ export async function signWithDeviceKey(
 }
 
 export function createMemoryDeviceKeyStore(): DeviceKeyStore {
-  let stored: CryptoKeyPair | undefined;
+  let stored: StoredDeviceKey | undefined;
   return {
     async get() {
       return stored;
     },
-    async set(pair) {
-      stored = pair;
+    async set(pair, walletAddress) {
+      stored = { pair, walletAddress };
     },
     async clear() {
       stored = undefined;
@@ -145,8 +175,9 @@ export function createIdbDeviceKeyStore(dbName = "vela-device-key"): DeviceKeySt
   }
 
   return {
-    get: () => tx<CryptoKeyPair | undefined>("readonly", (s) => s.get(KEY)),
-    set: (pair) => tx<void>("readwrite", (s) => s.put(pair, KEY)),
+    get: () => tx<StoredDeviceKey | undefined>("readonly", (s) => s.get(KEY)),
+    set: (pair, walletAddress) =>
+      tx<void>("readwrite", (s) => s.put({ pair, walletAddress } satisfies StoredDeviceKey, KEY)),
     clear: () => tx<void>("readwrite", (s) => s.delete(KEY)),
   };
 }
