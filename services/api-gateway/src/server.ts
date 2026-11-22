@@ -187,9 +187,21 @@ export function buildServer(options: GatewayOptions = {}): FastifyInstance {
     }
 
     // Per-tenant token bucket rate limit (#259)
-    const tenantId = (request.headers["x-tenant-id"] || request.headers["x-session-id"]) as string | undefined;
-    if (tenantId && request.url !== "/health") {
-      const result = tenantLimiter.tryConsume(tenantId);
+    const tenantHeader = request.headers["x-tenant-id"];
+    const sessionHeader = request.headers["x-session-id"];
+    const tenantId = typeof tenantHeader === "string" ? tenantHeader : undefined;
+    const sessionId = typeof sessionHeader === "string" ? sessionHeader : undefined;
+    if (tenantId && sessionId && tenantId !== sessionId) {
+      return sendError(
+        reply,
+        400,
+        "conflicting_tenant_identity",
+        "x-tenant-id and x-session-id must identify the same tenant when both are provided.",
+      );
+    }
+    const resolvedTenantId = tenantId ?? sessionId;
+    if (resolvedTenantId && request.url !== "/health") {
+      const result = tenantLimiter.tryConsume(resolvedTenantId);
       if (!result.allowed) {
         reply.header("Retry-After", String(result.retryAfterSeconds ?? 1));
         return sendError(reply, 429, "too_many_requests", "Tenant rate limit exceeded. Please retry later.", {

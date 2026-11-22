@@ -37,12 +37,16 @@ export function assertAttestorSafeForNetwork(opts: {
   nodeEnv?: string;
 }): void {
   if (opts.network === "mainnet") {
-    const isProd = (opts.nodeEnv ?? process.env.NODE_ENV) === "production";
+    const resolvedNodeEnv = opts.nodeEnv ?? process.env.NODE_ENV;
+    const isProd = resolvedNodeEnv === "production";
     if (isProd) {
       throw new SingleKeyAttestorOnMainnetError(
         "Refusing single-key attestor on mainnet: escape hatch is hard-gated in production.",
       );
     }
+    // NODE_ENV may be unset in local/CI setups. Treat unset as non-production for this
+    // guard, but NEVER silently allow: mainnet single-key still requires explicit opt-in.
+    // This is the safer default because a missing env var must not weaken mainnet posture.
     if (!opts.allowSingleKey) {
       throw new SingleKeyAttestorOnMainnetError();
     }
