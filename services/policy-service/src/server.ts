@@ -216,12 +216,14 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
   registerMetrics(app, "policy-service");
 
   if (deps.dlqStore && deps.jobStore) {
+    // getAdminUser is required by registerAdminDLQRoutes; omitting it throws at boot
+    // instead of attributing admin actions to a shared default identity.
     registerAdminDLQRoutes(app, {
       dlqStore: deps.dlqStore,
       jobStore: deps.jobStore,
       policyRepo: policies,
       dlqMetrics: deps.dlqMetrics,
-      getAdminUser: deps.getAdminUser,
+      getAdminUser: deps.getAdminUser as NonNullable<typeof deps.getAdminUser>,
     });
   }
 
