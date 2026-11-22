@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   registerHealth,
@@ -11,7 +11,7 @@ import {
 import { buildCleanupSteps, buildMergeStep } from "./builder";
 import type { AccountReader } from "./horizon";
 import { buildCleanupPlan, isClassicAccountId } from "./planner";
-import { createNoOpAuditLog, type AuditLog } from "./audit";
+import { initializeAuditLog, type AuditLog } from "./audit";
 import { paymentMiddleware, x402ResourceServer } from "@x402/fastify";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server";
@@ -40,7 +40,10 @@ function isCachedAccountReader(reader: AccountReader): reader is CachedAccountRe
 export interface LifecycleServiceDeps {
   reader: AccountReader;
   networkPassphrase?: string;
-  /** Audit log for mutating lifecycle actions (#764). Defaults to no-op. */
+  /** Audit trail for mutating lifecycle actions. Defaults to an in-memory log
+   * so callers that don't care still get a working trail; production passes
+   * the log it initialized at startup. Mutating actions are audited on every
+   * outcome (#763, #764). */
   audit?: AuditLog;
   /** x402 facilitator client for the /lifecycle/execute payment gate. Defaults
    * to a real HTTPFacilitatorClient hitting vellar-facilitator. Tests inject
@@ -117,9 +120,24 @@ function validatePair(accountId: string, destination: string): string | undefine
   return undefined;
 }
 
+/** Records a mutating lifecycle action without letting an audit-backend
+ * failure mask the route's own outcome. */
+async function recordAuditOutcome(
+  audit: AuditLog,
+  request: FastifyRequest,
+  type: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await audit.record(type, data);
+  } catch (err) {
+    request.log.error(err, "lifecycle audit write failed");
+  }
+}
+
 export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
-  const audit = deps.audit ?? createNoOpAuditLog();
   const app = Fastify({ logger: true });
+  const audit = deps.audit ?? initializeAuditLog("memory")[1];
   registerTracing(app, "lifecycle-service");
   registerHealth(app, "lifecycle-service");
   registerMetrics(app, "lifecycle-service");
@@ -272,26 +290,38 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
       return reply.code(400).send({ error: validationError });
     }
 
-    const account = await deps.reader.getAccount(accountId);
-    if (!account) return reply.code(404).send({ error: "account_not_found" });
-    const plan = buildCleanupPlan(account, destination);
-    if ("error" in plan) {
-      return reply.code(400).send({ error: plan.error, message: plan.message, plan });
+    let outcome: "success" | "failure" = "failure";
+    try {
+      const account = await deps.reader.getAccount(accountId);
+      if (!account) return reply.code(404).send({ error: "account_not_found" });
+
+      const plan = buildCleanupPlan(account, destination);
+      if ("error" in plan) {
+        return reply.code(400).send({ error: plan.error, message: plan.message, plan });
+      }
+
+      const steps = buildCleanupSteps(account, destination, passphrase);
+      const mergeStep = buildMergeStep(account, destination, passphrase);
+      const allSteps = mergeStep ? [...steps, mergeStep] : steps;
+
+      // Mutating action: audit the execution plan generation (#764).
+      await recordAuditOutcome(audit, request, "lifecycle.execute_planned", {
+        accountId,
+        destination,
+        stepCount: allSteps.length,
+        mergeReady: plan.mergeReady,
+      });
+
+      outcome = "success";
+      return reply.send({ steps: allSteps, plan });
+    } finally {
+      // Audit the attempt on every path, including a failure partway through.
+      await recordAuditOutcome(audit, request, "lifecycle.cleanup_executed", {
+        accountId,
+        destination,
+        outcome,
+      });
     }
-
-    const steps = buildCleanupSteps(account, plan, destination, passphrase);
-    const mergeStep = buildMergeStep(account, destination, passphrase);
-    const allSteps = mergeStep ? [...steps, mergeStep] : steps;
-
-    // Mutating action: audit the execution plan generation (#764).
-    await audit.record("lifecycle.execute_planned", {
-      accountId,
-      destination,
-      stepCount: allSteps.length,
-      mergeReady: plan.mergeReady,
-    });
-
-    return reply.send({ steps: allSteps, plan });
   });
 
   // MergePreflightValidator (idea.md §6.4): re-inspects and refuses to build
@@ -305,32 +335,46 @@ export function buildServer(deps: LifecycleServiceDeps): FastifyInstance {
     const invalid = validatePair(accountId, destination);
     if (invalid) return reply.code(400).send({ error: invalid });
 
-    const account = await deps.reader.getAccount(accountId);
-    if (!account) return reply.code(404).send({ error: "account_not_found" });
+    let outcome: "success" | "not_merge_ready" | "failure" = "failure";
+    try {
+      const account = await deps.reader.getAccount(accountId);
+      if (!account) return reply.code(404).send({ error: "account_not_found" });
 
-    const plan = buildCleanupPlan(account, destination);
-    if ("error" in plan) {
-      recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "failure");
-      return reply.code(400).send({ error: plan.error, message: plan.message, plan });
+      const plan = buildCleanupPlan(account, destination);
+      if ("error" in plan) {
+        recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "failure");
+        return reply.code(400).send({ error: plan.error, message: plan.message, plan });
+      }
+      if (!plan.mergeReady) {
+        // §13 alerting: abnormal cleanup failure rates. A merge refused because
+        // the account still has blockers is a "not ready" outcome, not success.
+        recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "failure");
+        outcome = "not_merge_ready";
+        return reply.code(409).send({ error: "not_merge_ready", plan });
+      }
+      const step = buildMergeStep(account, destination, passphrase);
+      // Mutating action: audit the planned merge (#764).
+      await recordAuditOutcome(audit, request, "lifecycle.merge_planned", {
+        accountId,
+        destination,
+        mergeReady: plan.mergeReady,
+      });
+      if (isCachedAccountReader(deps.reader)) {
+        deps.reader.invalidate(accountId);
+        deps.reader.invalidate(destination);
+      }
+      recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "success");
+      outcome = "success";
+      return reply.send({ step });
+    } finally {
+      // The audit entry survives a merge that fails partway through, so a
+      // refused or errored attempt is still recorded (issue #763).
+      await recordAuditOutcome(audit, request, "lifecycle.account_merge", {
+        accountId,
+        destination,
+        outcome,
+      });
     }
-    if (!plan.mergeReady) {
-      // §13 alerting: abnormal cleanup failure rates. A merge refused because
-      // the account still has blockers is a "not ready" outcome, not success.
-      recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "failure");
-      return reply.code(409).send({ error: "not_merge_ready", plan });
-    }
-    const step = buildMergeStep(account, destination, passphrase);
-    await audit.record("lifecycle.merge_planned", {
-      accountId,
-      destination,
-      mergeReady: plan.mergeReady,
-    });
-    if (isCachedAccountReader(deps.reader)) {
-      deps.reader.invalidate(accountId);
-      deps.reader.invalidate(destination);
-    }
-    recordOutcome(domainMetrics.cleanupCompleted, "lifecycle-service", "success");
-    return reply.send({ step });
   });
 
   return app;

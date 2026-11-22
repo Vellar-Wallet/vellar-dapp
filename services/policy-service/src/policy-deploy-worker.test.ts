@@ -354,6 +354,27 @@ describe("Policy Deployment Worker", () => {
       expect(job?.last_error).toMatch(/not contract-enforced/);
     });
 
+    // Empty-but-present constructorArgs are truthy in JS, so a plain
+    // `!constructorArgs` check would let them through. The cast models a
+    // malformed persisted manifest, which is the case the guard defends.
+    it.each([
+      ["an empty array", []],
+      ["an empty object", {}],
+    ])("rejects a policy-contract enforcement with %s before deploying", async (_label, args) => {
+      await seedPolicy({
+        kind: "policy-contract",
+        wasmHash: "wasm",
+        constructorArgs: args,
+      } as unknown as PolicyRecord["manifest"]["enforcement"]);
+      seedJob();
+
+      await processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics);
+
+      expect(deployer.deployInstance).not.toHaveBeenCalled();
+      const job = await jobStore.get("job-1");
+      expect(job?.status).not.toBe("completed");
+      expect(job?.last_error).toMatch(/not contract-enforced/);
+    });
     it("enforces M2 deploy budget when processing a queued deployment (#766)", async () => {
       await seedPolicy({ kind: "policy-contract", wasmHash: "wasm", constructorArgs: ARGS });
       seedJob();
@@ -386,7 +407,11 @@ describe("Policy Deployment Worker", () => {
           spendingLimits: { dailyXlm: "100" },
         },
         policyHash: "hash",
-        manifest: { template: "spending_limit", enforcement: { kind: "policy-contract", wasmHash: "w", constructorArgs: ARGS }, network: "testnet" },
+        manifest: {
+          template: "spending_limit",
+          enforcement: { kind: "policy-contract", wasmHash: "w", constructorArgs: ARGS },
+          network: "testnet",
+        },
       });
       const now = new Date().toISOString();
       jobStore.addJob({
@@ -412,8 +437,15 @@ describe("Policy Deployment Worker", () => {
 
       const { deployPolicyInstance } = await import("./deployment");
       const [direct, queued] = await Promise.allSettled([
-        deployPolicyInstance({ policies: policyRepo, deployer, budget, budgetNetwork: "testnet" } as any, record!, WALLET),
-        processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics, { budget, budgetNetwork: "testnet" }),
+        deployPolicyInstance(
+          { policies: policyRepo, deployer, budget, budgetNetwork: "testnet" } as any,
+          record!,
+          WALLET,
+        ),
+        processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics, {
+          budget,
+          budgetNetwork: "testnet",
+        }),
       ]);
 
       // Budget checked by both paths; at most one on-chain deploy succeeds.
@@ -497,7 +529,12 @@ describe("Policy Deployment Worker", () => {
       };
       customStore.addJob(job);
 
-      await customStore.handleFailure("per-job-1", new Error("Transient error"), dlqStore, dlqMetrics);
+      await customStore.handleFailure(
+        "per-job-1",
+        new Error("Transient error"),
+        dlqStore,
+        dlqMetrics,
+      );
       const updated = await customStore.get("per-job-1");
       expect(updated?.retry_count).toBe(1);
       expect(updated?.status).toBe("dead");
@@ -559,7 +596,13 @@ describe("Policy Deployment Worker", () => {
         updated_at: now,
       });
 
-      const processed = await processDeploymentJob(jobStore, policyRepo, deployer, dlqStore, dlqMetrics);
+      const processed = await processDeploymentJob(
+        jobStore,
+        policyRepo,
+        deployer,
+        dlqStore,
+        dlqMetrics,
+      );
       expect(processed).toBe(true);
 
       const job = await jobStore.get("missing-policy-job");
@@ -573,4 +616,3 @@ describe("Policy Deployment Worker", () => {
     });
   });
 });
-

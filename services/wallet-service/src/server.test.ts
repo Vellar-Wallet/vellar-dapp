@@ -362,6 +362,65 @@ describe("POST /wallet/create derivation gate (V1)", () => {
     expect(res.json().error).toBe("contract_id_mismatch");
     expect(submitter.submit).not.toHaveBeenCalled();
   });
+
+  // Issue #761: the deterministic mapping means one keyId has exactly one
+  // contractId, so a second create claiming a different one is either a buggy
+  // or a spoofing caller. The server must trust its own derivation, not the
+  // client-supplied contractId.
+  it("rejects a second create with the same keyId but a different claimed contractId", async () => {
+    const submitter = workingSubmitter();
+    app = buildServer({ submitter, networkPassphrase: PASSPHRASE });
+    const derived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    const first = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: derived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(first.statusCode).toBe(201);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: {
+        keyId: KEY_ID,
+        contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        network: "testnet",
+        signedTx: "xdr",
+      },
+    });
+
+    // The claimed mapping is refused by the derivation gate before any
+    // duplicate-mapping or submission logic runs.
+    expect(second.statusCode).toBe(403);
+    expect(second.json().error).toBe("contract_id_mismatch");
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the derivation gate on a re-created keyId whose claimed contractId is independently re-derived", async () => {
+    const submitter = workingSubmitter();
+    app = buildServer({ submitter, networkPassphrase: PASSPHRASE });
+    const derived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    const first = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: derived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(first.statusCode).toBe(201);
+
+    // Re-deriving independently produces the same value. The gate is about
+    // trusting the server's derivation, not about the value being "different":
+    // a correct second claim clears the gate and hits the duplicate check.
+    const reDerived = deriveWalletContractId(KEY_ID, { networkPassphrase: PASSPHRASE });
+    expect(reDerived).toBe(derived);
+    const second = await app.inject({
+      method: "POST",
+      url: "/wallet/create",
+      payload: { keyId: KEY_ID, contractId: reDerived, network: "testnet", signedTx: "xdr" },
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json().error).toBe("wallet_exists");
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("POST /wallet/create budget line (FIX 3)", () => {
@@ -1441,6 +1500,48 @@ describe("GET /wallet/transactions (issue #256)", () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe("invalid_cursor");
+  });
+
+  it("rejects a cursor issued for a different wallet's pagination sequence (#762)", async () => {
+    const audit = createMemoryAuditLog();
+    const { server, wallets } = buildScopedServer(workingSubmitter(), audit);
+    const OTHER = "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA";
+    await wallets.insert({
+      keyId: "other-key",
+      contractId: OTHER,
+      network: "testnet",
+      createdAt: new Date().toISOString(),
+    });
+    const { createSessionId: walletASession } = await createAndConnectDerived(server);
+    const connectB = await server.inject({
+      method: "POST",
+      url: "/wallet/connect",
+      payload: { keyId: "other-key", network: "testnet" },
+    });
+    expect(connectB.statusCode).toBe(200);
+    const walletBSession = connectB.json().sessionId as string;
+
+    // Give wallet A enough events to produce a real nextCursor.
+    for (let i = 0; i < 3; i++) {
+      await audit.record("tx.submitted", { network: "testnet", txHash: `hash-${i}` }, CONTRACT_ID);
+    }
+    const pageA = await server.inject({
+      url: `/wallet/transactions?contractId=${CONTRACT_ID}&network=testnet&limit=1`,
+      headers: bearer(walletASession),
+    });
+    expect(pageA.statusCode).toBe(200);
+    const cursorA = pageA.json().nextCursor as string;
+    expect(cursorA).toEqual(expect.any(String));
+
+    // Replaying A's cursor against B must fail explicitly, not silently page
+    // B's history from an arbitrary offset or return a confusing empty page.
+    const replay = await server.inject({
+      url: `/wallet/transactions?contractId=${OTHER}&network=testnet&limit=1&after=${encodeURIComponent(cursorA)}`,
+      headers: bearer(walletBSession),
+    });
+    expect(replay.statusCode).toBe(400);
+    expect(replay.json().error).toBe("invalid_cursor");
+    expect(replay.json().message).toMatch(/different wallet/);
   });
 
   it("filters transactions by status (submitted, failed, policy-rejected) and returns mixed page without filter", async () => {
