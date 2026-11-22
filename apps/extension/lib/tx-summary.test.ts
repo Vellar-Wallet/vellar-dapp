@@ -153,6 +153,54 @@ describe("describeOperation", () => {
   });
 });
 
+describe("threshold-attestor summarization (#777)", () => {
+  const THRESHOLD_ATTESTOR = "CBZVS2ETJKCIMRRWUHTZFVMWDACJNYUZ54JIXUJCHXNBFNXELKTSWHGP";
+  const LOOKALIKE = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
+  function invokeContract(contract: string, fn: string) {
+    return buildTx(
+      Operation.invokeContractFunction({
+        contract,
+        function: fn,
+        args: [
+          nativeToScVal(Address.fromString(DEST), { type: "address" }),
+          nativeToScVal(Buffer.from("hash"), { type: "bytes" }),
+        ],
+      }),
+    );
+  }
+
+  it("summarizes a threshold-attestor/registry invocation with a human-readable label", () => {
+    const summary = summarizeTransaction(invokeContract(THRESHOLD_ATTESTOR, "upsert"), "testnet", sdk);
+    expect(summary.movesValue).toBe(false);
+    expect(summary.operations[0]).toMatchObject({
+      kind: "contract-call",
+      contract: THRESHOLD_ATTESTOR,
+      fn: "upsert",
+    });
+    expect(formatTransactionSummary(summary)).toContain("Threshold attestor registry");
+    expect(formatTransactionSummary(summary)).toContain("upsert");
+    expect(formatTransactionSummary(summary)).not.toBe("invoke upsert");
+  });
+
+  it("does not misidentify a similar non-attestor contract as the threshold attestor", () => {
+    const summary = summarizeTransaction(invokeContract(LOOKALIKE, "upsert"), "testnet", sdk);
+    expect(summary.operations[0]).toMatchObject({
+      kind: "contract-call",
+      contract: LOOKALIKE,
+      fn: "upsert",
+    });
+    expect(formatTransactionSummary(summary)).toBe("invoke upsert");
+    expect(formatTransactionSummary(summary)).not.toContain("Threshold attestor registry");
+  });
+
+  it("keeps unknown/undecodable behavior safe", () => {
+    const undecoded = summarizeTransaction("bad-xdr", "testnet", sdk);
+    expect(undecoded.undecoded).toBe(true);
+    expect(formatTransactionSummary(undecoded)).toBe("a transaction");
+  });
+});
+
 describe("formatTransactionSummary", () => {
   it("summarizes a single operation as its own description, with no count prefix", () => {
     const xdrStr = buildTx(transferOp("50000000"));
