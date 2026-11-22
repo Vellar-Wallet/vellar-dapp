@@ -169,6 +169,64 @@ describe("PolicyEventQueue — Poison-message detection & quarantine (Issue #297
       );
     });
 
+    it("keeps the metric consistent when an event is enqueued mid-scrape (#793)", async () => {
+      const observed: Array<{ reported: number; live: number }> = [];
+      let consumer: PolicyEventQueue<{ seq: number }> | undefined;
+      let reentrantEnqueueDone = false;
+
+      const queueDepthGauge = {
+        set: (labels: { service: string }, value: number) => {
+          expect(labels.service).toBe("policy-service");
+          // A scrape reading the gauge at this instant must see the same depth
+          // as the live queue. During construction the consumer is not yet
+          // assigned, and the initial depth is 0.
+          observed.push({ reported: value, live: consumer?.pendingCount() ?? 0 });
+
+          // Simulate a second event landing while the first enqueue's metric
+          // write is being observed. enqueue() has no async gap, so the
+          // re-entrant call completes before the outer one returns.
+          if (!reentrantEnqueueDone && value === 1) {
+            reentrantEnqueueDone = true;
+            void consumer!.enqueue({ eventType: "policy.mid-read", payload: { seq: 2 } });
+          }
+        },
+      };
+
+      consumer = new PolicyEventQueue<{ seq: number }>({ queueDepthGauge });
+      await consumer.enqueue({ eventType: "policy.first", payload: { seq: 1 } });
+
+      expect(reentrantEnqueueDone).toBe(true);
+      expect(consumer.pendingCount()).toBe(2);
+      // The final reading reflects the settled depth (2), never the stale
+      // intermediate value captured when the first enqueue began.
+      expect(observed.map((reading) => reading.reported)).toEqual([0, 1, 2]);
+      for (const reading of observed) {
+        expect(reading.reported).toBe(reading.live);
+      }
+    });
+
+    it("keeps the metric consistent when a message is dequeued mid-scrape (#793)", async () => {
+      const observed: Array<{ reported: number; live: number }> = [];
+      let consumer: PolicyEventQueue<number> | undefined;
+
+      const queueDepthGauge = {
+        set: (_labels: { service: string }, value: number) => {
+          observed.push({ reported: value, live: consumer?.pendingCount() ?? 0 });
+        },
+      };
+
+      consumer = new PolicyEventQueue<number>({ queueDepthGauge });
+      await consumer.enqueue({ eventType: "first", payload: 1 });
+      await consumer.enqueue({ eventType: "second", payload: 2 });
+      await consumer.processNext(async () => {});
+
+      expect(observed.map((reading) => reading.reported)).toEqual([0, 1, 2, 1]);
+      for (const reading of observed) {
+        expect(reading.reported).toBe(reading.live);
+      }
+      expect(consumer.pendingCount()).toBe(1);
+    });
+
     it("maintains accurate backlog depth when a message fails and is re-queued or quarantined", async () => {
       __resetMetricsForTest();
       const queue = new PolicyEventQueue({ maxAttempts: 2 });

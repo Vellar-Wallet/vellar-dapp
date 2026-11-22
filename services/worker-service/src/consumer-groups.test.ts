@@ -152,6 +152,36 @@ describe("consumer-groups (issue #354)", () => {
     group2.stop();
   });
 
+  it("is the verification-specific layer over the generic consumer-group primitive (#795)", async () => {
+    // consumer-group.ts (singular) owns the reusable loop machinery; this
+    // module only binds verification deps and fixes the domain label.
+    const customLog = {
+      info: vi.fn(),
+      error: vi.fn(),
+    };
+    // An empty queue emits no info logs, so force the loop's error path to
+    // observe the log wrapper supplied by the generic primitive.
+    vi.mocked(mockStore.claimSubmitted).mockRejectedValue(new Error("race-probe"));
+
+    const group = createVerificationGroup({
+      store: mockStore,
+      executor: mockExecutor,
+      resolver: mockResolver,
+      log: customLog,
+      idleDelayMs: 100,
+    });
+
+    expect(group.domain).toBe("verification");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // The label is applied by the generic primitive, using the value supplied
+    // here. Both entry points therefore point at the same distinction.
+    expect(
+      customLog.error.mock.calls.some(([msg]) => String(msg).startsWith("[verification]")),
+    ).toBe(true);
+
+    group.stop();
+  });
+
   it("consumer group passes correct dependencies to workers", async () => {
     const customLog = {
       info: vi.fn(),

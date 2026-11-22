@@ -137,8 +137,15 @@ export function createPgBuildJobQueue(
         };
       },
 
-      async complete(recordId: string): Promise<boolean> {
+      async complete(recordId: string, workerId?: string): Promise<boolean> {
         const now = new Date(getNow());
+        // A claimant that lost the job to a visibility-timeout reclaim must not
+        // be able to complete it. Legacy callers that do not identify
+        // themselves keep the previous unguarded behavior.
+        const ownership =
+          workerId === undefined
+            ? undefined
+            : sql`${verificationRecords.record}->>'claimedBy' = ${workerId}`;
         const result = await db
           .update(verificationRecords)
           .set({
@@ -150,6 +157,7 @@ export function createPgBuildJobQueue(
             and(
               eq(verificationRecords.id, recordId),
               eq(verificationRecords.status, "building"),
+              ownership,
             ),
           )
           .returning({ id: verificationRecords.id });
@@ -294,9 +302,14 @@ export function createPgBuildJobQueue(
       return null;
     },
 
-    async complete(recordId: string, _workerId?: string): Promise<boolean> {
+    async complete(recordId: string, workerId?: string): Promise<boolean> {
       const entry = memoryJobs.get(recordId);
       if (!entry || entry.status !== "building") {
+        return false;
+      }
+      // Fence a stale claimant: worker 1 may still be running after its
+      // visibility timeout let worker 2 reclaim the same job (#794).
+      if (workerId !== undefined && entry.claimedBy !== workerId) {
         return false;
       }
       entry.status = "completed";

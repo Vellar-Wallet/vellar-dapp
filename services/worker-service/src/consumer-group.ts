@@ -1,3 +1,16 @@
+/**
+ * Generic, domain-agnostic consumer group primitive (issue #354).
+ *
+ * Do not confuse with ./consumer-groups.ts (plural). This module owns the
+ * reusable machinery: arbitrary WorkerDeps, N independent worker loops, a
+ * caller-supplied domain label for logs, and a handle that stops every loop.
+ * It knows nothing about verification jobs specifically.
+ *
+ * ./consumer-groups.ts is the thin verification-specific layer that binds the
+ * verification store/executor/resolver to this primitive and fixes the label
+ * to "verification". Change this file for cross-domain mechanics; change that
+ * file for per-domain wiring.
+ */
 import { startWorkerLoop, type WorkerDeps, type WorkerLoopHandle } from "./loop";
 
 // Domain-specific consumer groups (issue #354).

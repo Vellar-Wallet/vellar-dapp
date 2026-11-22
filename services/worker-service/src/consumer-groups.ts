@@ -1,3 +1,13 @@
+/**
+ * Verification-specific consumer group factory (issue #354).
+ *
+ * Do not confuse with ./consumer-group.ts (singular). That module is the
+ * generic, domain-agnostic primitive that starts and labels worker loops.
+ * This module is the thin per-domain layer: it binds the verification store,
+ * executor and resolver to that primitive and fixes the domain label to
+ * "verification". Add other domains here with their own factories; keep loop
+ * mechanics there so the two files never grow duplicate implementations.
+ */
 import type { VerificationJobStore } from "./job-store";
 import {
   startConsumerGroup,
