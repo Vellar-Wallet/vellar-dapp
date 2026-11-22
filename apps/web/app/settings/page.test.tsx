@@ -26,17 +26,11 @@ vi.mock("@/lib/agent-keys", () => ({
 
 // WalletUpgradeCard's data seam (#572). Mocked like the other hooks so the
 // settings suite does not need a QueryClientProvider just to render the shell.
+// The hook is a vi.fn so the card-isolation suite (#799) can make this one
+// fetch fail while the other cards keep rendering.
+const { useWalletVersionMock } = vi.hoisted(() => ({ useWalletVersionMock: vi.fn() }));
 vi.mock("@/lib/wallet-version", () => ({
-  useWalletVersion: () => ({
-    data: {
-      state: "current",
-      currentHash: "fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0",
-      targetHash: "fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0",
-    },
-    isPending: false,
-    isError: false,
-    refetch: vi.fn(),
-  }),
+  useWalletVersion: useWalletVersionMock,
   useUpgradeWallet: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -200,6 +194,16 @@ beforeEach(() => {
   window.localStorage.setItem("vellar.session", JSON.stringify(walletSession));
   useSessionsMock.mockReturnValue({
     data: records,
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
+  useWalletVersionMock.mockReturnValue({
+    data: {
+      state: "current",
+      currentHash: "fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0",
+      targetHash: "fdefad64b96837147e1c333e51f537b696eab925e9f147e63d597c04e3c903f0",
+    },
     isPending: false,
     isError: false,
     refetch: vi.fn(),
@@ -553,5 +557,81 @@ describe("Settings — sessions (unchanged)", () => {
     window.localStorage.clear();
     renderSettings();
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/app"));
+  });
+});
+
+describe("Settings — independent cards (#799)", () => {
+  const CARD_HEADINGS = [
+    "Signers on this account",
+    "Add a second passkey",
+    "Agent keys",
+    "Verified provenance signing",
+    "Wallet version",
+  ];
+
+  async function expectEveryCard() {
+    // WalletProvider restores the session asynchronously, so wait for it.
+    for (const heading of CARD_HEADINGS) {
+      expect(await screen.findByText(heading)).toBeDefined();
+    }
+  }
+
+  it("renders all five cards when every data source responds", async () => {
+    renderSettings();
+    await expectEveryCard();
+    // The cards carry their own controls and data, not just their headings.
+    expect(screen.getByRole("button", { name: /refresh from chain/i })).toBeDefined();
+    expect(screen.getByRole("radiogroup", { name: /provenance mode/i })).toBeDefined();
+    expect(await screen.findByText(/Your wallet is up to date/i)).toBeDefined();
+  });
+
+  it("keeps every other card when the wallet-version check fails", async () => {
+    useWalletVersionMock.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+
+    renderSettings();
+
+    await expectEveryCard();
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /couldn.t read the wallet contract version/i,
+    );
+    // Independent cards are still interactive.
+    expect(screen.getByRole("button", { name: /refresh from chain/i })).toBeDefined();
+    expect(screen.getByRole("radiogroup", { name: /provenance mode/i })).toBeDefined();
+  });
+
+  it("keeps every other card when the signer read fails", async () => {
+    // Provenance, agent keys and add-passkey all read the same signer list.
+    // A failed read must not blank the page or suppress their headings.
+    signersData([], { isError: true, data: undefined });
+
+    renderSettings();
+
+    await expectEveryCard();
+    expect(
+      (await screen.findAllByRole("alert")).some((a) =>
+        /couldn.t read the account.s signers/i.test(a.textContent ?? ""),
+      ),
+    ).toBe(true);
+    expect(screen.getByText(/Your wallet is up to date/i)).toBeDefined();
+  });
+
+  it("keeps every card when the sessions read fails", async () => {
+    useSessionsMock.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+
+    renderSettings();
+
+    await expectEveryCard();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/couldn.t load sessions/i);
+    expect(screen.getByRole("radiogroup", { name: /provenance mode/i })).toBeDefined();
   });
 });

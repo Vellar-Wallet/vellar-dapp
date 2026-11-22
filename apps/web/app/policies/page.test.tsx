@@ -280,6 +280,138 @@ describe("Policy builder", () => {
   });
 });
 
+describe("Policy builder — same contract id, different enforcement (#801)", () => {
+  // Two policies that target the exact same policy contract id but carry
+  // different enforcement parameters are the most direct overlap case. The
+  // warning must be driven by their enforcement domains, not by the window
+  // length or the fact that the ids happen to match.
+  const SHARED_CONTRACT = "CEXISTINGPOLICY234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ2345AB";
+  const SHARED_WASM = "ab".repeat(32);
+
+  const incoming = {
+    id: "p1",
+    createdAt: "2026-11-22T00:00:00Z",
+    status: "generated" as const,
+    definition: {
+      version: "1",
+      type: "spending_limit",
+      owners: [SESSION.accountId],
+      spendingLimits: { dailyXlm: "100" },
+    },
+    policyHash: "f".repeat(64),
+    manifest: {
+      template: "spending_limit",
+      enforcement: {
+        kind: "policy-contract" as const,
+        wasmHash: SHARED_WASM,
+        // Different window from the attached policy (86400 below).
+        constructorArgs: { dailyLimitStroops: "1000000000", windowSeconds: 3600 },
+      },
+      network: "testnet" as const,
+    },
+  };
+
+  function attachExisting(definition: unknown) {
+    window.localStorage.setItem(
+      `vellar.policy-deployments:${SESSION.accountId}`,
+      JSON.stringify([
+        {
+          contractId: SHARED_CONTRACT,
+          definition,
+          deployedAt: "2026-10-01T00:00:00.000Z",
+        },
+      ]),
+    );
+    useSignersMock.mockReturnValue({
+      data: [
+        {
+          id: `Policy:${SHARED_CONTRACT}`,
+          kind: "policy",
+          key: { kind: "Policy", value: SHARED_CONTRACT },
+          status: "live",
+          storage: "persistent",
+          isCurrent: false,
+          isDurableAdmin: false,
+        },
+      ],
+      isPending: false,
+      isError: false,
+    });
+  }
+
+  async function generateIncoming() {
+    validateMock.mockResolvedValue({ valid: true, errors: [] });
+    generateMock.mockResolvedValue(incoming);
+    renderPage();
+    fireEvent.click(await screen.findByText("Spending limit"));
+    fireEvent.change(await screen.findByLabelText(/daily limit/i), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate & generate/i }));
+    return screen.findByText(/policy generated/i);
+  }
+
+  it("warns when both policies share a contract id but enforce different windows", async () => {
+    attachExisting({
+      version: "1",
+      type: "spending_limit",
+      owners: [SESSION.accountId],
+      spendingLimits: { dailyXlm: "50" },
+    });
+
+    await generateIncoming();
+
+    const warning = await screen.findByTestId("policy-scope-warning");
+    expect(warning.textContent).toMatch(/overlaps/i);
+    // The shared domain is called out, and the existing contract is identified.
+    expect(warning.textContent).toMatch(/spend/i);
+    expect(warning.textContent).toContain(
+      SHARED_CONTRACT.slice(0, 6) + "…" + SHARED_CONTRACT.slice(-6),
+    );
+    // A warning never blocks the passkey step.
+    expect(screen.getByRole("button", { name: /deploy to my account/i })).toBeDefined();
+    // The generated policy really does carry a different window.
+    expect(incoming.manifest.enforcement.constructorArgs.windowSeconds).toBe(3600);
+  });
+
+  it("does not warn when the attached policy on that id covers a different domain", async () => {
+    attachExisting({
+      version: "1",
+      type: "verified_only",
+      owners: [SESSION.accountId],
+      provenance: { mode: "strict" },
+    });
+
+    await generateIncoming();
+
+    expect(screen.queryByTestId("policy-scope-warning")).toBeNull();
+    expect(screen.getByRole("button", { name: /deploy to my account/i })).toBeDefined();
+  });
+
+  it("does not warn when the attached policy id has no stored definition", async () => {
+    // The chain only stores the signer, not its definition. Without a local
+    // record we cannot prove an overlap, so the page must fail open, not crash.
+    useSignersMock.mockReturnValue({
+      data: [
+        {
+          id: `Policy:${SHARED_CONTRACT}`,
+          kind: "policy",
+          key: { kind: "Policy", value: SHARED_CONTRACT },
+          status: "live",
+          storage: "persistent",
+          isCurrent: false,
+          isDurableAdmin: false,
+        },
+      ],
+      isPending: false,
+      isError: false,
+    });
+
+    await generateIncoming();
+
+    expect(screen.queryByTestId("policy-scope-warning")).toBeNull();
+    expect(screen.getByRole("button", { name: /deploy to my account/i })).toBeDefined();
+  });
+});
+
 describe("Policy builder — on-chain safety rules (#399) and provenance modes (#398)", () => {
   const XLM_SAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 

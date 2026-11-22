@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WalletSession } from "@vellar/types";
+import type { HistoryTx } from "@/lib/history-types";
 import { WalletProvider } from "@/lib/wallet-context";
 import Dashboard from "./page";
 
@@ -127,5 +128,89 @@ describe("Dashboard", () => {
     );
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/app"));
+  });
+});
+
+describe("Dashboard — zero balance with transaction history (#798)", () => {
+  // A wallet that was just swept empty is not a brand-new wallet: it still has
+  // activity to show. The dashboard must render a zero balance AND the history,
+  // rather than collapsing into a single empty-wallet treatment.
+  const sweptOut: HistoryTx = {
+    id: "classic:sweep",
+    kind: "classic",
+    direction: "out",
+    counterparty: "GDESTINATION00000000000000000000000000000000000000000AAAA",
+    amount: 12_345_000n, // 1.2345 XLM at 7dp
+    asset: { kind: "classic", code: "XLM", decimals: 7, contractId: "" },
+    timestamp: "2026-11-22T09:00:00.000Z",
+    status: "success",
+    txHash: "b".repeat(64),
+  };
+
+  function renderSweptWallet(
+    balanceData: Array<{ symbol: string; contractId: string; decimals: number; amount: bigint }>,
+    activity = {
+      rows: [sweptOut],
+      isPending: false,
+      isError: false,
+      isFetching: false,
+      isFetchingNextPage: false,
+      hasMore: false,
+      refetch: vi.fn(),
+      loadMore: vi.fn(),
+    },
+  ) {
+    window.localStorage.setItem("vellar.session", JSON.stringify(session));
+    useBalancesMock.mockReturnValue({
+      data: balanceData,
+      isPending: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    useActivityMock.mockReturnValue(activity);
+    return render(
+      <WalletProvider>
+        <Dashboard />
+      </WalletProvider>,
+    );
+  }
+
+  it("shows a zero balance alongside the past transfer", async () => {
+    renderSweptWallet([{ symbol: "XLM", contractId: "CNATIVE", decimals: 7, amount: 0n }]);
+
+    // Both the hero balance and the asset row report zero, not a blank state.
+    expect((await screen.findAllByText("0")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("No assets yet")).toBeNull();
+    // The history is still there, distinguished from a never-used wallet.
+    expect(await screen.findByText(/1\.2345 XLM/)).toBeDefined();
+    expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+  });
+
+  it("keeps the transfer visible when no asset rows remain at all", async () => {
+    renderSweptWallet([]);
+
+    expect(await screen.findByText(/1\.2345 XLM/)).toBeDefined();
+    // The assets panel says it is empty, but the page as a whole does not
+    // imply that nothing ever happened.
+    expect(screen.getByText("No assets yet")).toBeDefined();
+    expect(screen.queryByText(/No transactions yet/i)).toBeNull();
+    expect(screen.getByRole("button", { name: "Receive" })).toBeDefined();
+  });
+
+  it("keeps the zero-balance panels usable when the history fetch fails", async () => {
+    renderSweptWallet([{ symbol: "XLM", contractId: "CNATIVE", decimals: 7, amount: 0n }], {
+      rows: [],
+      isPending: false,
+      isError: true,
+      isFetching: false,
+      isFetchingNextPage: false,
+      hasMore: false,
+      refetch: vi.fn(),
+      loadMore: vi.fn(),
+    });
+
+    expect((await screen.findAllByText("0")).length).toBeGreaterThan(0);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/couldn.t be loaded/i);
+    expect(screen.getByRole("button", { name: "Send" })).toBeDefined();
   });
 });
