@@ -321,6 +321,88 @@ fn non_attestor_cannot_rotate() {
     assert_eq!(f.registry.attestor(), f.attestor);
 }
 
+// ----- #774: a second `set_attestor` after the one-time migration handoff. -----
+
+#[test]
+fn second_set_attestor_by_original_key_is_rejected_after_handoff() {
+    let f = setup();
+    let new_attestor = Address::generate(&f.env);
+    let unintended_target = Address::generate(&f.env);
+
+    // Step 2 of docs/threshold-attestor-migration.md: the original single key
+    // hands authority to the threshold attestor contract. This succeeds once.
+    f.registry
+        .mock_auths(&[MockAuth {
+            address: &f.attestor,
+            invoke: &MockAuthInvoke {
+                contract: &f.registry.address,
+                fn_name: "set_attestor",
+                args: (new_attestor.clone(),).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_attestor(&new_attestor);
+    assert_eq!(f.registry.attestor(), new_attestor);
+
+    // The original key tries a SECOND handoff to an unintended address. It has
+    // lost all authority, so the reassignment is rejected and the registry's
+    // attestor is unchanged. This is the mainnet-incident the issue guards
+    // against: a casual second `set_attestor` by the retired key cannot work.
+    let result = f
+        .registry
+        .mock_auths(&[MockAuth {
+            address: &f.attestor,
+            invoke: &MockAuthInvoke {
+                contract: &f.registry.address,
+                fn_name: "set_attestor",
+                args: (unintended_target.clone(),).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_set_attestor(&unintended_target);
+
+    assert!(result.is_err());
+    assert_eq!(f.registry.attestor(), new_attestor);
+}
+
+#[test]
+fn reassignment_after_handoff_requires_current_attestor_auth() {
+    let f = setup();
+    let threshold_attestor = Address::generate(&f.env);
+    let replacement = Address::generate(&f.env);
+
+    // First handoff, as above.
+    f.registry
+        .mock_auths(&[MockAuth {
+            address: &f.attestor,
+            invoke: &MockAuthInvoke {
+                contract: &f.registry.address,
+                fn_name: "set_attestor",
+                args: (threshold_attestor.clone(),).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_attestor(&threshold_attestor);
+
+    // Documented re-assignment process: there is no global one-time lock on
+    // `set_attestor`. A legitimate future rotation is performed by the CURRENT
+    // attestor, which is now the threshold contract and authorises through its
+    // own 2-of-3 `__check_auth` (see threshold-attestor/src/test.rs). The old
+    // single key is deliberately NOT able to do this.
+    f.registry
+        .mock_auths(&[MockAuth {
+            address: &threshold_attestor,
+            invoke: &MockAuthInvoke {
+                contract: &f.registry.address,
+                fn_name: "set_attestor",
+                args: (replacement.clone(),).into_val(&f.env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_attestor(&replacement);
+    assert_eq!(f.registry.attestor(), replacement);
+}
+
 // ----- Publisher attribution (trusted-publishers policy mode) -----
 
 fn publisher_id(env: &Env, byte: u8) -> BytesN<32> {

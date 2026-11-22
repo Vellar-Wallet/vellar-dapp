@@ -257,3 +257,50 @@ describe("routeProviderRequest", () => {
     });
   });
 });
+
+// #775: the background worker can be killed and restarted (e.g. after a
+// browser update) between a request being routed and its response arriving.
+// `routeProviderRequest` is PURE: it holds no pending-request state of its own
+// and reads everything it needs from the `state` argument the worker loads
+// fresh from browserKv. A restart therefore cannot leave a stale decision
+// behind; these tests pin that property down for the worst-case timing.
+describe("routeProviderRequest across a background-worker restart (#775)", () => {
+  it("a request routed mid-restart still needs approval when no grant was persisted", () => {
+    // The popup approved, but the worker was replaced before addGrant wrote
+    // anything. A fresh worker reloads the unchanged state and re-routes: the
+    // request needs approval again rather than silently inheriting the old
+    // in-memory approval. The dApp must retry; there is no persisted queue.
+    const stateBeforeRestart: ExtensionState = { ...paired, grants: [] };
+    const decisionBefore = routeProviderRequest(connect, ORIGIN, stateBeforeRestart);
+    const stateAfterRestart = stateBeforeRestart; // reloaded from browserKv
+    const decisionAfter = routeProviderRequest(connect, ORIGIN, stateAfterRestart);
+
+    expect(decisionBefore).toEqual({ kind: "needs-approval", origin: ORIGIN });
+    expect(decisionAfter).toEqual(decisionBefore);
+  });
+
+  it("a grant persisted before the restart is honored by the new worker", () => {
+    // Contrast with the case above: only durable state survives a restart.
+    // The router reads it from the passed-in state, so a new worker with no
+    // memory of the old request answers connect immediately.
+    const stateAfterRestart: ExtensionState = { ...paired, grants: [grant] };
+    expect(routeProviderRequest(connect, ORIGIN, stateAfterRestart)).toEqual({
+      kind: "respond",
+      payload: { method: "connect", result: { address: "CABC", network: "testnet" } },
+    });
+  });
+
+  it("a sign request still requires a fresh approval after a restart even with a grant", () => {
+    // A grant allows the origin to ASK; it is never an approval to sign. A
+    // restart must not turn an outstanding sign approval into a silent sign.
+    const signRequest: ProviderRequest = {
+      method: "sign_transaction",
+      params: { xdr: "AAAA", network: "testnet" },
+    };
+    const stateAfterRestart: ExtensionState = { ...paired, grants: [grant] };
+    expect(routeProviderRequest(signRequest, ORIGIN, stateAfterRestart)).toEqual({
+      kind: "needs-approval",
+      origin: ORIGIN,
+    });
+  });
+});

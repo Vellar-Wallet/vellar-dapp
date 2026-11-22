@@ -268,6 +268,108 @@ fn test_fast_path_revocation_threshold() {
     assert_eq!(upsert_res, Err(ThresholdError::InsufficientSignatures));
 }
 
+// ----- #773: explicit 1-of-3 fast-revocation coverage. -----
+//
+// The contract has no SEPARATE "fast-revocation set": the fast path uses the
+// same three configured signers at a lower threshold (`revoke_threshold = 1`)
+// than normal writes (`threshold = 2`). "A signer not in the fast-revocation
+// set" therefore means a key that is not among the configured signers at all.
+// These tests pin down both sides of that tradeoff: any ONE configured signer
+// can revoke, while an unconfigured key cannot.
+
+#[test]
+fn test_fast_path_revoke_by_any_single_configured_signer() {
+    let env = Env::default();
+    let (sk1, pk1) = generate_key(&env, 1);
+    let (sk2, pk2) = generate_key(&env, 2);
+    let (sk3, pk3) = generate_key(&env, 3);
+
+    let signers = Vec::from_array(&env, [pk1, pk2, pk3]);
+    // 2-of-3 for attestation, 1-of-3 for emergency revocation.
+    let contract_id = env.register(Contract, (2u32, signers, Some(1u32)));
+
+    let (hash_payload, payload_bytes) = create_payload_and_hash(&env, &[131u8; 32]);
+    let target = Address::generate(&env);
+    let revoke_contexts = Vec::from_array(
+        &env,
+        [Context::Contract(ContractContext {
+            contract: target,
+            fn_name: symbol_short!("revoke"),
+            args: Vec::new(&env),
+        })],
+    );
+
+    // Each of the three co-signers alone must be enough on the fast path.
+    // Exercising index 2 as well as 0 proves it is "any one signer", not just
+    // the first key in the list.
+    for (index, sk) in [(0u32, &sk1), (1u32, &sk2), (2u32, &sk3)] {
+        let sig_bytes = sk.sign(&payload_bytes).to_bytes();
+        let single_sig = ThresholdSignatures {
+            signatures: Vec::from_array(
+                &env,
+                [SignerSignature {
+                    signer_index: index,
+                    signature: BytesN::from_array(&env, &sig_bytes),
+                }],
+            ),
+        };
+        let res = env.as_contract(&contract_id, || {
+            Contract::__check_auth(
+                env.clone(),
+                hash_payload.clone(),
+                single_sig,
+                revoke_contexts.clone(),
+            )
+        });
+        assert_eq!(
+            res,
+            Ok(()),
+            "signer {index} should be able to fast-revoke alone"
+        );
+    }
+}
+
+#[test]
+fn test_fast_path_revoke_rejects_unconfigured_signer() {
+    let env = Env::default();
+    let (_sk1, pk1) = generate_key(&env, 1);
+    let (_sk2, pk2) = generate_key(&env, 2);
+    let (_sk3, pk3) = generate_key(&env, 3);
+    // A fourth key that was never configured as an attestor.
+    let (rogue_sk, _rogue_pk) = generate_key(&env, 4);
+
+    let signers = Vec::from_array(&env, [pk1, pk2, pk3]);
+    let contract_id = env.register(Contract, (2u32, signers, Some(1u32)));
+
+    let (hash_payload, payload_bytes) = create_payload_and_hash(&env, &[137u8; 32]);
+    let target = Address::generate(&env);
+    let revoke_contexts = Vec::from_array(
+        &env,
+        [Context::Contract(ContractContext {
+            contract: target,
+            fn_name: symbol_short!("revoke"),
+            args: Vec::new(&env),
+        })],
+    );
+
+    // The rogue key claims a signer slot outside the configured set. The index
+    // bound check rejects it before any signature is even verified.
+    let rogue_sig_bytes = rogue_sk.sign(&payload_bytes).to_bytes();
+    let rogue_sig = ThresholdSignatures {
+        signatures: Vec::from_array(
+            &env,
+            [SignerSignature {
+                signer_index: 3, // out of bounds for a 3-signer set
+                signature: BytesN::from_array(&env, &rogue_sig_bytes),
+            }],
+        ),
+    };
+    let res = env.as_contract(&contract_id, || {
+        Contract::__check_auth(env.clone(), hash_payload, rogue_sig, revoke_contexts)
+    });
+    assert_eq!(res, Err(ThresholdError::InvalidSignerIndex));
+}
+
 #[test]
 fn test_integration_with_attestation_registry() {
     let env = Env::default();
