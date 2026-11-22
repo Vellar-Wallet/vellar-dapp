@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import {
   createPgBuildJobQueue,
   type PgBuildJobQueue,
@@ -132,6 +134,76 @@ describe("pg-queue with visibility timeout", () => {
     const claim2 = await queue.claim("worker-2");
     expect(claim2).not.toBeNull();
     expect(claim2?.claimedBy).toBe("worker-2");
+  });
+
+  it("rejects a late completion from the original worker after a visibility-timeout reclaim (#794)", async () => {
+    let mockTime = 10000;
+    const visibilityTimeoutMs = 5000;
+    const queue = createPgBuildJobQueue(undefined, {
+      visibilityTimeoutMs,
+      now: () => mockTime,
+    });
+
+    await queue.enqueue(sampleJob);
+
+    // Worker 1 claims at t=10000. It is slow, not crashed.
+    const firstClaim = await queue.claim("worker-1");
+    expect(firstClaim?.claimedBy).toBe("worker-1");
+    expect(firstClaim?.attempts).toBe(1);
+
+    // The visibility timeout expires and worker 2 legitimately reclaims.
+    mockTime += visibilityTimeoutMs + 1;
+    const secondClaim = await queue.claim("worker-2");
+    expect(secondClaim?.claimedBy).toBe("worker-2");
+    expect(secondClaim?.attempts).toBe(2);
+
+    // Worker 1 finishes a moment later. Its stale completion must be rejected
+    // rather than letting two workers believe they both own the job.
+    expect(await queue.complete("rec-123", "worker-1")).toBe(false);
+    const afterStale = await queue.getJob("rec-123");
+    expect(afterStale?.status).toBe("building");
+    expect(afterStale?.claimedBy).toBe("worker-2");
+
+    // The rightful owner can still complete it, and only once.
+    expect(await queue.complete("rec-123", "worker-2")).toBe(true);
+    expect(await queue.complete("rec-123", "worker-2")).toBe(false);
+    expect((await queue.getJob("rec-123"))?.status).toBe("completed");
+    expect(await queue.size()).toBe(0);
+  });
+
+  it("allows a completion from a caller that does not supply a worker id", async () => {
+    const queue = createPgBuildJobQueue(undefined, {
+      visibilityTimeoutMs: 5000,
+      now: () => 1000,
+    });
+
+    await queue.enqueue(sampleJob);
+    await queue.claim("worker-1");
+
+    // Legacy callers omit the optional workerId; fencing must not break them.
+    expect(await queue.complete("rec-123")).toBe(true);
+    expect((await queue.getJob("rec-123"))?.status).toBe("completed");
+  });
+
+  it("Postgres path fences completions with a claimedBy predicate when a worker id is supplied (#794)", async () => {
+    const returning = vi.fn(async () => [{ id: "rec-123" }]);
+    const where = vi.fn(() => ({ returning }));
+    const update = vi.fn(() => ({ set: () => ({ where }) }));
+    const db = { update } as unknown as Parameters<typeof createPgBuildJobQueue>[0];
+    const queue = createPgBuildJobQueue(db, { now: () => 1000 });
+
+    expect(await queue.complete("rec-123", "stale-worker")).toBe(true);
+    const withOwner = new PgDialect().sqlToQuery(where.mock.calls[0]![0] as SQL);
+    expect(withOwner.sql).toContain("claimedBy");
+    expect(withOwner.params).toContain("stale-worker");
+    expect(withOwner.params).toContain("building");
+
+    // Legacy callers that omit the id must not gain a new WHERE condition.
+    expect(await queue.complete("rec-123")).toBe(true);
+    const withoutOwner = new PgDialect().sqlToQuery(where.mock.calls[1]![0] as SQL);
+    expect(withoutOwner.sql).not.toContain("claimedBy");
+    expect(withoutOwner.params).toContain("building");
+    expect(withoutOwner.params).not.toContain("stale-worker");
   });
 
   it("dead-letters job if maxAttempts exceeded after repeated timeouts", async () => {
