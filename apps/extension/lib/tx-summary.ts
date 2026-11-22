@@ -26,6 +26,8 @@ export interface ContractCallSummary {
   kind: "contract-call";
   contract: string;
   fn: string;
+  /** Human-readable label override for known contracts. */
+  label?: string;
 }
 
 export interface OtherSummary {
@@ -68,7 +70,7 @@ export function summarizeTransaction(
       return { operations: [{ kind: "other", label: "a transaction" }], movesValue: false };
     }
 
-    const operations = tx.operations.map((op) => summarizeOperation(op, sdk));
+    const operations = tx.operations.map((op) => summarizeOperation(op, network, sdk));
     return { operations, movesValue: operations.some((o) => o.kind === "transfer") };
   } catch {
     return {
@@ -79,7 +81,11 @@ export function summarizeTransaction(
   }
 }
 
-function summarizeOperation(op: unknown, sdk: StellarSdkLike): OperationSummary {
+function summarizeOperation(
+  op: unknown,
+  network: "testnet" | "mainnet",
+  sdk: StellarSdkLike,
+): OperationSummary {
   const operation = op as {
     type?: string;
     func?: unknown;
@@ -101,7 +107,13 @@ function summarizeOperation(op: unknown, sdk: StellarSdkLike): OperationSummary 
     }
   }
 
-  return { kind: "contract-call", contract: invoke.contract, fn: invoke.fn };
+  const knownLabel = knownContractLabel(invoke.contract, invoke.fn, network);
+  return {
+    kind: "contract-call",
+    contract: invoke.contract,
+    fn: invoke.fn,
+    ...(knownLabel ? { label: knownLabel } : {}),
+  };
 }
 
 interface InvokeContract {
@@ -145,6 +157,28 @@ function scvalToStringSafe(val: unknown, sdk: StellarSdkLike): string | undefine
   }
 }
 
+/** Known high-stakes contract IDs by network. These are UI-only labels; they do
+ * not affect signing or authorization. Unknown contracts must not be guessed. */
+const KNOWN_CONTRACT_LABELS: Record<"testnet" | "mainnet", Record<string, string>> = {
+  testnet: {
+    // AttestationRegistry instance used by the migrated threshold-attestor flow (M5).
+    CBZVS2ETJKCIMRRWUHTZFVMWDACJNYUZ54JIXUJCHXNBFNXELKTSWHGP:
+      "Threshold attestor registry",
+  },
+  mainnet: {},
+};
+
+function knownContractLabel(
+  contract: string,
+  fn: string,
+  network: "testnet" | "mainnet",
+): string | undefined {
+  // Only label the exact configured contract for the active network.
+  const label = KNOWN_CONTRACT_LABELS[network][contract];
+  if (!label) return undefined;
+  return `${label}: ${fn}`;
+}
+
 /** A short human-readable label for one operation, e.g. "invoke swap",
  * "send 5 to GABC…XYZ", or "an operation" for an unrecognized shape. Never
  * throws: an operation this cannot specifically describe still gets a safe
@@ -154,7 +188,7 @@ export function describeOperation(op: OperationSummary): string {
     case "transfer":
       return `send ${formatStroops(op.amount)} to ${op.to}`;
     case "contract-call":
-      return `invoke ${op.fn}`;
+      return op.label ? `invoke ${op.label}` : `invoke ${op.fn}`;
     case "other":
       return op.label;
   }

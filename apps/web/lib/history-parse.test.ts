@@ -482,6 +482,38 @@ describe("pagination past one page", () => {
 
 // --- Cursor packing ----------------------------------------------------------
 
+describe("history-parse exhaustiveness (#780)", () => {
+  it("handles every HistoryTx kind through the corresponding parse path", () => {
+    // Exhaustiveness baseline: if HistoryTx.kind gains a new variant, this typed
+    // record must be updated, causing a compile-time/test failure until a parse
+    // case is covered.
+    const kindCases: Record<import("./history-types").HistoryTx["kind"], true> = {
+      soroban: true,
+      classic: true,
+    };
+
+    const soroban = parseSACTransfer(USDC_EVENT.to, liveEvent(USDC_EVENT), USDC_ASSET, decode);
+    expect(soroban?.kind).toBe("soroban");
+
+    const classic = classicOpToRow(ACCOUNT, classicPayment());
+    expect(classic?.kind).toBe("classic");
+
+    expect(Object.keys(kindCases).sort()).toEqual(["classic", "soroban"]);
+  });
+
+  it("requires a parse case for any new HistoryTx kind via compile-time mapping", () => {
+    type Kind = import("./history-types").HistoryTx["kind"];
+    const assertHandled: { [K in Kind]: (row: Extract<import("./history-types").HistoryTx, { kind: K }>) => K } = {
+      soroban: (row) => row.kind,
+      classic: (row) => row.kind,
+    };
+    const soroban = parseSACTransfer(USDC_EVENT.to, liveEvent(USDC_EVENT), USDC_ASSET, decode)!;
+    const classic = classicOpToRow(ACCOUNT, classicPayment())!;
+    expect(assertHandled.soroban(soroban)).toBe("soroban");
+    expect(assertHandled.classic(classic)).toBe("classic");
+  });
+});
+
 describe("cursor packing", () => {
   it("round-trips both rail cursors", () => {
     expect(decodePageCursor(encodePageCursor("events-token", "ops-token"))).toEqual({

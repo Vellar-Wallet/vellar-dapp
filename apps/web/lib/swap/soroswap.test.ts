@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
+import { assetsFor } from "@/lib/assets";
 import {
   assertMeetsMinOut,
   assertSlippageWithin,
@@ -8,6 +9,7 @@ import {
   SWAP_DEADLINE_SECONDS,
   SwapVenueError,
 } from "./soroswap";
+import { normalizeQuote, slippageBound } from "./quote";
 
 const BASE = {
   amountIn: 100_000_000n,
@@ -115,5 +117,55 @@ describe("assertMeetsMinOut re-validation semantics", () => {
     // The quote said 105; the pool now pays 98. Refused even though the original
     // quote would have cleared the floor.
     expect(() => assertMeetsMinOut([100n, 98n], 99n)).toThrow(SwapVenueError);
+  });
+});
+
+describe("multi-hop quote routes (#778)", () => {
+  const [XLM, USDC] = assetsFor("testnet") as [
+    ReturnType<typeof assetsFor>[number],
+    ReturnType<typeof assetsFor>[number],
+  ];
+  const MID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+  const MID2 = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+  it("handles a quote with more than one intermediate asset and computes slippage from final hop output", () => {
+    const quote = normalizeQuote({
+      sell: XLM,
+      buy: USDC,
+      amountIn: 100_000_000n,
+      path: [XLM.contractId, MID, MID2, USDC.contractId],
+      hopAmounts: [100_000_000n, 95_000_000n, 92_000_000n, 90_000_000n],
+      quotedAt: 1_000,
+    });
+
+    expect(quote.path).toHaveLength(4);
+    expect(quote.hopAmounts).toHaveLength(4);
+    expect(quote.expectedOut).toBe(90_000_000n);
+    // 1% slippage compounds as a single bound over final output, not per-hop rounding up.
+    expect(slippageBound(quote, 100).minOut).toBe(89_100_000n);
+  });
+
+  it("reflects significantly worse liquidity in an intermediate hop in the overall quote", () => {
+    const goodMidHop = normalizeQuote({
+      sell: XLM,
+      buy: USDC,
+      amountIn: 100_000_000n,
+      path: [XLM.contractId, MID, USDC.contractId],
+      hopAmounts: [100_000_000n, 99_000_000n, 98_000_000n],
+      quotedAt: 1_000,
+    });
+    const badMidHop = normalizeQuote({
+      sell: XLM,
+      buy: USDC,
+      amountIn: 100_000_000n,
+      path: [XLM.contractId, MID, USDC.contractId],
+      hopAmounts: [100_000_000n, 60_000_000n, 59_000_000n], // bad liquidity at first hop
+      quotedAt: 1_001,
+    });
+
+    expect(badMidHop.expectedOut).toBeLessThan(goodMidHop.expectedOut);
+    expect(slippageBound(badMidHop, 100).minOut).toBeLessThan(slippageBound(goodMidHop, 100).minOut);
+    // The low-liquidity simulated output must still be revalidated against minOut.
+    expect(() => assertMeetsMinOut(badMidHop.hopAmounts, 60_000_000n)).toThrow(SwapVenueError);
   });
 });

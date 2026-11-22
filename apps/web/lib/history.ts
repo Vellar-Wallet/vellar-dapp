@@ -1,5 +1,5 @@
 import type { Network } from "@vellar/types";
-import type { HistoryAsset, HistoryPage } from "./history-types";
+import type { HistoryAsset, HistoryPage, HistoryTx } from "./history-types";
 import {
   contractIdOf,
   buildClassicRail,
@@ -65,6 +65,26 @@ export interface HistoryClient {
     cursor?: string;
     pageSize?: number;
   }): Promise<HistoryPage>;
+}
+
+/**
+ * Merge page results that may arrive out of order or overlap (double-load race).
+ * First-seen row wins; later duplicates are dropped. Callers should pass pages
+ * in the order they intend to display (e.g. newest request first, or arrival order).
+ */
+export function mergeFetchedHistoryPages(
+  pages: Array<Pick<HistoryPage, "rows">>,
+): HistoryTx[] {
+  const seen = new Set<string>();
+  const rows: HistoryTx[] = [];
+  for (const page of pages) {
+    for (const row of page.rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+    }
+  }
+  return rows;
 }
 
 type StellarSdk = typeof import("@stellar/stellar-sdk");
