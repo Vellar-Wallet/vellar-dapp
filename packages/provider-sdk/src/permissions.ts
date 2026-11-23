@@ -58,13 +58,25 @@ export function normalizeOrigin(value: string): string | undefined {
   return url.origin;
 }
 
+/**
+ * True when a grant for exactly this origin, account AND network carries the
+ * capability. `accountId` is required and matched like the other keys, so a
+ * grant issued to one wallet can never authorize another — even if a future
+ * change stops wiping grants on re-pair, or a grant list ever spans several
+ * accounts (#745). Callers pass the currently paired wallet's account id.
+ */
 export function hasCapability(
   grants: readonly PermissionGrant[],
   origin: string,
+  accountId: string,
   network: string,
   capability: Capability,
 ): boolean {
   return grants.some(
-    (g) => g.origin === origin && g.network === network && g.capabilities.includes(capability),
+    (g) =>
+      g.origin === origin &&
+      g.accountId === accountId &&
+      g.network === network &&
+      g.capabilities.includes(capability),
   );
 }

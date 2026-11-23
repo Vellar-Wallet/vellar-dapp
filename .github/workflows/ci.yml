@@ -60,6 +60,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Docs vs code: documented API routes exist in server.ts, getting-started
+      # version floors match engines/packageManager/toolchain, and documented
+      # commands still point at real scripts (#747, #749, #750).
+      - name: Docs freshness
+        run: pnpm check:docs
+
       - name: Test
         run: pnpm test
         env:

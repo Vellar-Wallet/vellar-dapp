@@ -4,11 +4,25 @@
 
 | Tool                     | Version                  | Used for                                                 |
 | ------------------------ | ------------------------ | -------------------------------------------------------- |
-| **Node.js**              | ≥ 20.6                   | Runtime (needs `--env-file` support)                     |
+| **Node.js**              | ≥ 22                     | Runtime (needs `--env-file` support)                     |
 | **pnpm**                 | 11.x                     | Workspace / package manager                              |
 | **Docker**               | any recent               | Local Postgres + Redis                                   |
 | **Rust + `stellar` CLI** | cargo 1.94+, stellar 26+ | Only for building/deploying the Soroban policy contract  |
 | **Chrome**               | any recent               | Only for the extension's `dev` task (launches a browser) |
+
+These floors are checked by `pnpm check:docs` (run in CI) against the files that
+actually enforce them, so they cannot drift silently:
+
+| Tool        | Source of truth                                                        |
+| ----------- | ---------------------------------------------------------------------- |
+| Node.js     | root `package.json` → `engines.node`                                   |
+| pnpm        | root `package.json` → `packageManager`                                 |
+| cargo       | `contracts/rust-toolchain.toml` → `channel`                            |
+| stellar CLI | `infra/docker/verification-builder.Dockerfile` → `STELLAR_CLI_VERSION` |
+
+Rust and the `stellar` CLI have no `engines`-style enforcement, so those two
+floors are pinned to the toolchain file and the deterministic-build image the
+contracts are actually built with.
 
 ## Install
 

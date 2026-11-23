@@ -2,9 +2,10 @@
   "name": "@vellar/scripts",
   "version": "0.0.0",
   "private": true,
-  "description": "Operational scripts: deploy health gating (#334, #336), etc.",
+  "description": "Operational scripts: deploy health gating (#334, #336), docs freshness checks (#747, #749, #750), etc.",
   "type": "module",
   "scripts": {
+    "check:docs": "tsx doc-freshness.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

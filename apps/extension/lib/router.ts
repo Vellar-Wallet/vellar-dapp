@@ -83,7 +83,7 @@ export function routeProviderRequest(
 
   switch (request.method) {
     case "connect": {
-      if (hasCapability(state.grants, origin, wallet.network, "connect")) {
+      if (hasCapability(state.grants, origin, wallet.address, wallet.network, "connect")) {
         return respond({
           method: "connect",
           result: { address: wallet.address, network: wallet.network },
@@ -93,7 +93,7 @@ export function routeProviderRequest(
     }
 
     case "get_address": {
-      if (hasCapability(state.grants, origin, wallet.network, "view_address")) {
+      if (hasCapability(state.grants, origin, wallet.address, wallet.network, "view_address")) {
         return respond({
           method: "get_address",
           result: { address: wallet.address, network: wallet.network },
@@ -103,7 +103,7 @@ export function routeProviderRequest(
     }
 
     case "sign_transaction": {
-      if (!hasCapability(state.grants, origin, wallet.network, "sign")) {
+      if (!hasCapability(state.grants, origin, wallet.address, wallet.network, "sign")) {
         return respond(errorPayload("unauthorized", "Connect first to request signing"));
       }
       // Every transaction requires explicit approval — a grant only allows
@@ -112,7 +112,7 @@ export function routeProviderRequest(
     }
 
     case "sign_auth_entry": {
-      if (!hasCapability(state.grants, origin, wallet.network, "sign")) {
+      if (!hasCapability(state.grants, origin, wallet.address, wallet.network, "sign")) {
         return respond(errorPayload("unauthorized", "Connect first to request signing"));
       }
       // Auth entry signing requires explicit approval (no silent signing).
@@ -120,7 +120,7 @@ export function routeProviderRequest(
     }
 
     case "sign_message": {
-      if (!hasCapability(state.grants, origin, wallet.network, "sign")) {
+      if (!hasCapability(state.grants, origin, wallet.address, wallet.network, "sign")) {
         return respond(errorPayload("unauthorized", "Connect first to request signing"));
       }
       // Message signing requires explicit approval (no silent signing).
