@@ -364,3 +364,6 @@ fn renew_persistent(env: &Env, key: &StorageKey) {
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod decimals_change_tests;
