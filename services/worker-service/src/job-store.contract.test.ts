@@ -329,6 +329,126 @@ function runContractTests(getHarness: () => Harness) {
     ]);
     expect(await h.store.listLatestVerified(1)).toHaveLength(1);
   });
+
+  // ── Out-of-order transitions (#691) ───────────────────────────────────────────────────────────
+  //
+  // The lifecycle is submitted → building → verified | failed (or dead_letter via the reaper).
+  // Decision: `complete` only ever applies to a row that is `building`. Anything else is ignored
+  // silently — no throw, no write — so a stale or duplicated completion from a worker that lost
+  // its claim cannot overwrite the real state. Both stores follow it.
+
+  it("complete ignores a job that was never claimed (queued straight to completed)", async () => {
+    const h = getHarness();
+    await h.seed([{ id: "a", contractId: C1, status: "submitted" }]);
+
+    await h.store.complete("a", outcome("verified", HASH_A));
+
+    expect(await h.statusOf("a")).toBe("submitted");
+    expect(await h.store.countActive()).toBe(1);
+    expect(await h.store.listLatestVerified(10)).toEqual([]);
+  });
+
+  it("a job whose completion was skipped over building can still be claimed and completed normally", async () => {
+    const h = getHarness();
+    await h.seed([{ id: "a", contractId: C1, status: "submitted" }]);
+    await h.store.complete("a", outcome("verified", HASH_A));
+
+    const claimed = await h.store.claimSubmitted(1);
+    await h.store.complete("a", outcome("verified", HASH_B));
+
+    expect(claimed.map((j) => j.recordId)).toEqual(["a"]);
+    expect(await h.statusOf("a")).toBe("verified");
+    expect(await h.store.listLatestVerified(10)).toEqual([{ contractId: C1, outputHash: HASH_B }]);
+  });
+
+  it("a second completion cannot overwrite the first outcome", async () => {
+    const h = getHarness();
+    await h.seed([{ id: "a", contractId: C1, status: "submitted" }]);
+    await h.store.claimSubmitted(1);
+    await h.store.complete("a", outcome("verified", HASH_A));
+
+    await h.store.complete("a", outcome("verified", HASH_B));
+    await h.store.complete("a", outcome("failed"));
+
+    expect(await h.statusOf("a")).toBe("verified");
+    expect(await h.store.listLatestVerified(10)).toEqual([{ contractId: C1, outputHash: HASH_A }]);
+  });
+
+  it("a failed job cannot be flipped to verified by a late completion", async () => {
+    const h = getHarness();
+    await h.seed([{ id: "a", contractId: C1, status: "submitted" }]);
+    await h.store.claimSubmitted(1);
+    await h.store.complete("a", outcome("failed"));
+
+    await h.store.complete("a", outcome("verified", HASH_A));
+
+    expect(await h.statusOf("a")).toBe("failed");
+    expect(await h.store.listLatestVerified(10)).toEqual([]);
+  });
+
+  it.each(["verified", "failed", "dead_letter"] as const)(
+    "complete leaves a %s row exactly as it was",
+    async (status) => {
+      const h = getHarness();
+      await h.seed([{ id: "a", contractId: C1, status, outputHash: undefined }]);
+
+      await h.store.complete("a", outcome("verified", HASH_B));
+
+      expect(await h.statusOf("a")).toBe(status);
+    },
+  );
+
+  it("complete for an unknown job is a quiet no-op", async () => {
+    const h = getHarness();
+
+    await expect(h.store.complete("missing", outcome("verified", HASH_A))).resolves.toBeUndefined();
+  });
+
+  it("a finished job never goes backward to building: it is not claimed again", async () => {
+    const h = getHarness();
+    await h.seed([
+      { id: "done", contractId: C1, status: "verified", outputHash: HASH_A, attempts: 1 },
+      { id: "bad", contractId: C2, status: "failed", attempts: 1 },
+      { id: "dead", contractId: C2, status: "dead_letter", attempts: 3 },
+    ]);
+
+    const claimed = await h.store.claimSubmitted(10);
+
+    expect(claimed).toEqual([]);
+    expect(await h.statusOf("done")).toBe("verified");
+    expect(await h.statusOf("bad")).toBe("failed");
+    expect(await h.statusOf("dead")).toBe("dead_letter");
+    expect(await h.attemptsOf("done")).toBe(1);
+  });
+
+  it("the reaper does not pull a finished job back to submitted, however old it is", async () => {
+    const h = getHarness();
+    await h.seed([
+      { id: "done", contractId: C1, status: "verified", outputHash: HASH_A, attempts: 1 },
+      { id: "bad", contractId: C2, status: "failed", attempts: 1 },
+    ]);
+
+    const result = await h.store.reapStranded({
+      timeoutMs: 1,
+      maxAttempts: 3,
+      nowMs: Date.now() + 10 * 24 * 60 * 60 * 1000,
+    });
+
+    expect(result).toEqual({ reclaimed: 0, deadLettered: 0 });
+    expect(await h.statusOf("done")).toBe("verified");
+    expect(await h.statusOf("bad")).toBe("failed");
+  });
+
+  it("the legal path is untouched: submitted → building → verified", async () => {
+    const h = getHarness();
+    await h.seed([{ id: "a", contractId: C1, status: "submitted" }]);
+
+    expect(await h.statusOf("a")).toBe("submitted");
+    await h.store.claimSubmitted(1);
+    expect(await h.statusOf("a")).toBe("building");
+    await h.store.complete("a", outcome("verified", HASH_A));
+    expect(await h.statusOf("a")).toBe("verified");
+  });
 }
 
 describe("createMemoryJobStore — VerificationJobStore contract (#797)", () => {

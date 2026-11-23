@@ -346,3 +346,244 @@ describe("Issue #530: Multi-step cleanup confirmation tracking & resume path", (
     expect(result.status).toBe("completed");
   });
 });
+
+describe("Issue #830: resuming into a step that now needs splitting", () => {
+  const USDC = { assetType: "credit_alphanum4", assetCode: "USDC", assetIssuer: DEST };
+  const keys = (from: number, to: number) =>
+    Array.from({ length: to - from }, (_, i) => `k${from + i}`);
+
+  /** A 150-entry plan (two steps: 100 + 50) whose first step is confirmed. */
+  function confirmedFirstStep() {
+    const acct = account({ sequence: "100", dataKeys: keys(0, 150) });
+    const steps = buildCleanupSteps(acct, DEST, PASSPHRASE);
+    expect(steps.map((s) => decode(s.xdr).ops)).toEqual([100, 50]);
+    const tracking = recordStepConfirmation(createPlanTracking(acct, DEST, steps), 0);
+    return { acct, steps, tracking };
+  }
+
+  /** The account after step 0 landed, with `extra` more data entries added meanwhile. */
+  function afterStepZero(acct: HorizonAccount, extra: string[]) {
+    return account({
+      accountId: acct.accountId,
+      sequence: "101",
+      dataKeys: [...keys(100, 150), ...extra],
+    });
+  }
+
+  it("rebuilds the remaining work as two steps when one step has grown past the op limit", () => {
+    const { acct, steps, tracking } = confirmedFirstStep();
+    const onChain = afterStepZero(acct, keys(1000, 1090)); // 50 + 90 = 140 operations
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.resumedFromStep).toBe(1);
+    expect(result.remainingSteps).toHaveLength(2); // the plan had one step left; it now needs two
+    expect(result.remainingSteps.map((s) => decode(s.xdr).ops)).toEqual([100, 40]);
+    // The rebuilt steps replace, not extend, the stale one.
+    expect(result.remainingSteps.map((s) => s.hash)).not.toContain(steps[1]!.hash);
+  });
+
+  it("keeps the step count honest: completed plus remaining is the new total", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const onChain = afterStepZero(acct, keys(1000, 1090));
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.completedStepCount + result.remainingSteps.length).toBe(result.totalSteps);
+    expect(result.totalSteps).toBe(3);
+  });
+
+  it("numbers the rebuilt steps from the account's current sequence, consecutively", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const onChain = afterStepZero(acct, keys(1000, 1090));
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.remainingSteps.map((s) => decode(s.xdr).sequence)).toEqual([102n, 103n]);
+  });
+
+  it("labels the rebuilt steps by the new count, not the original one", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const onChain = afterStepZero(acct, keys(1000, 1090));
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.remainingSteps[0]!.title).toBe("Clean up the account (1/2)");
+    expect(result.remainingSteps[1]!.title).toBe("Clean up the account (2/2)");
+  });
+
+  it("carries every remaining operation exactly once and none from the confirmed step", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const added = keys(1000, 1090);
+    const onChain = afterStepZero(acct, added);
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    const names = result.remainingSteps.flatMap((s) => {
+      const tx = TransactionBuilder.fromXDR(s.xdr, PASSPHRASE);
+      if ("innerTransaction" in tx) throw new Error("unexpected fee-bump tx");
+      return tx.operations.map((o) => (o.type === "manageData" ? o.name : o.type));
+    });
+    expect(names).toEqual([...keys(100, 150), ...added]);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).not.toContain("k0");
+    expect(names).not.toContain("k99");
+  });
+
+  it("splits in dependency order: payments and trustline removals stay before data deletions", () => {
+    const acct = account({
+      sequence: "100",
+      balances: [
+        { assetType: "native", balance: "100.0" },
+        { ...USDC, balance: "50" },
+      ],
+      dataKeys: keys(0, 60),
+    });
+    const steps = buildCleanupSteps(acct, DEST, PASSPHRASE);
+    expect(steps).toHaveLength(1); // 2 trustline ops + 60 data = 62
+    const tracking = createPlanTracking(acct, DEST, steps);
+
+    const onChain = account({
+      accountId: acct.accountId,
+      sequence: "100",
+      balances: acct.balances,
+      dataKeys: keys(0, 140), // grew while the plan waited: 2 + 140 = 142 operations
+    });
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.remainingSteps).toHaveLength(2);
+    const types = result.remainingSteps.flatMap((s) => opTypes(s.xdr));
+    expect(types.slice(0, 2)).toEqual(["payment", "changeTrust"]);
+    expect(types.slice(2).every((t) => t === "manageData")).toBe(true);
+  });
+
+  it("does the same when nothing was confirmed yet", () => {
+    const acct = account({ sequence: "100", dataKeys: keys(0, 90) });
+    const steps = buildCleanupSteps(acct, DEST, PASSPHRASE);
+    expect(steps).toHaveLength(1);
+    const tracking = createPlanTracking(acct, DEST, steps);
+
+    const result = resumeCleanupPlan({
+      currentAccount: account({
+        accountId: acct.accountId,
+        sequence: "100",
+        dataKeys: keys(0, 130),
+      }),
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.resumedFromStep).toBe(0);
+    expect(result.remainingSteps.map((s) => decode(s.xdr).ops)).toEqual([100, 30]);
+    expect(result.totalSteps).toBe(2);
+  });
+
+  it("a step that shrinks is reported the same way: the total follows the rebuild", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const onChain = account({
+      accountId: acct.accountId,
+      sequence: "101",
+      dataKeys: keys(100, 110), // most of the remaining entries were removed elsewhere
+    });
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.remainingSteps.map((s) => decode(s.xdr).ops)).toEqual([10]);
+    expect(result.completedStepCount + result.remainingSteps.length).toBe(result.totalSteps);
+  });
+
+  it("refuses to split silently when the cause is a new trustline: that needs a fresh plan", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const onChain = account({
+      accountId: acct.accountId,
+      sequence: "101",
+      balances: [
+        { assetType: "native", balance: "100.0" },
+        { ...USDC, balance: "0" }, // a trustline that was not in the plan
+      ],
+      dataKeys: keys(100, 150),
+    });
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("fresh_plan_required");
+    if (result.status !== "fresh_plan_required") return;
+    expect(result.reason).toContain("unexpected new asset trustline");
+  });
+
+  it("never emits an over-limit transaction, however much the account grew", () => {
+    const { acct, tracking } = confirmedFirstStep();
+    const onChain = afterStepZero(acct, keys(1000, 1450)); // 500 operations left
+
+    const result = resumeCleanupPlan({
+      currentAccount: onChain,
+      destination: DEST,
+      networkPassphrase: PASSPHRASE,
+      tracking,
+    });
+
+    expect(result.status).toBe("resumed");
+    if (result.status !== "resumed") return;
+    expect(result.remainingSteps).toHaveLength(5);
+    for (const s of result.remainingSteps) {
+      expect(decode(s.xdr).ops).toBeLessThanOrEqual(OPS_PER_TX);
+    }
+  });
+});

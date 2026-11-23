@@ -503,4 +503,81 @@ describe("resolveImportPathWithinCrate", () => {
     const resolved = resolveImportPathWithinCrate(crateDir, "src-link/lib.rs");
     expect(resolved).toBe(join(await realpath(crateDir), "src", "lib.rs"));
   });
+
+  // ── Windows-style separators on a POSIX build host (#836) ───────────────────────────────────
+  //
+  // On Linux a backslash is an ordinary filename character, so `..\\..\\etc` is one odd file
+  // name to the OS. But this validator guards a hermetic build input that is also handed to
+  // tools and to Windows hosts that read backslash as a separator, so it must not rely on the
+  // host's own path semantics: backslash is treated as a separator, exactly like `/`.
+
+  describe("Windows-style separators", () => {
+    const rejected = (importPath: string) => {
+      try {
+        resolveImportPathWithinCrate(crateDir, importPath);
+      } catch (err) {
+        expect(err).toBeInstanceOf(ImportPathError);
+        expect((err as ImportPathError).importPath).toBe(importPath);
+        return err as ImportPathError;
+      }
+      throw new Error(`expected ${JSON.stringify(importPath)} to be rejected`);
+    };
+
+    it.each([
+      "..\\..\\etc\\passwd",
+      "..\\secret.rs",
+      "src\\..\\..\\outside",
+      "src/..\\..\\outside",
+      "src\\../../outside",
+      "..\\",
+      "src\\..\\..",
+    ])("rejects the traversal %j", (importPath) => {
+      expect(rejected(importPath).message).toContain("outside the crate directory");
+    });
+
+    it.each([
+      "C:\\Windows\\system32\\config",
+      "c:/windows/system32",
+      "D:secret.rs",
+      "\\\\server\\share\\file.rs",
+      "\\etc\\passwd",
+    ])("rejects the Windows absolute path %j", (importPath) => {
+      expect(rejected(importPath).message).toContain("absolute");
+    });
+
+    it("does not return any path for a rejected traversal, so nothing outside is ever opened", () => {
+      let returned: string | undefined;
+      try {
+        returned = resolveImportPathWithinCrate(crateDir, "..\\..\\etc\\passwd");
+      } catch {
+        // expected
+      }
+      expect(returned).toBeUndefined();
+    });
+
+    it("treats a backslash path inside the crate like the same path with forward slashes", async () => {
+      const expected = join(await realpath(crateDir), "src", "lib.rs");
+
+      expect(resolveImportPathWithinCrate(crateDir, "src\\lib.rs")).toBe(expected);
+      expect(resolveImportPathWithinCrate(crateDir, "src/lib.rs")).toBe(expected);
+    });
+
+    it("lets a backslash traversal that stays inside the crate resolve, like its forward-slash form", async () => {
+      const expected = join(await realpath(crateDir), "src", "lib.rs");
+
+      expect(resolveImportPathWithinCrate(crateDir, "src\\..\\src\\lib.rs")).toBe(expected);
+      expect(resolveImportPathWithinCrate(crateDir, "src/../src/lib.rs")).toBe(expected);
+    });
+
+    it("rejects the same escape however the separators are spelled", () => {
+      for (const spelled of ["../../x", "..\\..\\x", "../..\\x", "..\\../x"]) {
+        expect(() => resolveImportPathWithinCrate(crateDir, spelled)).toThrow(ImportPathError);
+      }
+    });
+
+    it("still rejects an empty or whitespace path, and a bare backslash", () => {
+      expect(() => resolveImportPathWithinCrate(crateDir, "   ")).toThrow(ImportPathError);
+      expect(() => resolveImportPathWithinCrate(crateDir, "\\")).toThrow(ImportPathError);
+    });
+  });
 });

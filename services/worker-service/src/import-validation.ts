@@ -253,7 +253,11 @@ export function resolveImportPathWithinCrate(crateDir: string, importPath: strin
   if (typeof importPath !== "string" || importPath.trim() === "") {
     throw new ImportPathError("import path must be a non-empty string", String(importPath));
   }
-  if (isAbsolute(importPath)) {
+  // Backslash is a separator on Windows and in some downstream tools, but an ordinary file name
+  // character on POSIX. This validator must not depend on the host's own path semantics, so
+  // backslashes are read as separators and Windows drive and UNC roots count as absolute.
+  const portablePath = importPath.replace(/\\/g, "/");
+  if (isAbsolute(importPath) || isAbsolute(portablePath) || /^[A-Za-z]:/.test(portablePath)) {
     throw new ImportPathError(
       `import path must be relative to the crate directory, got an absolute path: ${importPath}`,
       importPath,
@@ -261,7 +265,7 @@ export function resolveImportPathWithinCrate(crateDir: string, importPath: strin
   }
 
   const crateRoot = resolve(crateDir);
-  const resolved = resolve(crateRoot, importPath);
+  const resolved = resolve(crateRoot, portablePath);
 
   // Lexical containment: catch `..` segments before touching the filesystem.
   const lexicalRel = relative(crateRoot, resolved);

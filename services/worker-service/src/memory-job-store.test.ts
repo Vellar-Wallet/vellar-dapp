@@ -133,6 +133,7 @@ describe("memory job store — queue controls (M7)", () => {
     expect(await store.countActive()).toBe(2);
     await store.claimSubmitted(1); // one -> building, still active
     expect(await store.countActive()).toBe(2);
+    await store.claimSubmitted(1); // the other -> building; only building rows can complete
     await store.complete("r1", { status: "verified", statusDetail: "ok", log: "" });
     await store.complete("r2", { status: "failed", statusDetail: "no", log: "" });
     expect(await store.countActive()).toBe(0);
@@ -143,6 +144,7 @@ describe("memory job store — queue controls (M7)", () => {
     store.submit("r1", job("C1"));
     expect(await store.hasActiveForContract("C1")).toBe(true);
     expect(await store.hasActiveForContract("C2")).toBe(false);
+    await store.claimSubmitted(1);
     await store.complete("r1", { status: "verified", statusDetail: "ok", log: "" });
     // A terminal record does NOT block a fresh resubmission of the same contract.
     expect(await store.hasActiveForContract("C1")).toBe(false);

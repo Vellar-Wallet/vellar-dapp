@@ -120,7 +120,10 @@ export function createMemoryJobStore(): MemoryJobStore {
     },
     async complete(recordId, result) {
       const row = rows.get(recordId);
-      if (!row) return;
+      // Only a row that is being built can be completed. The Postgres store applies the same
+      // rule in its UPDATE ... WHERE status = 'building', so a stale or duplicate completion
+      // (or one that skips `building`) is ignored here too instead of overwriting the row.
+      if (!row || row.status !== "building") return;
       row.status = result.status;
       row.outputHash = result.outputHash;
       row.deployedHash = result.deployedHash;
