@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import {
   extractAddressAuthSubjects,
@@ -205,6 +206,27 @@ describe("assertScopedToKnownWallets", () => {
   });
 });
 
+/**
+ * Parses Fastify's `printRoutes({ commonPrefix: false })` text tree into
+ * `{ method, path }` pairs. commonPrefix:false makes every line a complete
+ * path, so parsing only needs to strip the tree-drawing prefix and split the
+ * trailing `(METHOD, METHOD)` group — but this is still "parse a debug
+ * string," so #826's own test (below) exists to catch drift if Fastify ever
+ * changes that format out from under this.
+ */
+function parseRegisteredRoutes(printTree: string): { method: string; path: string }[] {
+  const routes: { method: string; path: string }[] = [];
+  for (const line of printTree.split("\n")) {
+    const match = /^[\s│├└─]*(\/\S*)\s+\(([^)]+)\)\s*$/.exec(line);
+    if (!match) continue;
+    const [, path, methods] = match;
+    for (const method of methods.split(",").map((m) => m.trim())) {
+      routes.push({ method, path });
+    }
+  }
+  return routes;
+}
+
 describe("Mutating routes scope gate enumeration", () => {
   const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -213,39 +235,57 @@ describe("Mutating routes scope gate enumeration", () => {
     const app = buildServer({ submitter: dummySubmitter });
     await app.ready();
 
-    // Collect all registered routes from the Fastify instance
-    const registeredMutatingRoutes: string[] = [];
     const printTree = app.printRoutes({ commonPrefix: false });
-    // Or iterate over routes using Fastify internals:
-    for (const [key, entry] of Object.entries(MUTATING_ROUTES_REGISTRY)) {
+    const registeredRoutes = parseRegisteredRoutes(printTree);
+    // Sanity check on the parser itself: if Fastify's printRoutes format ever
+    // changes shape, this must fail loudly rather than silently enumerating
+    // zero routes and passing vacuously.
+    expect(registeredRoutes).toEqual(
+      expect.arrayContaining([{ method: "POST", path: "/wallet/create" }]),
+    );
+
+    const registeredMutatingRoutes = registeredRoutes.filter((r) => mutatingMethods.has(r.method));
+    expect(registeredMutatingRoutes.length).toBeGreaterThan(0);
+
+    for (const { method, path } of registeredMutatingRoutes) {
+      // Throws ScopeError (failing this test) if server.ts registered a
+      // mutating route that was never added to MUTATING_ROUTES_REGISTRY —
+      // the actual safety net #521 was meant to provide.
+      const entry = assertRouteCoveredInRegistry(method, path);
+      expect(entry.method).toBe(method);
+      expect(entry.path).toBe(path);
+    }
+
+    for (const [, entry] of Object.entries(MUTATING_ROUTES_REGISTRY)) {
       expect(mutatingMethods.has(entry.method)).toBe(true);
       expect(entry.path.startsWith("/wallet/")).toBe(true);
       expect(entry.gateType).toBeDefined();
     }
 
-    // Verify all known mutating routes from server.ts are present in the registry
-    const expectedRoutes = [
-      "POST /wallet/create",
-      "POST /wallet/connect",
-      "POST /wallet/submit",
-      "POST /wallet/jobs",
-      "POST /wallet/sessions/revoke",
-      "POST /wallet/policy/update",
-      "POST /wallet/account/merge",
-      "POST /wallet/key/rotate",
-      "POST /wallet/threshold/update",
-      "POST /wallet/signer/manage",
-    ];
-
-    for (const route of expectedRoutes) {
-      const [method, path] = route.split(" ") as [string, string];
-      const entry = assertRouteCoveredInRegistry(method, path);
-      expect(entry).toBeDefined();
-      expect(entry.method).toBe(method);
-      expect(entry.path).toBe(path);
-    }
-
     await app.close();
+  });
+
+  it("the enumeration mechanism actually fails for a route added but never registered in the scope gate registry (#826)", async () => {
+    // #521's enumeration test only proves anything if it can fail. Register a
+    // throwaway mutating route directly against a bare Fastify instance
+    // (never added to MUTATING_ROUTES_REGISTRY), run it through the exact
+    // same check the real enumeration test uses, and confirm it is caught —
+    // rather than assuming the mechanism works without ever exercising its
+    // failure path.
+    const probe = Fastify();
+    probe.post("/wallet/__test_uncovered_route__", async () => ({ ok: true }));
+    await probe.ready();
+
+    const registeredRoutes = parseRegisteredRoutes(probe.printRoutes({ commonPrefix: false }));
+    const uncovered = registeredRoutes.find(
+      (r) => r.path === "/wallet/__test_uncovered_route__" && r.method === "POST",
+    );
+    expect(uncovered).toBeDefined();
+    expect(() => assertRouteCoveredInRegistry(uncovered!.method, uncovered!.path)).toThrow(
+      ScopeError,
+    );
+
+    await probe.close();
   });
 
   it("fails when an uncataloged mutating route is encountered", () => {

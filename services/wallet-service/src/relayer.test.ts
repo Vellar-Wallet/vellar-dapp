@@ -31,6 +31,31 @@ describe("createRelayerSubmitter", () => {
     await expect(attempt).rejects.toMatchObject({ code: "insufficient_fee" });
   });
 
+  it("classifies an HTTP-200-shaped error payload as a failure by inspecting the body, not a status code (#824)", async () => {
+    // server.send() already represents "HTTP 200 but the body is an error" as
+    // success:false — relayer.ts has no HTTP status to look at, so this pins
+    // that the classification genuinely comes from the payload shape.
+    const server: PasskeyServerLike = {
+      send: async () => ({
+        success: false,
+        error: { code: "invalid_sequence", message: "sequence number mismatch" },
+      }),
+    };
+    const attempt = createRelayerSubmitter(server, { maxRetries: 0 }).submit("xdr");
+    await expect(attempt).rejects.toBeInstanceOf(SubmissionError);
+    await expect(attempt).rejects.toMatchObject({ code: "invalid_sequence" });
+  });
+
+  it("still fails cleanly (not an unhandled TypeError) when the error payload is malformed and missing its error object (#824)", async () => {
+    // A real-world relayer inconsistency: success:false with no structured
+    // `error` field at all. Must still resolve to a SubmissionError.
+    const server = {
+      send: async () => ({ success: false }) as never,
+    } as PasskeyServerLike;
+    const attempt = createRelayerSubmitter(server, { maxRetries: 0 }).submit("xdr");
+    await expect(attempt).rejects.toBeInstanceOf(SubmissionError);
+  });
+
   it("propagates transport errors from send()", async () => {
     const server: PasskeyServerLike = {
       send: async () => {

@@ -64,6 +64,29 @@ describe("Policy Template Schema Versioning (#523)", () => {
       expect(generated.manifest.schemaVersion).toBe(1);
       expect(generated.definition.schemaVersion).toBe(1);
     });
+
+    it("fails clearly for a schemaVersion higher than any version the codebase defines, instead of falling back to the highest known version (#827)", () => {
+      // A rollback, or a record written by a future deployment pointed at an
+      // older codebase, can leave a definition referencing a schemaVersion
+      // this build has never heard of. getTemplate's exact-match lookup
+      // already returns undefined for it rather than guessing the latest
+      // known version — this pins that generatePolicy surfaces that as a
+      // clear thrown error, not a crash or a silent highest-version fallback.
+      const futureSchemaVersion = Math.max(...templates.map((t) => t.schemaVersion)) + 1000;
+
+      expect(() =>
+        generatePolicy(
+          {
+            version: "1",
+            schemaVersion: futureSchemaVersion,
+            type: "spending_limit",
+            owners: [C1],
+            spendingLimits: { dailyXlm: "50" },
+          },
+          "testnet",
+        ),
+      ).toThrow(new RegExp(`schemaVersion: ${futureSchemaVersion}`));
+    });
   });
 
   describe("validateDefinition & validateDeployedPolicy", () => {

@@ -165,6 +165,12 @@ export const MUTATING_ROUTES_REGISTRY: Record<string, MutatingRouteEntry> = {
     gateType: "worker_internal",
     description: "Worker job enqueueing with correlationId and trace context",
   },
+  "PATCH /wallet/jobs/:recordId": {
+    method: "PATCH",
+    path: "/wallet/jobs/:recordId",
+    gateType: "worker_internal",
+    description: "Worker job status transition endpoint (#826 enumeration gap)",
+  },
   "POST /wallet/sessions/revoke": {
     method: "POST",
     path: "/wallet/sessions/revoke",
