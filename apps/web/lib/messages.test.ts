@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isUserCancellation } from "@vellar/passkey";
+import { PasskeyError, isUserCancellation } from "@vellar/passkey";
 import { WalletApiError } from "./http-backend";
 import { passkeyCause, walletErrorMessage } from "./messages";
 
@@ -36,5 +36,14 @@ describe("walletErrorMessage / passkeyCause (reconnect failure copy, #469)", () 
   it("plain DOM errors are unchanged", () => {
     expect(passkeyCause(notAllowed)).toBe(notAllowed);
     expect(walletErrorMessage(notAllowed)).toMatch(/dismissed/);
+  });
+});
+
+describe("walletErrorMessage no-authenticator copy (#758)", () => {
+  it("has its own message, distinct from a dismissed prompt and from unsupported browsers", () => {
+    const none = walletErrorMessage(new PasskeyError("no-authenticator", "x", undefined));
+    expect(none).toMatch(/no passkey authenticator/i);
+    expect(none).not.toBe(walletErrorMessage(notAllowed));
+    expect(none).not.toBe(walletErrorMessage(Object.assign(new Error("x"), { name: "NotSupportedError" })));
   });
 });

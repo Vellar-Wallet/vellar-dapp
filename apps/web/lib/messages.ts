@@ -6,6 +6,8 @@ import { WalletApiError } from "./http-backend";
 
 const passkeyMessages: Record<PasskeyErrorCode, string> = {
   cancelled: "The passkey prompt was dismissed. Try again when you're ready.",
+  "no-authenticator":
+    "This device has no passkey authenticator available. Use a device with Touch ID, Windows Hello, or a security key.",
   "credential-exists":
     "A passkey for Vellar already exists on this device. Try signing in instead.",
   unsupported: "This browser doesn't support the required passkey features.",

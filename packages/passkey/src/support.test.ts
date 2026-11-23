@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PASSKEY_ERROR_MESSAGES, toPasskeyError } from "./errors";
 import { detectPasskeySupport, hasPlatformAuthenticator, type PasskeyEnvironment } from "./support";
 
 function env(overrides: Partial<PasskeyEnvironment> = {}): PasskeyEnvironment {
@@ -71,5 +72,41 @@ describe("WebAuthn feature-detection failure (issue #551)", () => {
     const env = { isSecureContext: true, publicKeyCredential: undefined };
     expect(() => detectPasskeySupport(env)).not.toThrow();
     expect(() => detectPasskeySupport({ isSecureContext: false, publicKeyCredential: {} })).not.toThrow();
+  });
+});
+
+describe("WebAuthn present but platform-authenticator check fails (issue #758)", () => {
+  const noPlatform = () =>
+    env({ publicKeyCredential: { isUserVerifyingPlatformAuthenticatorAvailable: async () => false } });
+
+  it("passes the coarse gate but reports no platform authenticator", async () => {
+    expect(detectPasskeySupport(noPlatform())).toEqual({ supported: true });
+    await expect(hasPlatformAuthenticator(noPlatform())).resolves.toBe(false);
+  });
+
+  it("treats a rejecting platform check the same as a negative answer", async () => {
+    const rejecting = env({
+      publicKeyCredential: {
+        isUserVerifyingPlatformAuthenticatorAvailable: vi.fn().mockRejectedValue(new Error("locked down")),
+      },
+    });
+    expect(detectPasskeySupport(rejecting)).toEqual({ supported: true });
+    await expect(hasPlatformAuthenticator(rejecting)).resolves.toBe(false);
+  });
+
+  it("the resulting NotAllowedError surfaces a message distinct from cancel and no-WebAuthn", () => {
+    const notAllowed = Object.assign(new Error("not allowed"), { name: "NotAllowedError" });
+    const noAuthenticator = toPasskeyError(notAllowed, false);
+    const cancelled = toPasskeyError(notAllowed, true);
+    expect(noAuthenticator.code).toBe("no-authenticator");
+    expect(cancelled.code).toBe("cancelled");
+    expect(noAuthenticator.message).not.toBe(cancelled.message);
+    expect(noAuthenticator.message).not.toBe(PASSKEY_ERROR_MESSAGES.unsupported);
+  });
+
+  it("inverse: no WebAuthn API at all is caught by the earliest, coarsest check", async () => {
+    const e = env({ publicKeyCredential: undefined });
+    expect(detectPasskeySupport(e)).toEqual({ supported: false, reason: "no-webauthn" });
+    await expect(hasPlatformAuthenticator(e)).resolves.toBe(false);
   });
 });
