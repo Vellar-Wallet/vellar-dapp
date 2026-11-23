@@ -72,9 +72,12 @@ attach). Returns once the network accepts it.
 
 Errors: `502` (submission failure — includes relayer-not-configured).
 
-### `GET /wallet/session/:id`
+### `GET /wallet/session?contractId=C...`
 
-Returns a single session record, or `404 session_not_found`.
+Returns the caller's **own** session, identified by the session id sent as a
+bearer capability (there is no id in the URL). `contractId` is optional; when
+given, the session must belong to it. `401 unauthorized` when the bearer is
+missing, expired, or bound to a different account.
 
 ### `GET /wallet/sessions?contractId=C...&network=testnet`
 
@@ -96,9 +99,18 @@ management).
 }
 ```
 
-### `DELETE /wallet/session/:id`
+### `POST /wallet/sessions/revoke`
 
-Revokes a session. `204` on success, `404 session_not_found` otherwise.
+Revokes one of the caller's account's sessions (device management). The bearer
+must be a live session for the same account and network as the target.
+
+```jsonc
+// request
+{ "targetSessionId": "..." }
+```
+
+`204` on success, `401 unauthorized` without a valid bearer, `404 session_not_found`
+when the target does not exist or belongs to another account.
 
 ---
 

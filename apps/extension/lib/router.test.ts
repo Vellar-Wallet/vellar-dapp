@@ -178,6 +178,46 @@ describe("routeProviderRequest", () => {
     });
   });
 
+  // #745: a grant is bound to the account it was issued to. If a grant for a
+  // DIFFERENT account were ever left in the list (e.g. after re-pairing), it
+  // must not authorize the currently paired wallet.
+  describe("grants issued to a different account (#745)", () => {
+    const otherAccountGrant: PermissionGrant = { ...grant, accountId: "COTHER" };
+    const foreignGrants: ExtensionState = { ...paired, grants: [otherAccountGrant] };
+
+    it("connect still requires approval", () => {
+      expect(routeProviderRequest(connect, ORIGIN, foreignGrants)).toEqual({
+        kind: "needs-approval",
+        origin: ORIGIN,
+      });
+    });
+
+    it("get_address is unauthorized", () => {
+      expectError(
+        foreignGrants,
+        { method: "get_address", params: { network: "testnet" } },
+        ORIGIN,
+        "unauthorized",
+      );
+    });
+
+    it.each([
+      ["sign_transaction", { xdr: "AAAA", network: "testnet" }],
+      ["sign_auth_entry", { authEntry: "entry_xdr", network: "testnet" }],
+      ["sign_message", { message: "hello", network: "testnet" }],
+    ] as const)("%s is unauthorized", (method, params) => {
+      expectError(foreignGrants, { method, params } as ProviderRequest, ORIGIN, "unauthorized");
+    });
+
+    it("a grant for the paired account still works next to a foreign one", () => {
+      const both: ExtensionState = { ...paired, grants: [otherAccountGrant, grant] };
+      expect(routeProviderRequest(connect, ORIGIN, both)).toMatchObject({
+        kind: "respond",
+        payload: { method: "connect" },
+      });
+    });
+  });
+
   it("sign_auth_entry routes to needs-approval when origin has sign grant", () => {
     const decision = routeProviderRequest(
       { method: "sign_auth_entry", params: { authEntry: "entry_xdr", network: "testnet" } },
