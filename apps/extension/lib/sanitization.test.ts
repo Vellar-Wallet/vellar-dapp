@@ -100,6 +100,74 @@ describe("input sanitization helpers (#312)", () => {
         expect(result).toBe("hidden memo");
       });
     });
+
+    // #818: zero-width characters (distinct from the C0/C1 controls and bidi
+    // overrides covered above) render as NOTHING, so two strings can look
+    // identical on the approval screen while differing at the byte level —
+    // a homograph-adjacent way to slip a lookalike origin or memo past a
+    // visual comparison. Sanitizing must collapse them so that visual
+    // identity implies byte identity.
+    describe("zero-width characters in a dApp-supplied origin or memo (#818)", () => {
+      const ZWSP = "​"; // ZERO WIDTH SPACE
+      const ZWNJ = "‌"; // ZERO WIDTH NON-JOINER
+      const ZWJ = "‍"; // ZERO WIDTH JOINER
+      const WJ = "⁠"; // WORD JOINER
+      const BOM = "﻿"; // ZERO WIDTH NO-BREAK SPACE / BOM
+      const ZERO_WIDTH = /[​-‍⁠﻿]/;
+
+      it("leaves an origin with no zero-width characters unchanged (happy path)", () => {
+        expect(sanitizeString("app.example.com")).toBe("app.example.com");
+        // Legitimate visible non-ASCII is not collateral damage.
+        expect(sanitizeString("café memo")).toBe("café memo");
+      });
+
+      it.each([
+        ["U+200B ZERO WIDTH SPACE", ZWSP],
+        ["U+200C ZERO WIDTH NON-JOINER", ZWNJ],
+        ["U+200D ZERO WIDTH JOINER", ZWJ],
+        ["U+2060 WORD JOINER", WJ],
+        ["U+FEFF ZERO WIDTH NO-BREAK SPACE", BOM],
+      ])("strips %s embedded in an origin", (_name, zw) => {
+        const result = sanitizeString(`app.ex${zw}ample.com`);
+        expect(result).toBe("app.example.com");
+        expect(result).not.toMatch(ZERO_WIDTH);
+      });
+
+      it("collapses two visually-identical but byte-different origins to the same value", () => {
+        const genuine = "app.example.com";
+        const lookalike = `app${ZWSP}.exa${ZWJ}mple${BOM}.com`;
+        // Precondition: the raw strings genuinely differ at the byte level
+        // even though neither zero-width character renders.
+        expect(lookalike).not.toBe(genuine);
+        expect(lookalike.length).toBeGreaterThan(genuine.length);
+        // After sanitizing, a diff/compare of the two shows no difference.
+        expect(sanitizeString(lookalike)).toBe(sanitizeString(genuine));
+      });
+
+      it("strips a sequence of zero-width characters from a memo, keeping the visible text", () => {
+        const memo = `Invoice${ZWSP}${ZWNJ}${ZWJ}${WJ}${BOM} #42`;
+        expect(sanitizeString(memo)).toBe("Invoice #42");
+      });
+
+      it("strips zero-width characters alongside bidi overrides and control characters", () => {
+        // Mixed spoofing payload: each class must be removed, not just one.
+        const memo = `‮${ZWSP}Pay\x00${ZWJ} merchant${BOM}‬`;
+        const result = sanitizeString(memo);
+        expect(result).toBe("Pay merchant");
+        expect(result).not.toMatch(ZERO_WIDTH);
+      });
+
+      it("reduces a field made only of zero-width characters to an empty string", () => {
+        expect(sanitizeString(`${ZWSP}${ZWJ}${BOM}`)).toBe("");
+      });
+
+      it("does not let zero-width padding push visible content out of the length cap", () => {
+        // Stripping happens BEFORE truncation, so invisible padding cannot be
+        // used to consume the length budget and hide the meaningful tail.
+        const padded = `${ZWSP.repeat(50)}visible-tail`;
+        expect(sanitizeString(padded, 20)).toBe("visible-tail");
+      });
+    });
   });
 
   describe("sanitizeDAppMetadata", () => {
@@ -123,6 +191,21 @@ describe("input sanitization helpers (#312)", () => {
 
     it("provides fallback for missing or empty name", () => {
       const result = sanitizeDAppMetadata({ name: "" });
+      expect(result.name).toBe("Unknown dApp");
+    });
+
+    it("sanitizes a zero-width lookalike origin to the genuine origin (#818)", () => {
+      const genuine = sanitizeDAppMetadata({ name: "DEX", origin: "https://dapp.example.com" });
+      const lookalike = sanitizeDAppMetadata({
+        name: "DEX",
+        origin: "https://dapp​.example‍.com﻿",
+      });
+      expect(lookalike.origin).toBe(genuine.origin);
+      expect(lookalike).toEqual(genuine);
+    });
+
+    it("falls back to the default name when the name is only zero-width characters (#818)", () => {
+      const result = sanitizeDAppMetadata({ name: "​‌‍" });
       expect(result.name).toBe("Unknown dApp");
     });
   });

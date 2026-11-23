@@ -737,3 +737,217 @@ fn repeated_evaluation_is_idempotent_and_deterministic() {
         );
     }
 }
+
+// ----- Two verification cycles: hash A, then re-verified under hash B (#819) -----
+//
+// Per #563/#565's provenance work on superseded wasm hashes, a realistic
+// history is: a recipient contract verified under wasm hash A, upgraded, then
+// re-verified under hash B. The verification service retains BOTH records
+// off-chain; on-chain, the registry keeps exactly one attestation per contract
+// address and a re-verification replaces it. The policy's verdict must
+// therefore be a deterministic function of the LATEST cycle (B): the
+// superseded cycle-A record never resurrects authorization and never
+// contributes its expiry or its publisher.
+
+const HASH_A: [u8; 32] = [0xA1; 32];
+const HASH_B: [u8; 32] = [0xB2; 32];
+
+/// Attest `contract` under `hash`, live for `ttl` ledgers from now, with an
+/// optional publisher attribution.
+fn attest_cycle(
+    fx: &Fixture,
+    contract: &Address,
+    hash: [u8; 32],
+    ttl: u32,
+    publisher: Option<&BytesN<32>>,
+) -> u32 {
+    let expires = fx.env.ledger().sequence() + ttl;
+    let hash = BytesN::from_array(&fx.env, &hash);
+    match publisher {
+        Some(p) => fx
+            .registry
+            .upsert_with_publisher(contract, &hash, p, &expires),
+        None => fx.registry.upsert(contract, &hash, &expires),
+    }
+    expires
+}
+
+fn advance(fx: &Fixture, ledgers: u32) {
+    fx.env.ledger().with_mut(|l| l.sequence_number += ledgers);
+}
+
+#[test]
+fn reverified_under_second_hash_is_authorized_and_record_reflects_hash_b() {
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    attest_cycle(&fx, &token, HASH_A, 1000, None);
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+
+    // Upgrade + re-verification some ledgers later.
+    advance(&fx, 50);
+    let expires_b = attest_cycle(&fx, &token, HASH_B, 1000, None);
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+
+    let record = fx.registry.attestation(&token).unwrap();
+    assert_eq!(record.wasm_hash, BytesN::from_array(&fx.env, &HASH_B));
+    assert_eq!(record.attested_ledger, fx.env.ledger().sequence());
+    assert_eq!(record.expires_ledger, expires_b);
+}
+
+#[test]
+fn superseded_cycle_a_expiry_does_not_extend_a_shorter_cycle_b() {
+    // A was attested with a LONG lifetime, B with a SHORT one. Once B lapses
+    // the contract is unverified, even though A's original expiry is still in
+    // the future: there is no fallback to the superseded record.
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    let expires_a = attest_cycle(&fx, &token, HASH_A, 1000, None);
+    advance(&fx, 10);
+    let expires_b = attest_cycle(&fx, &token, HASH_B, 20, None);
+    assert!(expires_b < expires_a);
+
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+
+    fx.env.ledger().with_mut(|l| l.sequence_number = expires_b);
+    assert!(
+        fx.env.ledger().sequence() < expires_a,
+        "A would still be live"
+    );
+    let res = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+}
+
+#[test]
+fn cycle_b_keeps_authorizing_past_the_superseded_cycle_a_expiry() {
+    // The converse: A short, B long. Passing A's old expiry changes nothing
+    // because B — the live cycle — governs.
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    let expires_a = attest_cycle(&fx, &token, HASH_A, 20, None);
+    advance(&fx, 10);
+    let expires_b = attest_cycle(&fx, &token, HASH_B, 1000, None);
+
+    fx.env
+        .ledger()
+        .with_mut(|l| l.sequence_number = expires_a + 1);
+    assert!(fx.env.ledger().sequence() < expires_b);
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+}
+
+#[test]
+fn revoking_after_reverification_does_not_resurrect_cycle_a() {
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    attest_cycle(&fx, &token, HASH_A, 1000, None);
+    advance(&fx, 10);
+    attest_cycle(&fx, &token, HASH_B, 1000, None);
+    fx.registry.revoke(&token);
+
+    assert_eq!(fx.registry.attestation(&token), None);
+    let res = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+}
+
+#[test]
+fn trusted_mode_uses_cycle_b_publisher_not_the_superseded_trusted_one() {
+    // Cycle A was attributed to the trusted publisher; cycle B (after the
+    // upgrade) to someone else. The old trusted attribution must not carry
+    // over to the new code.
+    let fx = setup_mode(false, trusted(0x42));
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    attest_cycle(&fx, &token, HASH_A, 1000, Some(&publisher(&fx.env, 0x42)));
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+
+    advance(&fx, 10);
+    attest_cycle(&fx, &token, HASH_B, 1000, Some(&publisher(&fx.env, 0x99)));
+    let res = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(res, contract_err(PolicyError::UntrustedPublisher));
+}
+
+#[test]
+fn trusted_mode_authorizes_when_cycle_b_moves_to_a_trusted_publisher() {
+    let fx = setup_mode(false, trusted(0x42));
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    attest_cycle(&fx, &token, HASH_A, 1000, Some(&publisher(&fx.env, 0x99)));
+    let res = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(res, contract_err(PolicyError::UntrustedPublisher));
+
+    advance(&fx, 10);
+    attest_cycle(&fx, &token, HASH_B, 1000, Some(&publisher(&fx.env, 0x42)));
+    fx.policy
+        .policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+}
+
+#[test]
+fn trusted_mode_unattributed_cycle_b_drops_cycle_a_attribution() {
+    // Re-verified under B WITHOUT attribution: verified, but no longer
+    // attributed to anyone — the trusted cycle-A publisher does not linger.
+    let fx = setup_mode(false, trusted(0x42));
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    attest_cycle(&fx, &token, HASH_A, 1000, Some(&publisher(&fx.env, 0x42)));
+    advance(&fx, 10);
+    attest_cycle(&fx, &token, HASH_B, 1000, None);
+
+    assert!(fx.registry.is_verified(&token));
+    assert_eq!(fx.registry.publisher_of(&token), None);
+    let res = fx
+        .policy
+        .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token));
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+}
+
+#[test]
+fn two_cycle_history_yields_the_same_verdict_on_every_evaluation() {
+    // Deterministic: with both cycles in the history, repeated evaluation at
+    // the same state gives the same answer (pass while B is live, fail after),
+    // never flapping between A's and B's view.
+    let fx = setup(false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+
+    attest_cycle(&fx, &token, HASH_A, 1000, None);
+    advance(&fx, 10);
+    let expires_b = attest_cycle(&fx, &token, HASH_B, 30, None);
+
+    for _ in 0..3 {
+        assert!(fx
+            .policy
+            .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token))
+            .is_ok());
+    }
+    fx.env.ledger().with_mut(|l| l.sequence_number = expires_b);
+    for _ in 0..3 {
+        assert_eq!(
+            fx.policy
+                .try_policy__(&fx.wallet, &signer_key(&fx), &single(&fx, &token)),
+            contract_err(PolicyError::NotAllowed)
+        );
+    }
+}

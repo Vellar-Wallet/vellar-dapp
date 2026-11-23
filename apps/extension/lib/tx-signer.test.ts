@@ -101,20 +101,22 @@ function walletCredentials(kind: CredKind): xdr.SorobanCredentials {
 // Build a single-op invokeHostFunction whose one auth entry is address-bound to
 // WALLET, so the signer's filter matches it. Defaults to V2 — the real shape the
 // kit produces — so the test exercises production traffic, not a legacy V1 shape.
-function buildTxWithWalletAuth(kind: CredKind = "v2"): string {
-  const authEntry = new xdr.SorobanAuthorizationEntry({
-    credentials: walletCredentials(kind),
-    rootInvocation: new xdr.SorobanAuthorizedInvocation({
-      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
-        new xdr.InvokeContractArgs({
-          contractAddress: Address.fromString(contractId()).toScAddress(),
-          functionName: "noop",
-          args: [],
-        }),
-      ),
-      subInvocations: [],
-    }),
-  });
+// `entryCount` > 1 builds several wallet-bound auth entries on the one op (#817).
+function buildTxWithWalletAuth(kind: CredKind = "v2", entryCount = 1): string {
+  const makeEntry = () =>
+    new xdr.SorobanAuthorizationEntry({
+      credentials: walletCredentials(kind),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: Address.fromString(contractId()).toScAddress(),
+            functionName: "noop",
+            args: [],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
   const op = Operation.invokeHostFunction({
     func: xdr.HostFunction.hostFunctionTypeInvokeContract(
       new xdr.InvokeContractArgs({
@@ -123,7 +125,7 @@ function buildTxWithWalletAuth(kind: CredKind = "v2"): string {
         args: [],
       }),
     ),
-    auth: [authEntry],
+    auth: Array.from({ length: entryCount }, makeEntry),
   });
   const src = new Account(Keypair.random().publicKey(), "0");
   return new TransactionBuilder(src, { fee: "100", networkPassphrase: PASSPHRASE })
@@ -277,5 +279,181 @@ describe("signTransactionXdr (L4 expiration binding)", () => {
 
     expect(signWithDeviceKeyMock).not.toHaveBeenCalled();
     expect(signAuthEntryCalls).toHaveLength(0);
+  });
+});
+
+// #817: a policy update that EXTENDS (not revokes) the device signer's expiry
+// can land while an approval that already validated against the OLD expiry is
+// still in flight. The approval's signature-expiration ledger was fixed when it
+// was checked — from the trusted anchor at that moment — so the extension must
+// neither invalidate it nor trigger a re-validation (a second anchor fetch, a
+// different expiration on a later entry of the same approval). The extension
+// takes effect for the NEXT approval only.
+describe("signer expiry extended by a policy update while an approval is in flight (#817)", () => {
+  // ~7 days at ~5s/ledger: the device signer's co-signer lifetime.
+  const SEVEN_DAYS_LEDGERS = (7 * 24 * 60 * 60) / 5;
+  const ANCHOR = 2_000_000;
+
+  // A minimal model of the chain as the trusted RPC sees it. `extendSigner`
+  // is the policy update: the signer's expiry moves out and the chain moves on.
+  let chain: { latestLedger: number; signerExpiryLedger: number };
+  let anchorFetches: number;
+  const getTrustedLatestLedger = async () => {
+    anchorFetches++;
+    return chain.latestLedger;
+  };
+  const extendSigner = () => {
+    chain.signerExpiryLedger += SEVEN_DAYS_LEDGERS;
+    chain.latestLedger += 3;
+  };
+
+  /** A single base64 wallet-bound auth entry, for signAuthEntryXdr. */
+  function walletAuthEntryXdr(): string {
+    const tx = TransactionBuilder.fromXDR(buildTxWithWalletAuth(), PASSPHRASE);
+    if (!("operations" in tx)) throw new Error("unexpected fee-bump");
+    const op = tx.operations[0]!;
+    if (op.type !== "invokeHostFunction" || !op.auth) throw new Error("no auth");
+    return op.auth[0]!.toXDR("base64");
+  }
+
+  beforeEach(() => {
+    signAuthEntryCalls.length = 0;
+    signWithDeviceKeyMock.mockClear();
+    kitHooks.connectWallet = async () => ({ contractId: WALLET });
+    kitHooks.signAuthEntry = () => {};
+    chain = { latestLedger: ANCHOR, signerExpiryLedger: ANCHOR + 100 };
+    anchorFetches = 0;
+  });
+
+  it("happy path: with no update in flight the approval is bound to anchor + cap", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    await signTransactionXdr({
+      xdr: buildTxWithWalletAuth(),
+      wallet,
+      deviceKeyPair,
+      deviceRawPublicKey,
+      getTrustedLatestLedger,
+    });
+    expect(signAuthEntryCalls).toEqual([{ expiration: ANCHOR + MAX_EXPIRATION_LEDGERS }]);
+    expect(anchorFetches).toBe(1);
+  });
+
+  it("keeps the expiration checked at approval time when the extension lands mid-signing", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    const oldSignerExpiry = chain.signerExpiryLedger;
+    kitHooks.signAuthEntry = extendSigner;
+
+    await signTransactionXdr({
+      xdr: buildTxWithWalletAuth(),
+      wallet,
+      deviceKeyPair,
+      deviceRawPublicKey,
+      getTrustedLatestLedger,
+    });
+
+    // The update really happened during the approval...
+    expect(chain.signerExpiryLedger).toBe(oldSignerExpiry + SEVEN_DAYS_LEDGERS);
+    // ...yet the approval still carries the expiration it was validated with,
+    // and the anchor was never re-fetched to "re-validate" it.
+    expect(signAuthEntryCalls).toEqual([{ expiration: ANCHOR + MAX_EXPIRATION_LEDGERS }]);
+    expect(anchorFetches).toBe(1);
+  });
+
+  it("binds every entry of one approval to the same expiration even if the extension lands between entries", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    // Extend only once, after the FIRST entry is signed — the second entry is
+    // signed against a chain where the signer's expiry has already moved.
+    let extended = false;
+    kitHooks.signAuthEntry = () => {
+      if (!extended) {
+        extendSigner();
+        extended = true;
+      }
+    };
+
+    await signTransactionXdr({
+      xdr: buildTxWithWalletAuth("v2", 2),
+      wallet,
+      deviceKeyPair,
+      deviceRawPublicKey,
+      getTrustedLatestLedger,
+    });
+
+    expect(extended).toBe(true);
+    expect(signAuthEntryCalls).toEqual([
+      { expiration: ANCHOR + MAX_EXPIRATION_LEDGERS },
+      { expiration: ANCHOR + MAX_EXPIRATION_LEDGERS },
+    ]);
+    expect(anchorFetches).toBe(1);
+  });
+
+  it("keeps the checked expiration for a single auth entry (signAuthEntryXdr) too", async () => {
+    const { signAuthEntryXdr } = await import("./tx-signer");
+    kitHooks.signAuthEntry = extendSigner;
+
+    await signAuthEntryXdr({
+      authEntry: walletAuthEntryXdr(),
+      wallet,
+      deviceKeyPair,
+      deviceRawPublicKey,
+      getTrustedLatestLedger,
+    });
+
+    expect(signAuthEntryCalls).toEqual([{ expiration: ANCHOR + MAX_EXPIRATION_LEDGERS }]);
+    expect(anchorFetches).toBe(1);
+  });
+
+  it("applies the extension to the NEXT approval only, never retroactively", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    kitHooks.signAuthEntry = extendSigner;
+    await signTransactionXdr({
+      xdr: buildTxWithWalletAuth(),
+      wallet,
+      deviceKeyPair,
+      deviceRawPublicKey,
+      getTrustedLatestLedger,
+    });
+
+    kitHooks.signAuthEntry = () => {};
+    const nextAnchor = chain.latestLedger;
+    await signTransactionXdr({
+      xdr: buildTxWithWalletAuth(),
+      wallet,
+      deviceKeyPair,
+      deviceRawPublicKey,
+      getTrustedLatestLedger,
+    });
+
+    expect(nextAnchor).toBeGreaterThan(ANCHOR);
+    expect(signAuthEntryCalls).toEqual([
+      // In-flight approval: unchanged by the update that landed during it.
+      { expiration: ANCHOR + MAX_EXPIRATION_LEDGERS },
+      // Fresh approval: anchored on the post-update chain, same capped window.
+      { expiration: nextAnchor + MAX_EXPIRATION_LEDGERS },
+    ]);
+    expect(anchorFetches).toBe(2);
+  });
+
+  it("does not silently retry with a new expiration when the in-flight approval fails after an extension", async () => {
+    const { signTransactionXdr } = await import("./tx-signer");
+    kitHooks.signAuthEntry = () => {
+      extendSigner();
+      throw new Error("kit rejected the signed entry");
+    };
+
+    await expect(
+      signTransactionXdr({
+        xdr: buildTxWithWalletAuth(),
+        wallet,
+        deviceKeyPair,
+        deviceRawPublicKey,
+        getTrustedLatestLedger,
+      }),
+    ).rejects.toThrow(/kit rejected the signed entry/);
+
+    // The failure surfaces as-is: no second anchor fetch, no re-sign against
+    // the extended signer.
+    expect(anchorFetches).toBe(1);
+    expect(signWithDeviceKeyMock).toHaveBeenCalledTimes(1);
   });
 });

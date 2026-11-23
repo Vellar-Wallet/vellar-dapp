@@ -52,7 +52,18 @@ export function sanitizeString(input: unknown, maxLength: number = MAX_DESCRIPTI
   // the string renders on the approval screen — a known UI-spoofing vector
   // for a dApp-supplied memo/name/description (e.g. disguising a malicious
   // destination as a trusted-looking one).
-  const cleaned = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F‪-‮⁦-⁩]/g, "");
+  //
+  // Also remove zero-width / invisible format characters (#818): ZERO WIDTH
+  // SPACE (U+200B), ZERO WIDTH NON-JOINER (U+200C), ZERO WIDTH JOINER
+  // (U+200D), WORD JOINER (U+2060) and ZERO WIDTH NO-BREAK SPACE / BOM
+  // (U+FEFF). They render as nothing, so "app.example" and "app.ex\u200Bample"
+  // look identical on the approval screen while differing byte-for-byte — a
+  // homograph-adjacent way to make a lookalike origin or memo pass a visual
+  // comparison. Stripping them makes visual identity imply byte identity.
+  const cleaned = str.replace(
+    /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u202A-\u202E\u2066-\u2069]|[\u200B-\u200D\u2060\uFEFF]/g,
+    "",
+  );
   // Strip tags and escape remaining HTML
   const stripped = cleaned.replace(/<[^>]*>?/gm, "");
   const escaped = escapeHtml(stripped.trim());

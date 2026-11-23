@@ -20,7 +20,9 @@ use soroban_sdk::{
     Address, Env, IntoVal, Map, Symbol, Vec,
 };
 
-use crate::{Config, Contract, ContractClient, PolicyError, SafetyRules, MAX_CONTEXTS};
+use crate::{
+    Allowance, Config, Contract, ContractClient, PolicyError, SafetyRules, StorageKey, MAX_CONTEXTS,
+};
 
 // ----- Mock wallet: implements only the view uninstall reads. -----
 
@@ -1268,4 +1270,249 @@ fn verdict_is_deterministic_for_identical_state_and_contexts() {
         verdicts.push((ok, over));
     }
     assert!(verdicts.iter().all(|v| *v == (true, false)));
+}
+
+// ============================================================================
+// #820: exact remaining-budget accounting. A spend that EXACTLY exhausts what
+// is left in the current window, followed immediately by the smallest possible
+// spend (1 stroop), is the sharpest test that `spent` / remaining arithmetic
+// is exact — not off-by-one in either direction. Too strict and the exact
+// remainder is refused; too loose and the trailing stroop slips through.
+// ============================================================================
+
+/// The wallet's committed spend record, read straight from policy storage.
+fn allowance_of(fx: &Fixture) -> Option<Allowance> {
+    fx.env.as_contract(&fx.policy.address, || {
+        fx.env
+            .storage()
+            .persistent()
+            .get::<StorageKey, Allowance>(&StorageKey::Spend(fx.wallet.clone()))
+    })
+}
+
+/// A first spend deliberately NOT a round number, so the remainder isn't one
+/// either and a rounding/off-by-one bug can't hide behind tidy values.
+const FIRST_SPEND: i128 = 37_000_001;
+
+#[test]
+fn spend_of_exact_remaining_then_one_stroop_is_rejected() {
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    let remaining = TEN_XLM - FIRST_SPEND;
+
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, FIRST_SPEND),
+    );
+    // Exactly the remainder: allowed (the limit is inclusive).
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, remaining),
+    );
+    let after_exhaust = allowance_of(&fx).unwrap();
+    assert_eq!(after_exhaust.spent, TEN_XLM, "budget exactly exhausted");
+
+    // Immediately after, in the same ledger: 1 stroop is over budget.
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+    // The rejected stroop consumed nothing and did not move the window.
+    assert_eq!(allowance_of(&fx).unwrap(), after_exhaust);
+}
+
+#[test]
+fn remaining_minus_one_leaves_exactly_one_stroop() {
+    // The "too strict" direction: after spending all but 1 stroop of the
+    // remainder, exactly 1 stroop must still be available — then nothing.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    let remaining = TEN_XLM - FIRST_SPEND;
+
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, FIRST_SPEND),
+    );
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, remaining - 1),
+    );
+    assert_eq!(allowance_of(&fx).unwrap().spent, TEN_XLM - 1);
+
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    assert_eq!(allowance_of(&fx).unwrap().spent, TEN_XLM);
+
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+}
+
+#[test]
+fn remaining_plus_one_is_rejected_without_consuming_the_remainder() {
+    // The "too loose" direction: 1 stroop over the remainder is refused as a
+    // whole (not partially applied), and the exact remainder is still there.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    let remaining = TEN_XLM - FIRST_SPEND;
+
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, FIRST_SPEND),
+    );
+    let before = allowance_of(&fx).unwrap();
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, remaining + 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+    assert_eq!(allowance_of(&fx).unwrap(), before);
+
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, remaining),
+    );
+    assert_eq!(allowance_of(&fx).unwrap().spent, TEN_XLM);
+}
+
+#[test]
+fn batch_exhausting_exact_remaining_then_one_stroop_batch_is_rejected() {
+    // Same boundary, reached through a multi-context batch: the per-call total
+    // must be summed exactly too.
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    let token = Address::generate(&fx.env);
+    let dest = Address::generate(&fx.env);
+    let remaining = TEN_XLM - FIRST_SPEND;
+    let split = remaining / 3;
+
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, FIRST_SPEND),
+    );
+
+    // A batch exceeding the remainder by exactly 1 stroop fails as a whole...
+    let mut over = ctx_in(&fx.env, &fx.wallet, &token, &dest, split);
+    over.append(&ctx_in(
+        &fx.env,
+        &fx.wallet,
+        &token,
+        &dest,
+        remaining - split,
+    ));
+    over.append(&ctx_in(&fx.env, &fx.wallet, &token, &dest, 1));
+    let res = fx.policy.try_policy__(&fx.wallet, &signer_key(&fx), &over);
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+
+    // ...while the batch summing to EXACTLY the remainder passes.
+    let mut exact = ctx_in(&fx.env, &fx.wallet, &token, &dest, split);
+    exact.append(&ctx_in(
+        &fx.env,
+        &fx.wallet,
+        &token,
+        &dest,
+        remaining - split,
+    ));
+    fx.policy.policy__(&fx.wallet, &signer_key(&fx), &exact);
+    assert_eq!(allowance_of(&fx).unwrap().spent, TEN_XLM);
+
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &ctx_in(&fx.env, &fx.wallet, &token, &dest, 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+}
+
+#[test]
+fn one_stroop_limit_allows_exactly_one_stroop_per_window() {
+    // Smallest configurable budget: the remainder after one stroop is zero.
+    let fx = setup(1, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+}
+
+#[test]
+fn trailing_stroop_is_refused_until_exactly_the_window_reset() {
+    // After exact exhaustion the stroop stays refused for the rest of the
+    // window — including one second before the reset — and becomes available
+    // exactly at the reset instant (">=" boundary, see the window tests).
+    let fx = setup(TEN_XLM, DAY, false);
+    install(&fx);
+    let start = fx.env.ledger().timestamp();
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, FIRST_SPEND),
+    );
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, TEN_XLM - FIRST_SPEND),
+    );
+
+    fx.env.ledger().set_timestamp(start + DAY - 1);
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+
+    fx.env.ledger().set_timestamp(start + DAY);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    let fresh = allowance_of(&fx).unwrap();
+    assert_eq!(fresh.window_start, start + DAY);
+    assert_eq!(fresh.spent, 1);
+}
+
+#[test]
+fn one_stroop_after_exhausting_an_i128_max_budget_fails_closed() {
+    // At the extreme, "exhausted + 1 stroop" also overflows i128. The checked
+    // add must turn that into the same NotAllowed — not a wrap to a negative
+    // `spent` that would re-open the budget.
+    let fx = setup(i128::MAX, DAY, false);
+    install(&fx);
+    fx.policy.policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, i128::MAX),
+    );
+    let res = fx.policy.try_policy__(
+        &fx.wallet,
+        &signer_key(&fx),
+        &transfer_ctx(&fx.env, &fx.wallet, 1),
+    );
+    assert_eq!(res, contract_err(PolicyError::NotAllowed));
+    assert_eq!(allowance_of(&fx).unwrap().spent, i128::MAX);
 }

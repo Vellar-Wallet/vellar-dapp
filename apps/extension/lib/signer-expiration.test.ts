@@ -83,3 +83,57 @@ describe("resolveTrustedRpcUrl (L4 anchor source)", () => {
     expect(() => resolveTrustedRpcUrl("mainnet", "")).toThrow(TrustedRpcUnavailableError);
   });
 });
+
+// #817: a policy update can EXTEND the device signer's on-chain expiry while an
+// approval that already checked the old expiry is still in flight. The
+// approval's signature-expiration ledger is computed once, from the trusted
+// anchor at check time, and boundedExpirationLedger takes nothing else as
+// input — so a later extension can neither invalidate nor re-shape it. The
+// end-to-end in-flight sequencing is covered in tx-signer.test.ts.
+describe("signer expiry extended while an approval is in flight (#817)", () => {
+  const SEVEN_DAYS_LEDGERS = (7 * 24 * 60 * 60) / 5;
+
+  it("happy path: the expiration captured at check time is reproducible from the same anchor", () => {
+    const anchor = 5_000;
+    const captured = boundedExpirationLedger(anchor);
+    // Recomputing after the extension, from the SAME anchor, yields the same
+    // value: there is no hidden signer-expiry state that could change it.
+    expect(boundedExpirationLedger(anchor)).toBe(captured);
+    expect(captured).toBe(anchor + MAX_EXPIRATION_LEDGERS);
+  });
+
+  it("an extended signer expiry does not widen or shrink the in-flight window", () => {
+    const anchor = 5_000;
+    const oldSignerExpiry = anchor + 100;
+    const captured = boundedExpirationLedger(anchor);
+    // The approval passed its check against the OLD expiry.
+    expect(captured).toBeLessThanOrEqual(oldSignerExpiry);
+
+    const extendedSignerExpiry = oldSignerExpiry + SEVEN_DAYS_LEDGERS;
+    // After the extension the captured window is still exactly the cap —
+    // the extra signer lifetime is NOT folded into this approval's window...
+    expect(captured - anchor).toBe(MAX_EXPIRATION_LEDGERS);
+    // ...and it is still covered by the (now later) signer expiry, so nothing
+    // about the extension can make the in-flight approval invalid.
+    expect(captured).toBeLessThan(extendedSignerExpiry);
+  });
+
+  it("only a NEW anchor (the next approval) moves the window, never the extension itself", () => {
+    const anchor = 5_000;
+    const captured = boundedExpirationLedger(anchor);
+    // The chain moved on while the extension landed; the NEXT approval anchors
+    // there, with the same fixed cap. The in-flight one keeps its own value.
+    const laterAnchor = anchor + 7;
+    const next = boundedExpirationLedger(laterAnchor);
+    expect(next - laterAnchor).toBe(MAX_EXPIRATION_LEDGERS);
+    expect(next).not.toBe(captured);
+    expect(boundedExpirationLedger(anchor)).toBe(captured);
+  });
+
+  it("still rejects a malformed anchor regardless of any signer-expiry change", () => {
+    // Key failure mode: an extension is not a reason to accept an anchor the
+    // trusted RPC returned in a bad shape.
+    expect(() => boundedExpirationLedger(Number.NaN)).toThrow(/non-integer ledger anchor/);
+    expect(() => boundedExpirationLedger(-SEVEN_DAYS_LEDGERS)).toThrow(/non-integer ledger anchor/);
+  });
+});
