@@ -368,6 +368,9 @@ export function resumeCleanupPlan(options: ResumePlanOptions): ResumePlanResult 
     resumedFromStep,
     remainingSteps,
     completedStepCount: resumedFromStep,
-    totalSteps: tracking.totalSteps,
+    // The remaining work is rebuilt from the account as it is now, so its step count can differ
+    // from the original plan (a step may have grown past the op limit and split, or shrunk).
+    // The total follows the rebuild instead of echoing the stale count.
+    totalSteps: resumedFromStep + remainingSteps.length,
   };
 }
