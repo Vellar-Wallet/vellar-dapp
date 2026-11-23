@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyRequest,
+  type FastifyServerOptions,
+} from "fastify";
 import {
   registerHealth,
   registerMetrics,
@@ -175,6 +179,10 @@ export interface PolicyServiceDeps {
   networkPassphrase?: string;
   /** Secret used to sign and verify CSRF tokens. Default used when unset. */
   csrfSecret?: string;
+  /** Fastify logger configuration. Defaults to `true` (JSON lines on stdout at
+   * info level). Tests pass `{ level: "debug", stream }` to capture and inspect
+   * everything the server logs (e.g. that no secret is ever written, #755). */
+  logger?: FastifyServerOptions["logger"];
   /** Token TTL in milliseconds. Defaults to 3600_000 (1 hour). */
   csrfTtlMs?: number;
   /** When true, enforces CSRF token validation on all state-changing endpoints. */
@@ -210,7 +218,7 @@ export function buildServer(deps: PolicyServiceDeps = {}): FastifyInstance {
     now,
   };
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: deps.logger ?? true });
   registerTracing(app, "policy-service");
   registerHealth(app, "policy-service", { isReady: deps.isReady });
   registerMetrics(app, "policy-service");

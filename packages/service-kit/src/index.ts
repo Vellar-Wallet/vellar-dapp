@@ -46,6 +46,7 @@ export {
   probeSigningKeysOnChain,
   signingKeyFromEnv,
   relayerNetwork,
+  redactRelayerUrl,
   SigningKeyConfigError,
   SIGNING_KEY_ENV,
   type SigningKeyRole,
@@ -79,7 +80,12 @@ export {
 export { createPgSpendBudget, type BudgetDb, type PgBudgetConfig } from "./pg-budget";
 export { canonicalPublisher, publisherIdFor, publisherIdHex } from "./publisher";
 
-export { applyMigrations, type MigrationClient } from "./migrations";
+export {
+  applyMigrations,
+  assertNoHashCollisions,
+  MigrationHashCollisionError,
+  type MigrationClient,
+} from "./migrations";
 
 export {
   extractTraceContext,

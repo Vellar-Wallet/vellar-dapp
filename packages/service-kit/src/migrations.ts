@@ -23,6 +23,21 @@ import { readMigrationFiles, type MigrationMeta } from "drizzle-orm/migrator";
 //
 // Callers must hold the cross-service migration advisory lock (see each
 // service's db/client.ts) so concurrent boots cannot interleave.
+//
+// Hash algorithm (pinned by migrations.hash.test.ts, so changing it is a
+// deliberate act): a migration's identity is the SHA-256 of the raw bytes of
+// its `.sql` file, hex-encoded and NOT truncated (64 characters). drizzle's
+// `readMigrationFiles` computes it; this runner additionally treats the
+// LF-normalized and CRLF-normalized forms of the same SQL as the same
+// migration (see `recordedForms`). Because "already recorded" is decided by
+// hash alone, two DIFFERENT migrations sharing a hash would make one of them
+// look applied and be skipped forever. A SHA-256 collision between real files
+// is not a practical risk, but it becomes one the moment the hash is shortened
+// or swapped for a weaker one, and duplicate files that differ only by line
+// endings collide by design. `applyMigrations` therefore refuses to run at all
+// (before any query) when two migrations in the folder share a hash, via
+// `assertNoHashCollisions` below. It only sees one folder per call, so it
+// cannot catch a collision between two services' folders in the shared table.
 
 export interface MigrationClient {
   query(text: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
@@ -42,6 +57,41 @@ function recordedForms(migration: MigrationMeta): string[] {
   return [migration.hash, sha(lf), sha(crlf)];
 }
 
+/** Thrown when two different migrations in one folder resolve to the same hash. */
+export class MigrationHashCollisionError extends Error {
+  constructor(
+    readonly hash: string,
+    /** Journal timestamps (`when`) of the two migrations that collide. */
+    readonly folderMillis: readonly [number, number],
+  ) {
+    super(
+      `Migration hash collision: the migrations at journal timestamps ${folderMillis[0]} and ` +
+        `${folderMillis[1]} both hash to ${hash}. Refusing to run, because the runner decides ` +
+        "'already applied' by hash alone, so one of them would be silently skipped or the " +
+        "order would be undefined. Make the two migration files differ (or remove the duplicate).",
+    );
+    this.name = "MigrationHashCollisionError";
+  }
+}
+
+/** Throws {@link MigrationHashCollisionError} when two distinct migrations share a hash
+ * (in any of the forms the runner treats as the same migration). */
+export function assertNoHashCollisions(migrations: readonly MigrationMeta[]): void {
+  const owner = new Map<string, MigrationMeta>();
+  for (const migration of migrations) {
+    for (const form of recordedForms(migration)) {
+      const previous = owner.get(form);
+      if (previous !== undefined && previous !== migration) {
+        throw new MigrationHashCollisionError(form, [
+          previous.folderMillis,
+          migration.folderMillis,
+        ]);
+      }
+      owner.set(form, migration);
+    }
+  }
+}
+
 /** Apply every migration in `migrationsFolder` whose hash is not yet recorded,
  * in journal order, inside one transaction. Returns how many were applied. */
 export async function applyMigrations(
@@ -49,6 +99,8 @@ export async function applyMigrations(
   migrationsFolder: string,
 ): Promise<number> {
   const migrations = readMigrationFiles({ migrationsFolder });
+  // Before any query: a collision must never leave a half-migrated database.
+  assertNoHashCollisions(migrations);
   await client.query(`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
   await client.query(
     `CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (

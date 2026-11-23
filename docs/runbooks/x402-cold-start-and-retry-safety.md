@@ -121,3 +121,53 @@ regardless")
   that guidance for whoever picks up the `vellar-sdk` side of the fix; it
   is not itself SDK-facing documentation (e.g. a README section in
   `vellar-sdk`), which belongs in that repository.
+
+## Which claims are verified against code, and which cannot be (issue #752)
+
+`pnpm check:runbooks` (`scripts/runbook-freshness.ts`, run in CI) checks, against
+the real source files, every claim in this runbook that this repository can
+actually verify:
+
+- Both x402-gated routes (`POST /lifecycle/execute` and
+  `GET /verification/:contractId`) declare `maxTimeoutSeconds: 300`.
+- `api-gateway` defaults its request timeout to `310_000` ms and uses it as the
+  `connectionTimeout`; the numbers are also checked against each other (310s is
+  exactly 10s above the 300s payment gate, and a ~60s cold start leaves at least
+  4x headroom inside it).
+- `lifecycle-service` and `verification-service` default
+  `HTTPFacilitatorClient` to `https://vellar-facilitator.onrender.com`.
+- `render.yaml` still documents the free-tier sleep (15 minutes idle, about a
+  minute to cold start).
+- `docs/design-x402-sdk-client.md` still records that the facilitator rebuilds
+  the transaction (`areFeesSponsored`).
+- No route in `lifecycle-service`, `verification-service`, `wallet-service` or
+  `api-gateway` is a settlement-status check, and the two x402 route files apply
+  no retry helper of their own to a payment. (`GET /verification/:contractId/status`
+  is a contract-verification lookup, not a payment-settlement check.)
+
+If one of these changes, the check fails and names the claim, so this runbook is
+updated instead of left describing the old behaviour.
+
+### Claims that cannot be verified from this repository (documentation gaps)
+
+These are real gaps in what this runbook can promise, listed here so nobody reads
+them as tested:
+
+1. **The client's retry behaviour.** The retry-safety logic itself (an SDK client
+   not re-authorizing a payment after a timeout) lives in `vellar-sdk`'s
+   `X402Client.fetch()`, a separate repository. Nothing here exercises it, so
+   "the SDK does not auto-retry with a new payment" is a recommendation, not a
+   tested guarantee. The only retry helper in this repository
+   (`retryWithBackoff` in `packages/service-kit/src/retry.ts`) is not used by the
+   x402 route files.
+2. **Facilitator idempotence.** Whether the facilitator treats a re-sent,
+   identical auth entry as a no-op is a property of a separate service.
+3. **Facilitator hosting.** Whether `vellar-facilitator` is on a sleeping tier (a
+   second cold start) can only be checked with its owner.
+4. **"Double payment on retry is impossible."** Not provable from this
+   repository, for the reasons above, and not claimed.
+5. **The cold-start figure.** "About a minute" is the number `render.yaml`
+   states; the check confirms `render.yaml` still says it, not that it is true.
+6. **`docs/decisions.md`** is gitignored, so the references to it here cannot be
+   checked in CI.
+
