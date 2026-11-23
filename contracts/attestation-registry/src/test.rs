@@ -656,3 +656,223 @@ fn revoke_emits_revoke_event_only_when_something_was_actually_removed() {
         ]
     );
 }
+
+// ----- Never-written vs written-then-revoked (#822) -----
+//
+// The verification service has to render "never verified" differently from
+// "previously verified, now revoked" (the same distinction the extension's
+// approval screen draws, #701). What the contract actually offers:
+//
+// * Storage reads (`attestation`, `is_verified`, `publisher_of`) CANNOT tell
+//   the two apart: `revoke` removes the persistent record outright, leaving
+//   the same absent/false answers a never-written id gives.
+// * The only on-chain signal is the event history: a revoked contract has an
+//   earlier `attest` event followed by a `revoke` event, a never-written one
+//   has none. These tests pin that contract so a consumer that relies on it
+//   (or a future change that adds a tombstone) is a deliberate decision.
+// * A merely EXPIRED attestation is different from both: its record is still
+//   readable, so `attestation()` returns `Some` while `is_verified` is false.
+
+#[test]
+fn never_written_contract_reads_as_absent_and_emits_nothing() {
+    let f = setup();
+    let never_written = Address::generate(&f.env);
+
+    assert_eq!(f.registry.attestation(&never_written), None);
+    assert!(!f.registry.is_verified(&never_written));
+    assert_eq!(f.registry.publisher_of(&never_written), None);
+
+    // Reads are free of side effects: no event is produced for an unknown id.
+    assert!(f.env.events().all().events().is_empty());
+}
+
+#[test]
+fn revoked_contract_reads_identically_to_never_written_in_storage() {
+    let f = setup();
+    let never_written = Address::generate(&f.env);
+    let revoked = Address::generate(&f.env);
+    let publisher = publisher_id(&f.env, 0x42);
+    let now = f.env.ledger().sequence();
+
+    assert!(upsert_with_publisher_as(
+        &f,
+        &f.attestor,
+        &revoked,
+        &wasm_hash(&f.env, 0x01),
+        &publisher,
+        now + 1000
+    ));
+    assert!(f.registry.is_verified(&revoked));
+    assert_eq!(f.registry.publisher_of(&revoked), Some(publisher));
+
+    f.env.mock_all_auths();
+    f.registry.revoke(&revoked);
+
+    // After revocation every view matches the never-written contract: the
+    // return values alone cannot distinguish the two states.
+    assert_eq!(
+        f.registry.attestation(&revoked),
+        f.registry.attestation(&never_written)
+    );
+    assert_eq!(f.registry.attestation(&revoked), None);
+    assert_eq!(
+        f.registry.is_verified(&revoked),
+        f.registry.is_verified(&never_written)
+    );
+    assert!(!f.registry.is_verified(&revoked));
+    assert_eq!(
+        f.registry.publisher_of(&revoked),
+        f.registry.publisher_of(&never_written)
+    );
+    assert_eq!(f.registry.publisher_of(&revoked), None);
+}
+
+#[test]
+fn revoked_contract_is_distinguishable_from_never_written_by_its_events() {
+    let f = setup();
+    let never_written = Address::generate(&f.env);
+    let revoked = Address::generate(&f.env);
+    let hash = wasm_hash(&f.env, 0xAB);
+    let now = f.env.ledger().sequence();
+    let expires = now + 1000;
+
+    // Step 1: the attestation write emits `attest` for the revoked contract.
+    assert!(upsert_as(&f, &f.attestor, &revoked, &hash, expires));
+    assert_eq!(
+        f.env.events().all(),
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("attest"), revoked.clone()).into_val(&f.env),
+                (hash.clone(), expires).into_val(&f.env),
+            ),
+        ]
+    );
+
+    // Step 2: revocation emits `revoke` for it.
+    f.env.mock_all_auths();
+    f.registry.revoke(&revoked);
+    assert_eq!(
+        f.env.events().all(),
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("revoke"), revoked.clone()).into_val(&f.env),
+                ().into_val(&f.env),
+            ),
+        ]
+    );
+
+    // Step 3: the never-written contract has no history at all; reading it
+    // produces no event, so an indexer finds nothing for it.
+    assert_eq!(f.registry.attestation(&never_written), None);
+    assert!(f.env.events().all().events().is_empty());
+}
+
+#[test]
+fn revoking_a_never_written_contract_is_a_noop_that_still_reads_as_never_written() {
+    let f = setup();
+    let never_written = Address::generate(&f.env);
+
+    // Idempotent: no error, no record created.
+    f.env.mock_all_auths();
+    f.registry.revoke(&never_written);
+
+    assert_eq!(f.registry.attestation(&never_written), None);
+    assert!(!f.registry.is_verified(&never_written));
+    assert_eq!(f.registry.publisher_of(&never_written), None);
+
+    // Current behaviour worth knowing: `revoke` publishes its event even when
+    // nothing was removed, so a `revoke` event ALONE does not prove the
+    // contract was ever attested. Consumers must look for the earlier `attest`
+    // event. If this ever changes (event only on real removal), update here.
+    assert_eq!(
+        f.env.events().all(),
+        vec![
+            &f.env,
+            (
+                f.registry.address.clone(),
+                (symbol_short!("revoke"), never_written.clone()).into_val(&f.env),
+                ().into_val(&f.env),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn expired_attestation_is_distinguishable_from_never_written_and_revoked() {
+    let f = setup();
+    let never_written = Address::generate(&f.env);
+    let revoked = Address::generate(&f.env);
+    let expired = Address::generate(&f.env);
+    let now = f.env.ledger().sequence();
+    let expires = now + 100;
+
+    assert!(upsert_as(
+        &f,
+        &f.attestor,
+        &revoked,
+        &wasm_hash(&f.env, 0x01),
+        now + 1000
+    ));
+    assert!(upsert_as(
+        &f,
+        &f.attestor,
+        &expired,
+        &wasm_hash(&f.env, 0x02),
+        expires
+    ));
+
+    f.env.mock_all_auths();
+    f.registry.revoke(&revoked);
+    f.env.ledger().with_mut(|l| l.sequence_number = expires);
+
+    // None of the three is verified...
+    assert!(!f.registry.is_verified(&never_written));
+    assert!(!f.registry.is_verified(&revoked));
+    assert!(!f.registry.is_verified(&expired));
+
+    // ...but only the expired one still has a readable record (for forensics).
+    assert_eq!(f.registry.attestation(&never_written), None);
+    assert_eq!(f.registry.attestation(&revoked), None);
+    let record = f
+        .registry
+        .attestation(&expired)
+        .expect("expired record stays readable");
+    assert_eq!(record.wasm_hash, wasm_hash(&f.env, 0x02));
+    assert_eq!(record.expires_ledger, expires);
+}
+
+#[test]
+fn revoked_contract_can_be_reattested_while_never_written_stays_absent() {
+    let f = setup();
+    let never_written = Address::generate(&f.env);
+    let revoked = Address::generate(&f.env);
+    let now = f.env.ledger().sequence();
+
+    assert!(upsert_as(
+        &f,
+        &f.attestor,
+        &revoked,
+        &wasm_hash(&f.env, 0x01),
+        now + 1000
+    ));
+    f.env.mock_all_auths();
+    f.registry.revoke(&revoked);
+    assert!(!f.registry.is_verified(&revoked));
+
+    // Re-attestation of the previously revoked id works...
+    f.registry
+        .upsert(&revoked, &wasm_hash(&f.env, 0x03), &(now + 2000));
+    assert!(f.registry.is_verified(&revoked));
+    assert_eq!(
+        f.registry.attestation(&revoked).map(|a| a.wasm_hash),
+        Some(wasm_hash(&f.env, 0x03))
+    );
+
+    // ...and nothing about it leaks onto an id that was never written.
+    assert!(!f.registry.is_verified(&never_written));
+    assert_eq!(f.registry.attestation(&never_written), None);
+}
