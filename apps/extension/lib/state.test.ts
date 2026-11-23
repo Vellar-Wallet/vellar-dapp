@@ -41,7 +41,6 @@ describe("loadState", () => {
     await expect(loadState(kv)).resolves.toEqual({ grants: [] });
   });
 
-
   it("applies defaults independently when storage is only partially initialized", async () => {
     const kv = memoryKv({
       "vela.extension.state": { grants: [grant] },
@@ -50,7 +49,8 @@ describe("loadState", () => {
     await expect(loadState(kv)).resolves.toEqual({
       grants: [grant],
     });
-  });  it("returns empty state when storage itself throws", async () => {
+  });
+  it("returns empty state when storage itself throws", async () => {
     const kv: KeyValueStore = {
       get: async () => {
         throw new Error("storage broken");
@@ -244,5 +244,47 @@ describe("paired-origin limit (#579)", () => {
       await addGrant(kv, originGrant(i));
     }
     await expect(addGrant(kv, originGrant(MAX_PAIRED_ORIGINS))).rejects.toThrow(/unpair/i);
+  });
+
+  // #815: setPairedWallet wipes grants when the address changes. The origin
+  // count lives in those grants, so a re-pair to a new wallet must reset the
+  // ceiling for that wallet instead of inheriting the old wallet's full list.
+  const wallet = {
+    address: "CABC",
+    network: "testnet" as const,
+    rpcUrl: "https://rpc.test",
+    keyId: "key-1",
+    walletWasmHash: "ab".repeat(32),
+  };
+
+  it("re-pairing a different wallet resets the count to zero (#815)", async () => {
+    const kv = memoryKv();
+    await setPairedWallet(kv, wallet);
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+    expect((await loadState(kv)).grants).toHaveLength(MAX_PAIRED_ORIGINS);
+
+    await setPairedWallet(kv, { ...wallet, address: "COTHER" });
+    expect((await loadState(kv)).grants).toEqual([]);
+
+    // The new wallet starts fresh, so a previously rejected origin fits.
+    await expect(addGrant(kv, originGrant(MAX_PAIRED_ORIGINS))).resolves.toBeUndefined();
+    expect((await loadState(kv)).grants).toHaveLength(1);
+  });
+
+  it("re-pairing the SAME wallet keeps the limit and the grants (#815)", async () => {
+    const kv = memoryKv();
+    await setPairedWallet(kv, wallet);
+    for (let i = 0; i < MAX_PAIRED_ORIGINS; i++) {
+      await addGrant(kv, originGrant(i));
+    }
+
+    await setPairedWallet(kv, { ...wallet });
+    expect((await loadState(kv)).grants).toHaveLength(MAX_PAIRED_ORIGINS);
+    await expect(addGrant(kv, originGrant(MAX_PAIRED_ORIGINS))).rejects.toBeInstanceOf(
+      PairedOriginLimitError,
+    );
+    expect((await loadState(kv)).grants).toHaveLength(MAX_PAIRED_ORIGINS);
   });
 });

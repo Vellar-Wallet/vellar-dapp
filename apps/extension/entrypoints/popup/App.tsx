@@ -59,10 +59,12 @@ export function App() {
   // the normal pre-pairing "missing" state, which the Unpaired screen already
   // covers and needs no banner.
   useEffect(() => {
-    void checkDeviceKeyStatus(createIdbDeviceKeyStore()).then((check) =>
+    const address = state?.pairedWallet?.address;
+    if (!address) return;
+    void checkDeviceKeyStatus(createIdbDeviceKeyStore(), address).then((check) =>
       setDeviceKeyStatus(check.status),
     );
-  }, []);
+  }, [state?.pairedWallet?.address]);
 
   const isApprovalWindow = new URLSearchParams(window.location.search).has("approval");
 
@@ -93,7 +95,10 @@ export function App() {
   // Only a paired wallet with a broken/invalid key needs the recovery path —
   // pre-pairing "missing" is the ordinary first-run state (Unpaired screen).
   const needsKeyRecovery =
-    !!state?.pairedWallet && (deviceKeyStatus === "load_failed" || deviceKeyStatus === "invalid");
+    !!state?.pairedWallet &&
+    (deviceKeyStatus === "load_failed" ||
+      deviceKeyStatus === "invalid" ||
+      deviceKeyStatus === "wallet_mismatch");
 
   if (needsKeyRecovery && deviceKeyStatus) {
     return <DeviceKeyRecovery status={deviceKeyStatus} wallet={state!.pairedWallet} />;

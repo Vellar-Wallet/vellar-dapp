@@ -5,7 +5,7 @@ import type { PendingApprovalSummary } from "../../lib/messages";
 import type { PairedWallet } from "../../lib/state";
 import { sanitizeString } from "../../lib/sanitization";
 import { formatStroops, summarizeTransaction, type TransactionSummary } from "../../lib/tx-summary";
-import { classifyContractTrust, verificationClient } from "../../lib/verification";
+import { lookupContractTrust } from "../../lib/verification";
 
 // Connect / approve dApp screen (design.md §8, technical-doc.md §8.2): a
 // full-frame takeover led by a trust-signal hero. The requesting origin is
@@ -130,14 +130,10 @@ function useContractTrust(contractId: string | undefined): TrustBadgeStatus {
     let cancelled = false;
     setStatus("loading");
     void (async () => {
-      try {
-        // The specific contract this operation calls, looked up fresh for
-        // THIS approval — never a generic or previously-cached result (#583).
-        const result = await verificationClient().getStatus(contractId);
-        if (!cancelled) setStatus(classifyContractTrust(result, false));
-      } catch {
-        if (!cancelled) setStatus(classifyContractTrust(undefined, true));
-      }
+      // The specific contract this operation calls, looked up fresh for
+      // THIS approval — never a generic or previously-cached result (#583).
+      const status = await lookupContractTrust(contractId);
+      if (!cancelled) setStatus(status);
     })();
     return () => {
       cancelled = true;
