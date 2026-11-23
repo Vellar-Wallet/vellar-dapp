@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "check:docs": "tsx doc-freshness.ts",
+    "check:runbooks": "tsx runbook-freshness.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

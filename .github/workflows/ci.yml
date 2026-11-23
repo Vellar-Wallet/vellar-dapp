@@ -66,6 +66,12 @@ jobs:
       - name: Docs freshness
         run: pnpm check:docs
 
+      # Runbooks vs code: every file, flag, env key and code claim a runbook
+      # relies on still exists as named, so an operator is never sent to a
+      # stale step during an incident (#751, #752).
+      - name: Runbook freshness
+        run: pnpm check:runbooks
+
       - name: Test
         run: pnpm test
         env:

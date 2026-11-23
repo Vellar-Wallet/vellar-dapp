@@ -75,6 +75,26 @@ export interface SigningKeyReport {
   relayerNetwork: Network | undefined;
 }
 
+/**
+ * A relayer URL that is safe to print in a boot error (#755). Credentials
+ * (`user:pass@`), the query string and the fragment are dropped, because that is
+ * where an API key most often rides along; the scheme, host and path remain,
+ * which is exactly what {@link relayerNetwork} uses to classify the URL, so the
+ * message stays as useful to an operator.
+ */
+export function redactRelayerUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "<unparseable URL>";
+  }
+}
+
 /** Classify a relayer base URL by network, or `undefined` when unrecognized. */
 export function relayerNetwork(baseUrl: string): Network | undefined {
   let url: URL;
@@ -168,7 +188,7 @@ export function verifySigningKeys(inputs: SigningKeyCheckInputs): SigningKeyRepo
     relayerNet = relayerNetwork(inputs.relayerBaseUrl);
     if (relayerNet && relayerNet !== inputs.network) {
       problems.push(
-        `RELAYER_BASE_URL='${inputs.relayerBaseUrl}' looks like ${relayerNet} but ` +
+        `RELAYER_BASE_URL='${redactRelayerUrl(inputs.relayerBaseUrl)}' looks like ${relayerNet} but ` +
           `STELLAR_NETWORK='${inputs.network}'. Point the relayer (and its RELAYER_API_KEY) at ${inputs.network}.`,
       );
     }

@@ -12,6 +12,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "check:docs": "pnpm --filter @vellar/scripts check:docs",
+    "check:runbooks": "pnpm --filter @vellar/scripts check:runbooks",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yaml,yml}\""
   },

@@ -3,6 +3,12 @@
 See `docs/decisions.md` ("SPOF triage, issue #474") for why this exists and
 what it does and does not solve.
 
+The files, flags, environment keys and code behaviour this runbook relies on are
+checked in CI by `pnpm check:runbooks` (`scripts/runbook-freshness.ts`): if one
+is renamed, removed or changes meaning, the check fails and names the stale
+step. Update this runbook in the same change. The reference to `docs/decisions.md`
+is the one thing it cannot check, because that file is gitignored.
+
 ## Sponsor key rotation
 
 The sponsor secret key (`SPONSOR_SECRET_KEY` / `SPONSOR_PUBLIC_KEY`, set in the
