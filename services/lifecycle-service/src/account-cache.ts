@@ -71,6 +71,7 @@ export function createCachedAccountReader(
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const now = options.now ?? Date.now;
   const store = new Map<string, CacheEntry>();
+  const pendingReads = new Map<string, { count: number }>();
 
   return {
     async getAccount(accountId: string): Promise<HorizonAccount | undefined> {
@@ -79,17 +80,32 @@ export function createCachedAccountReader(
         return cached.value;
       }
 
-      const value = await reader.getAccount(accountId);
-      store.set(accountId, { value, expiresAt: now() + ttlMs });
-      return value;
+      const pending = pendingReads.get(accountId) ?? { count: 0 };
+      pending.count++;
+      pendingReads.set(accountId, pending);
+      try {
+        const value = await reader.getAccount(accountId);
+        // Invalidation detaches the reads that started before it.
+        if (pendingReads.get(accountId) === pending) {
+          store.set(accountId, { value, expiresAt: now() + ttlMs });
+        }
+        return value;
+      } finally {
+        pending.count--;
+        if (pending.count === 0 && pendingReads.get(accountId) === pending) {
+          pendingReads.delete(accountId);
+        }
+      }
     },
 
     invalidate(accountId: string): void {
       store.delete(accountId);
+      pendingReads.delete(accountId);
     },
 
     invalidateAll(): void {
       store.clear();
+      pendingReads.clear();
     },
   };
 }

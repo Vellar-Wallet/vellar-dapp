@@ -6,6 +6,7 @@ import { isTransientFailure, type ErrorClassification } from "./error-classifica
 import { calculateBackoffDelay, BACKOFF_CONFIG } from "./backoff";
 import { compareWasm } from "./wasm-compare";
 import { isFirstPartyContract } from "./first-party";
+import type { RetiredJobSigningKey } from "./job-signature";
 
 // The verification pipeline (technical-doc.md §7.6): given a job, rebuild the
 // contract, resolve the deployed wasm hash, and compare. This module is the
@@ -72,6 +73,8 @@ export interface RunVerificationDeps {
   maxDelayMs?: number;
   /** Shared secret for job payload cryptographic signature verification (Phase 7). */
   jobSecret?: string;
+  /** Previous signing keys and their individual grace-period deadlines. */
+  retiredJobSigningKeys?: readonly RetiredJobSigningKey[];
 }
 
 /**
@@ -96,7 +99,9 @@ export async function runVerification(
   // 0. Verify job payload cryptographic signature (Phase 7 / Issue #421)
   if (deps.jobSecret) {
     const { verifyJobSignature } = await import("./job-signature");
-    const sigResult = verifyJobSignature(job, deps.jobSecret);
+    const sigResult = verifyJobSignature(job, deps.jobSecret, {
+      retiredKeys: deps.retiredJobSigningKeys,
+    });
     if (!sigResult.valid) {
       return {
         status: "failed",

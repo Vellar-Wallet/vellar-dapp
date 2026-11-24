@@ -195,11 +195,48 @@ describe("createCachedAccountReader", () => {
       expect(underlying.getAccount).toHaveBeenCalledTimes(2);
     });
 
+    it.each(["invalidate", "invalidateAll"] as const)(
+      "prevents reads started before %s from caching the open account",
+      async (method) => {
+        const openAccount = account({ accountId: "GCLOSED" });
+        let resolveFirst!: (value: HorizonAccount) => void;
+        let resolveSecond!: (value: HorizonAccount) => void;
+        const firstRead = new Promise<HorizonAccount>((resolve) => {
+          resolveFirst = resolve;
+        });
+        const secondRead = new Promise<HorizonAccount>((resolve) => {
+          resolveSecond = resolve;
+        });
+        const getAccount = vi
+          .fn<AccountReader["getAccount"]>()
+          .mockReturnValueOnce(firstRead)
+          .mockReturnValueOnce(secondRead)
+          .mockResolvedValue(undefined);
+        const cached = createCachedAccountReader({ getAccount });
+        const first = cached.getAccount(openAccount.accountId);
+        const second = cached.getAccount(openAccount.accountId);
+
+        if (method === "invalidate") cached.invalidate(openAccount.accountId);
+        else cached.invalidateAll();
+
+        resolveFirst(openAccount);
+        expect(await first).toEqual(openAccount);
+        expect(await cached.getAccount(openAccount.accountId)).toBeUndefined();
+
+        resolveSecond(openAccount);
+        expect(await second).toEqual(openAccount);
+        expect(await cached.getAccount(openAccount.accountId)).toBeUndefined();
+        expect(getAccount).toHaveBeenCalledTimes(3);
+      },
+    );
+
     it("re-evaluates closed account after TTL expires without manual invalidation", async () => {
       const clock = fakeClock();
       let accountOnChain: HorizonAccount | undefined = account({ accountId: "GCLOSED_TTL" });
       const underlying: AccountReader = {
-        getAccount: vi.fn(async (id: string) => (id === "GCLOSED_TTL" ? accountOnChain : undefined)),
+        getAccount: vi.fn(async (id: string) =>
+          id === "GCLOSED_TTL" ? accountOnChain : undefined,
+        ),
       };
       const cached = createCachedAccountReader(underlying, { ttlMs: 1_000, now: clock.now });
 
@@ -226,4 +263,3 @@ describe("createCachedAccountReader", () => {
     });
   });
 });
-

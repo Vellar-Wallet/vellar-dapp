@@ -64,6 +64,40 @@ describe("Job Payload Signature Hardening (Phase 7 / #421)", () => {
     expect(result.reason).toBe("invalid_signature");
   });
 
+  it("honors both grace periods when signing keys rotate in quick succession (#838)", () => {
+    const keyA = secret;
+    const keyB = "second-build-worker-key";
+    const keyC = "third-build-worker-key";
+    const jobA = { ...validJob, signature: signJobPayload(validJob, keyA) };
+    const jobB = { ...validJob, signature: signJobPayload(validJob, keyB) };
+    const jobC = { ...validJob, signature: signJobPayload(validJob, keyC) };
+    const start = validJob.timestamp ?? 0;
+    const retiredA = { secret: keyA, expiresAtMs: start + 2_000 };
+    const retiredB = { secret: keyB, expiresAtMs: start + 2_500 };
+    const rejected = { valid: false, reason: "invalid_signature" };
+
+    expect(
+      verifyJobSignature(jobA, keyB, { nowMs: start + 1_000, retiredKeys: [retiredA] }),
+    ).toEqual({ valid: true });
+
+    const verifyAfterSecondRotation = (job: VerificationJobPayload, elapsedMs: number) =>
+      verifyJobSignature(job, keyC, {
+        nowMs: start + elapsedMs,
+        retiredKeys: [retiredA, retiredB],
+      });
+
+    for (const job of [jobA, jobB, jobC]) {
+      expect(verifyAfterSecondRotation(job, 1_500)).toEqual({ valid: true });
+    }
+    expect(verifyAfterSecondRotation({ ...jobA, commitHash: "tampered" }, 1_500)).toEqual(rejected);
+
+    expect(verifyAfterSecondRotation(jobA, 1_999)).toEqual({ valid: true });
+    expect(verifyAfterSecondRotation(jobA, 2_000)).toEqual(rejected);
+    expect(verifyAfterSecondRotation(jobB, 2_499)).toEqual({ valid: true });
+    expect(verifyAfterSecondRotation(jobB, 2_500)).toEqual(rejected);
+    expect(verifyAfterSecondRotation(jobC, 2_500)).toEqual({ valid: true });
+  });
+
   it("detects expired signatures when maxAgeMs is configured", () => {
     const now = 1720000000000;
     const oldJob: VerificationJobPayload = {

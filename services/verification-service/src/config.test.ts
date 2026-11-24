@@ -1,18 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { configFromEnv } from "./config";
 
-const validEnv = { VERIFY_BUILD_TIMEOUT_S: "600" };
-
 describe("verification build timeout configuration (#536)", () => {
-  it("accepts a positive timeout at boot", () => {
-    expect(configFromEnv(validEnv).buildTimeoutSeconds).toBe(600);
+  it("reads a numeric string from process.env and returns a number at boot", () => {
+    vi.stubEnv("VERIFY_BUILD_TIMEOUT_S", "10000");
+    try {
+      expect(process.env.VERIFY_BUILD_TIMEOUT_S).toBe("10000");
+      expect(configFromEnv().buildTimeoutSeconds).toBe(10_000);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
-  it.each([undefined, "", "0", "-1", "not-a-number"]) (
+  it("parses an environment string the same as a numeric value in a programmatic fixture", () => {
+    const fromString = configFromEnv({ VERIFY_BUILD_TIMEOUT_S: "10000" });
+    // A plain object can contain a number at runtime, unlike process.env.
+    const numericFixture = { VERIFY_BUILD_TIMEOUT_S: 10_000 } as unknown as NodeJS.ProcessEnv;
+    expect(fromString.buildTimeoutSeconds).toBe(10_000);
+    expect(fromString.buildTimeoutSeconds).toBe(configFromEnv(numericFixture).buildTimeoutSeconds);
+  });
+
+  it.each([undefined, "", " ", "0", "-1", "1.5", "Infinity", "10000ms", "not-a-number"])(
     "rejects invalid VERIFY_BUILD_TIMEOUT_S value %s",
     (value) => {
-      const env = { ...validEnv, VERIFY_BUILD_TIMEOUT_S: value };
-      expect(() => configFromEnv(env)).toThrow("VERIFY_BUILD_TIMEOUT_S");
+      expect(() => configFromEnv({ VERIFY_BUILD_TIMEOUT_S: value })).toThrow(
+        "VERIFY_BUILD_TIMEOUT_S must be a positive integer",
+      );
     },
   );
 });
