@@ -146,6 +146,15 @@ describe("provenance against a since-superseded wasm hash", () => {
     expect(a).toMatchObject({ level: "verified" });
   });
 
+  it("returns to verified when the original wasm hash is re-verified after a round trip", async () => {
+    const restored = await assessProvenance(
+      { contractId: "C1" },
+      hashed("wasm_original_hash", "wasm_original_hash"),
+    );
+    expect(restored).toMatchObject({ level: "verified", contractId: "C1", status: "verified" });
+    expect(provenanceWarningCopy(restored)).not.toMatch(/upgraded/i);
+  });
+
   it("falls back to the status alone when hashes are not reported", async () => {
     const a = await assessProvenance({ contractId: "C1" }, lookup("verified"));
     expect(a).toMatchObject({ level: "verified" });
