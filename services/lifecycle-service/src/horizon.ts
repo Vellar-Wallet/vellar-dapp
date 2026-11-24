@@ -183,15 +183,26 @@ export function createHorizonAccountReader(
     if (!nextUrl) return balances;
 
     for (let page = 1; page < maxTrustlinePages; page++) {
-      let body: unknown;
+      let res: { status: number; body: unknown };
       try {
-        const res = await fetchJson(nextUrl, "trustlines fetch");
-        body = res.body;
+        res = await fetchJson(nextUrl, "trustlines fetch");
       } catch (err) {
         throw new Error(
           `Horizon trustlines pagination failed: pagination was cut short by an error (${err instanceof Error ? err.message : String(err)})`,
         );
       }
+      // fetchJson returns 404 as a value (meaning "account does not exist"
+      // for the top-level account fetch). For a pagination link the account
+      // already exists, so a 404 means the link itself is dead (transient
+      // Horizon issue, malformed/expired cursor). That is pagination being cut
+      // short, NOT "no more trustlines" and NOT a malformed body — refuse
+      // rather than let the planner work from a partial trustline list (#832).
+      if (res.status === 404) {
+        throw new Error(
+          `Horizon trustlines pagination failed: pagination was cut short because trustline page ${page + 1} returned 404`,
+        );
+      }
+      const body = res.body;
 
       const parsed = trustlinesPageSchema.safeParse(body);
       if (!parsed.success) {

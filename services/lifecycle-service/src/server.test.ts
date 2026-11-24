@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import type { AccountReader, HorizonAccount } from "./horizon";
+import { createHorizonAccountReader, type AccountReader, type HorizonAccount } from "./horizon";
 import { buildCleanupPlan } from "./planner";
 import { buildServer, fakeFacilitatorClient } from "./server";
 
@@ -389,5 +389,42 @@ describe("x402 public resource URL guard (docs/decisions.md — localhost catalo
         );
         expect(challenge.resource.url).not.toContain("localhost");
       });
+  });
+});
+
+describe("POST /lifecycle/plan — trustline pagination link 404 (#832)", () => {
+  it("refuses to build a plan when a Horizon pagination link 404s mid-way", async () => {
+    // Real Horizon reader wired into the real route: the only seam is fetch.
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes("/offers")) return json({ _embedded: { records: [] } });
+      if (url.includes("cursor=dead")) return new Response("", { status: 404 });
+      return json({
+        sequence: "100",
+        balances: [
+          { asset_type: "native", balance: "100.0" },
+          { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: G2, balance: "0" },
+        ],
+        data: {},
+        _links: { next: { href: `https://horizon.test/accounts/${G1}/balances?cursor=dead` } },
+      });
+    });
+    const reader = createHorizonAccountReader("https://horizon.test", { fetchImpl });
+    app = buildServer({ reader, x402FacilitatorClient: fakeFacilitatorClient() });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/lifecycle/plan",
+      payload: { accountId: G1, destination: G2 },
+    });
+
+    // Not a plan built from the partial trustline list, and not account_not_found.
+    expect(res.statusCode).toBeGreaterThanOrEqual(500);
+    expect(res.json().plan).toBeUndefined();
+    expect(res.json().error).not.toBe("account_not_found");
   });
 });

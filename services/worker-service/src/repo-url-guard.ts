@@ -16,8 +16,47 @@ export class RepoUrlError extends Error {
   }
 }
 
+/** The raw authority (between `scheme://` and the first `/`, `?`, `#`) as git /
+ * libcurl see it. WHATWG `URL` is NOT used here on purpose: the guard validates
+ * with WHATWG but git clones the raw string, so this must reflect what a
+ * non-WHATWG (RFC 3986) parser takes to be the authority. */
+function rawAuthority(repoUrl: string): string {
+  const afterScheme = repoUrl.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+  const end = afterScheme.search(/[/?#]/);
+  return end === -1 ? afterScheme : afterScheme.slice(0, end);
+}
+
 /** Parse + syntactic checks: https only, no userinfo. Throws RepoUrlError. */
 export function parseHttpsRepoUrl(repoUrl: string): URL {
+  // Parser-differential guards (#837). The guard validates the WHATWG-parsed
+  // host, but git/libcurl clone the RAW string, and the two parsers disagree on
+  // several inputs. Each of these is refused on the raw string, before WHATWG
+  // gets a chance to silently "repair" it into something that looks safe:
+  //  - whitespace / control chars: WHATWG strips tab/CR/LF (and trims C0 +
+  //    space), so `https://allowed\t@internal/` validates differently from
+  //    what is handed to git.
+  //  - backslash: WHATWG treats `\` as `/` for https, so
+  //    `https://allowed-host\@internal-host/` is host `allowed-host` to the
+  //    guard but host `internal-host` (userinfo `allowed-host\`) to curl.
+  //  - any `@` in the authority: even an EMPTY userinfo (`https://@host/`,
+  //    `https://:@host/`) parses to username === "" && password === "", which
+  //    the credential check below cannot see.
+  //  - a fragment: never meaningful for a clone, and `https://internal#@allowed/`
+  //    is the classic way to make a naive string check read the wrong host.
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(repoUrl)) {
+    throw new RepoUrlError("repoUrl must not contain whitespace or control characters.");
+  }
+  if (repoUrl.includes("\\")) {
+    throw new RepoUrlError("repoUrl must not contain a backslash (ambiguous host parsing).");
+  }
+  if (rawAuthority(repoUrl).includes("@")) {
+    throw new RepoUrlError("repoUrl must not embed credentials (userinfo).");
+  }
+  if (repoUrl.includes("#")) {
+    throw new RepoUrlError("repoUrl must not contain a fragment (#).");
+  }
+
   let url: URL;
   try {
     url = new URL(repoUrl);
@@ -28,6 +67,11 @@ export function parseHttpsRepoUrl(repoUrl: string): URL {
     throw new RepoUrlError(
       `repoUrl must use https (got ${url.protocol}); file/git/ssh/http are blocked.`,
     );
+  }
+  // WHATWG also "repairs" `https:host`, `https:/host` and `https:///host` into
+  // `https://host/`; git does not. Require the literal `https://<authority>`.
+  if (!/^https:\/\/[^/]/i.test(repoUrl)) {
+    throw new RepoUrlError("repoUrl must be an absolute https:// URL.");
   }
   if (url.username || url.password) {
     throw new RepoUrlError("repoUrl must not embed credentials (userinfo).");
