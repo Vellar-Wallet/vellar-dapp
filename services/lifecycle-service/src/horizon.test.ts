@@ -212,4 +212,138 @@ describe("createHorizonAccountReader", () => {
       );
     });
   });
+  describe("trustline pagination link returns 404 (#832)", () => {
+    // The top-level account fetch maps 404 to "account does not exist". A 404
+    // on a *pagination* link is a different thing: the account exists, the
+    // link is dead (transient Horizon issue, malformed/expired cursor). It must
+    // trip the cut-short safety check — not be read as "no more trustlines",
+    // not be reported as a malformed body, and never as account-not-found.
+    function pagedAccount(nextHref: string) {
+      return {
+        sequence: "100",
+        balances: [
+          { asset_type: "native", balance: "50.0" },
+          { asset_type: "credit_alphanum4", asset_code: "T0", asset_issuer: ACCT, balance: "1.0" },
+        ],
+        data: {},
+        _links: { next: { href: nextHref } },
+      };
+    }
+
+    function trustlinePage(code: string, nextHref?: string) {
+      return {
+        balances: [
+          { asset_type: "credit_alphanum4", asset_code: code, asset_issuer: ACCT, balance: "1.0" },
+        ],
+        _links: nextHref ? { next: { href: nextHref } } : { next: { href: "" } },
+      };
+    }
+
+    it("happy path: a fully-resolvable chain of pagination links returns every trustline", async () => {
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) {
+          return jsonResponse(trustlinePage("T1", `${BASE}/accounts/${ACCT}/balances?cursor=p3`));
+        }
+        if (url.includes("cursor=p3")) return jsonResponse(trustlinePage("T2"));
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+      const reader = createHorizonAccountReader(BASE, { fetchImpl });
+      const account = await reader.getAccount(ACCT);
+      expect(account?.balances.map((b) => b.assetCode ?? "native")).toEqual([
+        "native",
+        "T0",
+        "T1",
+        "T2",
+      ]);
+    });
+
+    it("refuses with the cut-short error when the FIRST pagination link 404s", async () => {
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) return new Response("", { status: 404 });
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+      const reader = createHorizonAccountReader(BASE, { fetchImpl });
+
+      const attempt = reader.getAccount(ACCT);
+      await expect(attempt).rejects.toThrow(
+        /horizon trustlines pagination failed: pagination was cut short because trustline page 2 returned 404/i,
+      );
+      // Specifically the pagination failure mode — not the malformed-body path.
+      await expect(reader.getAccount(ACCT)).rejects.not.toThrow(/malformed/i);
+    });
+
+    it("refuses when a LATER pagination link 404s after earlier pages succeeded (no partial list)", async () => {
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) {
+          return jsonResponse(trustlinePage("T1", `${BASE}/accounts/${ACCT}/balances?cursor=bad`));
+        }
+        if (url.includes("cursor=bad")) return new Response("", { status: 404 });
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+      const reader = createHorizonAccountReader(BASE, { fetchImpl });
+
+      await expect(reader.getAccount(ACCT)).rejects.toThrow(
+        /pagination was cut short because trustline page 3 returned 404/i,
+      );
+    });
+
+    it("never maps a pagination 404 to 'account does not exist' (undefined)", async () => {
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) return new Response("", { status: 404 });
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+      const reader = createHorizonAccountReader(BASE, { fetchImpl });
+
+      const result = await reader.getAccount(ACCT).then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      expect(result.ok).toBe(false);
+    });
+
+    it("does not follow offers or return data once the trustline link has 404'd", async () => {
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) return new Response("", { status: 404 });
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+      const reader = createHorizonAccountReader(BASE, { fetchImpl });
+
+      await expect(reader.getAccount(ACCT)).rejects.toThrow(/cut short/i);
+      expect(fetchImpl.mock.calls.some(([url]) => String(url).includes("/offers"))).toBe(false);
+    });
+
+    it("a pagination 404 is a different failure from a generic network error, but both refuse", async () => {
+      const notFound = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) return new Response("", { status: 404 });
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+      const networkError = vi.fn(async (url: string) => {
+        if (url.includes("/offers")) return jsonResponse(offerPage([]));
+        if (url.includes("cursor=p2")) throw new TypeError("fetch failed");
+        return jsonResponse(pagedAccount(`${BASE}/accounts/${ACCT}/balances?cursor=p2`));
+      });
+
+      const notFoundErr = await createHorizonAccountReader(BASE, { fetchImpl: notFound })
+        .getAccount(ACCT)
+        .catch((e: Error) => e);
+      const networkErr = await createHorizonAccountReader(BASE, {
+        fetchImpl: networkError,
+        retryOptions: { maxAttempts: 1 },
+      })
+        .getAccount(ACCT)
+        .catch((e: Error) => e);
+
+      expect((notFoundErr as Error).message).toMatch(
+        /cut short because trustline page 2 returned 404/,
+      );
+      expect((networkErr as Error).message).toMatch(/cut short by an error/);
+      expect((networkErr as Error).message).not.toMatch(/404/);
+    });
+  });
 });

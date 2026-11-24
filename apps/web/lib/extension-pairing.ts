@@ -14,13 +14,38 @@ import { getWalletRuntime } from "./connector-factory";
 // (apps/extension/lib/pair-origins.ts); this client-side gate is defense in
 // depth so a phished copy of the app never even reaches the extension prompt.
 
-/** Origins allowed to initiate pairing. Fail-closed: anything else is refused. */
+/** Default origins allowed to initiate pairing. Fail-closed: anything else is refused. */
 export const PAIRING_ALLOWED_ORIGINS: readonly string[] = [
   "http://localhost:3000",
   "http://localhost:5173",
   "https://app.vellar.xyz",
   "https://vellar.xyz",
 ];
+
+// The allowlist in force *right now*. An origin can be removed while a session
+// that started under it is still open (#849), so every pairing-dependent action
+// re-reads this rather than trusting an "allowed at session start" decision.
+let currentAllowedOrigins: readonly string[] = PAIRING_ALLOWED_ORIGINS;
+
+/** The pairing allowlist currently in force. */
+export function getPairingAllowedOrigins(): readonly string[] {
+  return currentAllowedOrigins;
+}
+
+/** Replaces the pairing allowlist (e.g. an origin revoked at runtime). Takes
+ * effect for the very next pairing-dependent action, including ones belonging
+ * to sessions that are already open. Entries are normalized; malformed entries
+ * are dropped (fail-closed) rather than widening the list. */
+export function setPairingAllowedOrigins(origins: readonly string[]): void {
+  currentAllowedOrigins = Object.freeze(
+    origins.map((o) => normalizeOrigin(o)).filter((o): o is string => o !== undefined),
+  );
+}
+
+/** Restores the default allowlist (tests, config reset). */
+export function resetPairingAllowedOrigins(): void {
+  currentAllowedOrigins = PAIRING_ALLOWED_ORIGINS;
+}
 
 export class PairingOriginError extends Error {
   readonly code = "pairing_origin_not_allowed";
@@ -34,7 +59,7 @@ export class PairingOriginError extends Error {
  * host is the same FQDN and is normalized before the allowlist check). */
 export function isPairingOriginAllowed(origin: string): boolean {
   const normalized = normalizeOrigin(origin);
-  return normalized !== undefined && PAIRING_ALLOWED_ORIGINS.includes(normalized);
+  return normalized !== undefined && currentAllowedOrigins.includes(normalized);
 }
 
 /** Rejects a pairing attempt from an origin not on the allowlist, with a
@@ -82,6 +107,10 @@ export function recallPairing(address: string): PairingResult | undefined {
 
 /** Asks the extension whether it is paired to exactly this wallet. */
 export async function checkPairingStatus(session: WalletSession): Promise<boolean> {
+  // Re-checked on every call (#849): an origin removed from the allowlist after
+  // this session started must not keep reading pairing state. Fail-closed to
+  // "not paired" without contacting the extension.
+  if (!isPairingOriginAllowed(window.location.origin)) return false;
   const provider = getInjectedProvider();
   if (!provider) return false;
   try {
@@ -115,8 +144,14 @@ export async function pairExtension(session: WalletSession): Promise<PairingResu
   });
 
   // 2. Passkey consent: add the device key as an expiring on-chain signer.
+  //    The extension prompt above can sit open for a long time; if the origin
+  //    was removed from the allowlist meanwhile, the gate decision taken at the
+  //    top of this call is stale. Re-check against the CURRENT allowlist before
+  //    the on-chain signer is added (#849).
+  assertPairingOriginAllowed(window.location.origin);
   const runtime = await getWalletRuntime();
   if (session.keyId) await runtime.resume(session.keyId);
+  assertPairingOriginAllowed(window.location.origin);
   const result = await runtime.addDeviceSigner(devicePublicKeyHex);
   rememberPairing(session.accountId, result);
   return result;
