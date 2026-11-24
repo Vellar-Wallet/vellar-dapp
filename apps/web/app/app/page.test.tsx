@@ -94,6 +94,27 @@ describe("AppEntry (/app)", () => {
     expect(screen.getByTestId("extension-repaired-banner").textContent).toMatch(/re-paired successfully/i);
   });
 
+  it("re-pairs a reinstalled extension without assuming the prior message protocol", async () => {
+    render(
+      <WalletProvider initialSession={session}>
+        <AppEntry />
+      </WalletProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId("trigger-extension-action"));
+    await screen.findByRole("alert");
+
+    (window as { vela?: unknown }).vela = {
+      pairStatus: vi.fn().mockResolvedValue({ paired: true, protocolVersion: 2 }),
+      pair: vi.fn().mockResolvedValue({ devicePublicKeyHex: "new-protocol-key" }),
+    };
+    mockPairExtension.mockResolvedValue({ hash: "hash-protocol-2", expiresAt: "2026-10-27" });
+
+    fireEvent.click(screen.getByRole("button", { name: /re-pair extension/i }));
+    await waitFor(() => expect(mockPairExtension).toHaveBeenCalledWith(session));
+    expect(screen.getByTestId("extension-repaired-banner")).toBeDefined();
+  });
+
   it("completes extension action successfully when extension is responding normally", async () => {
     const pairStatus = vi.fn().mockResolvedValue({ paired: true });
     (window as { vela?: unknown }).vela = { pairStatus };
