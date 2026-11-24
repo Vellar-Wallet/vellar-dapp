@@ -1,5 +1,6 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, statfs, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { request } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import { join } from "node:path";
@@ -293,7 +294,7 @@ export interface PrefetchDeps {
   /** Parallel downloads. */
   concurrency?: number;
   /** Free bytes available to this process on the volume containing `dir`;
-   * defaults to statfs. Unreadable capacity skips the check (see assertDiskSpace). */
+   * overrides the default statfs and allocation checks. */
   getFreeBytes?: (dir: string) => Promise<number>;
   /** Overrides for the disk-space estimate. */
   diskSpace?: DiskSpaceEstimate;
@@ -309,6 +310,28 @@ export const defaultGetFreeBytes = async (dir: string): Promise<number> => {
   const fs = await statfs(dir);
   return Number(fs.bavail) * Number(fs.bsize);
 };
+
+/** Reserve blocks briefly on the destination volume to detect quotas that
+ * statfs does not report. fallocate allocates without writing a buffer. */
+async function canAllocateDiskSpace(dir: string, bytes: number): Promise<boolean> {
+  const probeDir = await mkdtemp(join(dir, ".space-check-"));
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      execFile(
+        "fallocate",
+        ["-l", String(bytes), "--", join(probeDir, "probe")],
+        { env: { ...process.env, LC_ALL: "C" }, timeout: 5_000 },
+        (err, _stdout, stderr) => {
+          if (!err) resolve(true);
+          else if (/Disk quota exceeded|No space left on device/.test(stderr)) resolve(false);
+          else reject(err);
+        },
+      );
+    });
+  } finally {
+    await rm(probeDir, { recursive: true, force: true });
+  }
+}
 
 /** Bytes the pre-fetch is expected to need: per-package allowances plus the
  * safety margin. */
@@ -565,6 +588,27 @@ async function assertDiskSpace(
       `Insufficient disk space for dependency pre-fetch: ${free} bytes free, more than ${required} bytes required (${plan.registry.length} crates.io package(s), ${plan.git.length} git dependency(ies)).`,
       "insufficient_disk_space",
     );
+  }
+  if (!deps.getFreeBytes) {
+    let writable: boolean;
+    try {
+      writable = await canAllocateDiskSpace(depsDir, Math.floor(required) + 1);
+    } catch (err) {
+      if (
+        (err as NodeJS.ErrnoException).code === "EDQUOT" ||
+        (err as NodeJS.ErrnoException).code === "ENOSPC"
+      ) {
+        writable = false;
+      } else {
+        return `[prefetch] disk quota check skipped: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    if (!writable) {
+      throw new DependencyPrefetchError(
+        `Insufficient disk space for dependency pre-fetch: writable space must exceed ${required} bytes.`,
+        "insufficient_disk_space",
+      );
+    }
   }
   return undefined;
 }

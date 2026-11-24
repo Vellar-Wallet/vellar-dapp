@@ -87,32 +87,34 @@ export function createVerificationClient(options: VerificationClientOptions): Ve
 
   async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let timedOut = false;
-    const onTimeout = () => {
-      timedOut = true;
-    };
-    controller.signal.addEventListener("abort", onTimeout);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new ClientTimeoutError(timeoutMs));
+        controller.abort();
+      }, timeoutMs);
+    });
 
     let res: Response;
     try {
-      res = await doFetch(`${base}/verification${path}`, {
-        headers: init?.body ? { "content-type": "application/json" } : undefined,
-        signal: controller.signal,
-        ...init,
-      });
+      res = await Promise.race([
+        doFetch(`${base}/verification${path}`, {
+          headers: init?.body ? { "content-type": "application/json" } : undefined,
+          signal: controller.signal,
+          ...init,
+        }),
+        timeout,
+      ]);
     } catch (err) {
-      clearTimeout(timer);
-      controller.signal.removeEventListener("abort", onTimeout);
-      if (timedOut) throw new ClientTimeoutError(timeoutMs);
+      if (err instanceof ClientTimeoutError) throw err;
       // Network/CORS failure — surface as a typed error, not a raw TypeError.
       throw new VerificationApiError(
         err instanceof Error ? err.message : "network request failed",
         0,
       );
+    } finally {
+      clearTimeout(timer);
     }
-    clearTimeout(timer);
-    controller.signal.removeEventListener("abort", onTimeout);
     const payload = (await res.json().catch(() => ({}))) as {
       error?: string;
       message?: string;

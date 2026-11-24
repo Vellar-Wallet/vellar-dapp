@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { parseDiffForBreakingChanges } from "./check-breaking-changes.mjs";
 
 describe("parseDiffForBreakingChanges (issue #552)", () => {
+  it.each([
+    ["without a BREAKING comment", "", ["Network"]],
+    ["with a BREAKING comment", "+// BREAKING: mainnet no longer accepts public access.\n", []],
+  ])("checks a union narrowed by an intersection %s", (_label, comment, expected) => {
+    const diff = `
+diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts
+--- a/packages/types/src/index.ts
++++ b/packages/types/src/index.ts
+@@ -1 +1,${comment ? 2 : 1} @@
+-export type Network = { name: "testnet"; access: "public" } | { name: "mainnet"; access: "public" | "private" };
+${comment}+export type Network = ({ name: "testnet"; access: "public" } | { name: "mainnet"; access: "public" | "private" }) & ({ name: "testnet" } | { access: "private" });
+`;
+    expect(parseDiffForBreakingChanges(diff)).toEqual(expected);
+  });
+
   it("flags a removed exported type without a BREAKING comment", () => {
     const diff = `
 diff --git a/packages/types/src/index.ts b/packages/types/src/index.ts

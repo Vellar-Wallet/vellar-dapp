@@ -1,13 +1,15 @@
+import { ChildProcess, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CRATES_IO_DOWNLOAD,
   CRATES_IO_INDEX,
   DEFAULT_DISK_SAFETY_MARGIN_BYTES,
   DependencyPrefetchError,
+  defaultGetFreeBytes,
   estimateRequiredBytes,
   hermeticCargoConfig,
   hermeticGitConfig,
@@ -19,6 +21,8 @@ import {
   type RunCommand,
 } from "./cargo-prefetch";
 import { assertPublicHttpsRepoUrl } from "./repo-url-guard";
+
+vi.mock("node:child_process", { spy: true });
 
 const CRATE_BYTES = Buffer.from("fake crate archive");
 const CRATE_SUM = createHash("sha256").update(CRATE_BYTES).digest("hex");
@@ -488,7 +492,10 @@ describe("prefetchCargoDependencies", () => {
     // one crate => 100 + 50
     const REQUIRED = 150;
 
-    const opts = async (getFreeBytes: (dir: string) => Promise<number>, lock = lockfile(localPkg, itoaPkg)) => {
+    const opts = async (
+      getFreeBytes: (dir: string) => Promise<number>,
+      lock = lockfile(localPkg, itoaPkg),
+    ) => {
       await writeFile(join(repoDir, "Cargo.lock"), lock);
       const crates = fakeCratesIo();
       const git = fakeGit();
@@ -538,6 +545,32 @@ describe("prefetchCargoDependencies", () => {
       expect(crates.requests).toHaveLength(0);
     });
 
+    it("rejects a quota-limited destination even when statfs reports enough space", async () => {
+      const { deps, crates, git } = await opts(async () => 0);
+      expect(await defaultGetFreeBytes(depsDir)).toBeGreaterThan(REQUIRED);
+      vi.mocked(execFile).mockImplementationOnce((_file, _args, _options, callback) => {
+        callback?.(
+          Object.assign(new Error("allocation failed"), { code: 1 }),
+          "",
+          "Disk quota exceeded",
+        );
+        return new ChildProcess();
+      });
+
+      await expect(
+        prefetchCargoDependencies(repoDir, depsDir, { ...deps, getFreeBytes: undefined }),
+      ).rejects.toMatchObject({ code: "insufficient_disk_space" });
+      expect(execFile).toHaveBeenCalledWith(
+        "fallocate",
+        ["-l", String(REQUIRED + 1), "--", expect.stringContaining(depsDir)],
+        expect.any(Object),
+        expect.any(Function),
+      );
+      expect(crates.requests).toHaveLength(0);
+      expect(git.calls).toHaveLength(0);
+      expect((await readdir(depsDir)).sort()).toEqual(["git", "registry"]);
+    });
+
     it("counts git dependencies toward the requirement", async () => {
       // 1150 fits the crate alone (150) but not crate + git dependency (1150).
       const { deps } = await opts(async () => 1150, lockfile(localPkg, itoaPkg, gitPkg()));
@@ -564,13 +597,17 @@ describe("prefetchCargoDependencies", () => {
       expect(queried).toBe(false);
     });
 
-    it("reads real capacity from the filesystem by default", async () => {
+    it("proceeds when the destination can allocate the required space", async () => {
       const { deps } = await opts(async () => 0);
+      vi.mocked(execFile).mockImplementationOnce((_file, _args, _options, callback) => {
+        callback?.(null, "", "");
+        return new ChildProcess();
+      });
       const result = await prefetchCargoDependencies(repoDir, depsDir, {
         ...deps,
         getFreeBytes: undefined,
-        diskSpace: { perCrateBytes: 1, safetyMarginBytes: 1 },
       });
+      expect(result.plan.registry).toHaveLength(1);
       expect(result.log).not.toMatch(/skipped/);
     });
   });

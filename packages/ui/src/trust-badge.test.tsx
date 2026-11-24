@@ -103,6 +103,17 @@ describe("TrustBadge lookup states", () => {
     expect(badge.textContent).toContain("Verified source");
   });
 
+  it("transitions from loading to a lookup error", () => {
+    const { rerender } = render(<TrustBadge status="loading" />);
+    expect(screen.getByRole("status").getAttribute("data-status")).toBe("loading");
+
+    rerender(<TrustBadge status="error" />);
+    const badge = screen.getByRole("status");
+    expect(badge.getAttribute("data-status")).toBe("error");
+    expect(badge.getAttribute("data-tone")).toBe("error");
+    expect(badge.textContent).toContain("Couldn't check verification");
+  });
+
   it("transitions from loading to failed", () => {
     const { rerender } = render(<TrustBadge status="loading" />);
     expect(screen.getByRole("status").getAttribute("data-status")).toBe("loading");

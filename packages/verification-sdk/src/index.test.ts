@@ -121,12 +121,45 @@ function hangingFetch(): typeof fetch {
   return vi.fn<typeof fetch>(
     (_url, init) =>
       new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
       }),
   ) as unknown as typeof fetch;
 }
 
 describe("client-side timeout (issue #550)", () => {
+  it("discards a successful response arriving just after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const response = jsonResponse({ status: "verified", recordId: "r1" });
+      const readBody = vi.spyOn(response, "json");
+      const fetchMock = vi.fn<typeof fetch>(
+        () => new Promise((resolve) => setTimeout(() => resolve(response), 51)),
+      );
+      const client = createVerificationClient({
+        apiUrl: "https://api.test",
+        fetch: fetchMock,
+        timeoutMs: 50,
+      });
+      const request = client.getStatus(C1);
+      const rejected = vi.fn();
+      const fulfilled = vi.fn();
+      const handled = request.then(fulfilled, rejected);
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(rejected).toHaveBeenCalledExactlyOnceWith(expect.any(ClientTimeoutError));
+      expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await handled;
+      expect(fulfilled).not.toHaveBeenCalled();
+      expect(readBody).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("throws ClientTimeoutError when the network request hangs with no response", async () => {
     const client = createVerificationClient({
       apiUrl: "https://api.test",
