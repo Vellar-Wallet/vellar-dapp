@@ -86,6 +86,8 @@ export async function runWorkerTick(deps: WorkerDeps): Promise<number> {
           return await runVerification(job, {
             executor: deps.executor,
             resolver: deps.resolver,
+            jobSecret: deps.jobSecret,
+            retiredJobSigningKeys: deps.retiredJobSigningKeys,
             retryAttempt,
           });
         },

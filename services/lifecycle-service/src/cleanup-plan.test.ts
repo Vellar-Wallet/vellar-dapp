@@ -14,7 +14,10 @@ describe("buildCleanupPlan response shape validation (#264)", () => {
       dataKeys: [],
     };
 
-    const plan = buildCleanupPlan(mockAccount, "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3");
+    const plan = buildCleanupPlan(
+      mockAccount,
+      "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3",
+    );
 
     expect(plan).toHaveProperty("accountId");
     expect(plan).toHaveProperty("destination");
@@ -37,12 +40,20 @@ describe("buildCleanupPlan response shape validation (#264)", () => {
       offers: [],
       balances: [
         { assetType: "native", balance: "100.0" },
-        { assetType: "credit_alphanum4", assetCode: "USDC", assetIssuer: "GA5Z...", balance: "50.0" },
+        {
+          assetType: "credit_alphanum4",
+          assetCode: "USDC",
+          assetIssuer: "GA5Z...",
+          balance: "50.0",
+        },
       ],
       dataKeys: ["app_config"],
     };
 
-    const plan = buildCleanupPlan(mockAccount, "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3");
+    const plan = buildCleanupPlan(
+      mockAccount,
+      "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3",
+    );
 
     expect(plan.mergeReady).toBe(false);
     expect(plan.blockers.length).toBeGreaterThan(0);
@@ -66,7 +77,12 @@ describe("buildCleanupPlan response shape validation (#264)", () => {
         offers: [],
         balances: [
           { assetType: "native", balance: "1.5000000" },
-          { assetType: "credit_alphanum4", assetCode: "USDC", assetIssuer: "GA5Z...", balance: "0" },
+          {
+            assetType: "credit_alphanum4",
+            assetCode: "USDC",
+            assetIssuer: "GA5Z...",
+            balance: "0",
+          },
         ],
         dataKeys: [],
       };
@@ -81,6 +97,42 @@ describe("buildCleanupPlan response shape validation (#264)", () => {
       expect((result as any).message).toMatch(/cannot self-fund/i);
       expect((result as any).spendableBalanceXlm).toBe("0.0000000");
       expect((result as any).requiredFeeXlm).toBe("0.0000100");
+    });
+
+    it.each([
+      ["1.0000001", "1", "0.0000001"],
+      ["1.0000099", "99", "0.0000099"],
+      ["1.0000100", "100", "0.0000100"],
+      ["1.0000101", "101", "0.0000101"],
+    ])("checks the merge fee with a native balance of %s XLM", (balance, stroops, spendableXlm) => {
+      const account: HorizonAccount = {
+        accountId: "GCMCEGOUVALP2H6LTY7IPUUMSFKDQUMK3SDU5DI7LETNEZZKHRIIALKM",
+        sequence: "100",
+        subentryCount: 0,
+        openOffers: 0,
+        offers: [],
+        balances: [{ assetType: "native", balance }],
+        dataKeys: [],
+      };
+      const result = buildCleanupPlan(
+        account,
+        "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3",
+      );
+
+      if (Number(stroops) < 100) {
+        expect(result).toMatchObject({
+          error: "insufficient_spendable_balance",
+          canSelfFund: false,
+          spendableBalanceStroops: stroops,
+          spendableBalanceXlm: spendableXlm,
+          requiredFeeStroops: "100",
+          requiredFeeXlm: "0.0000100",
+          mergeReady: false,
+        });
+      } else {
+        expect(result).toMatchObject({ blockers: [], estimatedTransactions: 1, mergeReady: true });
+        expect(result).not.toHaveProperty("error");
+      }
     });
 
     it("covers an account with exactly enough spendable balance for one operation but not the full plan", () => {
@@ -98,7 +150,12 @@ describe("buildCleanupPlan response shape validation (#264)", () => {
         offers: [],
         balances: [
           { assetType: "native", balance: "1.5000100" },
-          { assetType: "credit_alphanum4", assetCode: "USDC", assetIssuer: "GA5Z...", balance: "10.0" },
+          {
+            assetType: "credit_alphanum4",
+            assetCode: "USDC",
+            assetIssuer: "GA5Z...",
+            balance: "10.0",
+          },
         ],
         dataKeys: [],
       };
@@ -128,7 +185,12 @@ describe("buildCleanupPlan response shape validation (#264)", () => {
         offers: [],
         balances: [
           { assetType: "native", balance: "1.5000200" },
-          { assetType: "credit_alphanum4", assetCode: "USDC", assetIssuer: "GA5Z...", balance: "10.0" },
+          {
+            assetType: "credit_alphanum4",
+            assetCode: "USDC",
+            assetIssuer: "GA5Z...",
+            balance: "10.0",
+          },
         ],
         dataKeys: [],
       };

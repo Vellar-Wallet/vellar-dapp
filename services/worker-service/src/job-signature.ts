@@ -20,6 +20,12 @@ export interface VerificationSignatureResult {
   reason?: "missing_signature" | "invalid_signature" | "expired" | "malformed";
 }
 
+export interface RetiredJobSigningKey {
+  secret: string;
+  /** First instant at which signatures under this key are no longer accepted. */
+  expiresAtMs: number;
+}
+
 /** Canonical string serialization for HMAC signature computation. */
 export function canonicalizeJobPayload(payload: {
   contractId: string;
@@ -71,30 +77,37 @@ export function verifyJobSignature(
   options?: {
     maxAgeMs?: number;
     nowMs?: number;
+    retiredKeys?: readonly RetiredJobSigningKey[];
   },
 ): VerificationSignatureResult {
   if (!job.signature) {
     return { valid: false, reason: "missing_signature" };
   }
 
+  const now = options?.nowMs ?? Date.now();
+
   // Check expiration if timestamp is present and maxAge is configured
   if (options?.maxAgeMs && job.timestamp) {
-    const now = options.nowMs ?? Date.now();
     if (now - job.timestamp > options.maxAgeMs || job.timestamp > now + 60_000) {
       return { valid: false, reason: "expired" };
     }
   }
 
   try {
-    const expected = signJobPayload(job, secret);
-    const expectedBuf = Buffer.from(expected, "hex");
-    const actualBuf = Buffer.from(job.signature, "hex");
+    const actual = Buffer.from(job.signature, "hex");
+    const matches = (candidate: string) => {
+      const expected = Buffer.from(signJobPayload(job, candidate), "hex");
+      return expected.length === actual.length && timingSafeEqual(expected, actual);
+    };
 
-    if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
-      return { valid: false, reason: "invalid_signature" };
+    if (
+      matches(secret) ||
+      options?.retiredKeys?.some((key) => now < key.expiresAtMs && matches(key.secret))
+    ) {
+      return { valid: true };
     }
 
-    return { valid: true };
+    return { valid: false, reason: "invalid_signature" };
   } catch {
     return { valid: false, reason: "malformed" };
   }
