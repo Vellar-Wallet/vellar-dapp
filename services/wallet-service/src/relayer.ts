@@ -155,8 +155,17 @@ export function createRelayerSubmitter(
         try {
           const result = await server.send(signedXdr);
           if (!result.success) {
-            const context = result.error.context ? ` ${JSON.stringify(result.error.context)}` : "";
-            const err = new SubmissionError(`${result.error.message}${context}`, result.error.code);
+            // #824: a relayer can return HTTP 200 with a body shaped like an
+            // error but missing the structured `error` object entirely (a
+            // real-world API inconsistency) — payload inspection (`!result.success`)
+            // still classifies it as a failure, but must not then throw an
+            // unhandled TypeError reading into a missing `error` field.
+            const error = result.error as { code?: string; message?: string; context?: Record<string, unknown> } | undefined;
+            const context = error?.context ? ` ${JSON.stringify(error.context)}` : "";
+            const err = new SubmissionError(
+              `${error?.message ?? "Relayer reported failure without a structured error payload"}${context}`,
+              error?.code ?? "submission_failed",
+            );
             circuitBreaker.recordFailure();
             lastError = err;
           } else {

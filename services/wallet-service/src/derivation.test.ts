@@ -85,6 +85,42 @@ describe("derivation gate (V1)", () => {
     expect(fromKit).toBe(expectedContractId);
   });
 
+  it("a historical address derived under an old deployer key stays valid after the deployer is rotated (#825)", () => {
+    // If DEFAULT_DEPLOYER_SEED is ever rotated, `defaultDeployerPublicKey()`
+    // starts returning a new G-address and new wallets derive under it — but
+    // every wallet already deployed under the OLD deployer must remain
+    // reachable. The gate supports this today via the `deployerPublicKey`
+    // override: passing the old deployer's public key must still reproduce
+    // exactly the address that was derived from it before the rotation.
+    const oldDeployerPublicKey = defaultDeployerPublicKey();
+    const addressUnderOldDeployer = deriveWalletContractId(KEY_ID, {
+      networkPassphrase: TESTNET,
+    });
+
+    // Simulate rotation: a different deployer is now the default for new wallets.
+    const newDeployerPublicKey = "GBP5NAUFWZPTUZOCYU6Q2MZQ2XXHRFM3TJHCZOMTDI2NPC73HEOH6664";
+    const addressUnderNewDeployer = deriveWalletContractId(KEY_ID, {
+      networkPassphrase: TESTNET,
+      deployerPublicKey: newDeployerPublicKey,
+    });
+    expect(addressUnderNewDeployer).not.toBe(addressUnderOldDeployer);
+
+    // The historical address is still derivable (and thus still valid/reachable)
+    // by explicitly supplying the old deployer key, independent of whatever the
+    // current default is.
+    const rederivedHistoricalAddress = deriveWalletContractId(KEY_ID, {
+      networkPassphrase: TESTNET,
+      deployerPublicKey: oldDeployerPublicKey,
+    });
+    expect(rederivedHistoricalAddress).toBe(addressUnderOldDeployer);
+    expect(() =>
+      assertDerivedContractId(KEY_ID, addressUnderOldDeployer, {
+        networkPassphrase: TESTNET,
+        deployerPublicKey: oldDeployerPublicKey,
+      }),
+    ).not.toThrow();
+  });
+
   it("regression test: pins the deterministic contract id for a fixed passkey across stellar-sdk upgrades (Issue #519)", () => {
     // CRITICAL: The derived contract address for a given passkey credential id must NEVER change.
     // Existing user smart-account wallets are deployed at this deterministic address.
